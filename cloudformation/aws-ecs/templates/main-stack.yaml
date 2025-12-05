@@ -1,0 +1,370 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Main Stack (Parent Orchestration)
+  Orchestrates all nested stacks for complete MCP Gateway Registry deployment.
+  Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources
+
+  # Network Configuration
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+
+  IngressCidrBlocks:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR blocks allowed to access ALBs
+
+  # Domain Configuration
+  BaseDomain:
+    Type: String
+    Default: ''
+    Description: Base domain for regional URLs (leave empty to skip DNS/certs)
+
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 Hosted Zone ID (leave empty to skip DNS/certs)
+
+  UseRegionalDomains:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Use region-based domain names
+
+  # Database Credentials
+  KeycloakDatabaseUsername:
+    Type: String
+    Default: keycloak
+    Description: Keycloak database username
+    NoEcho: true
+
+  KeycloakDatabasePassword:
+    Type: String
+    Description: Keycloak database password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  KeycloakAdminPassword:
+    Type: String
+    Description: Keycloak admin password (min 12 characters)
+    NoEcho: true
+    MinLength: 12
+
+  # Aurora Serverless Scaling
+  DatabaseMinACU:
+    Type: Number
+    Default: 0.5
+    Description: Minimum Aurora Capacity Units
+
+  DatabaseMaxACU:
+    Type: Number
+    Default: 2
+    Description: Maximum Aurora Capacity Units
+
+  # Container Images
+  RegistryImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-registry:latest'
+    Description: Registry container image URI
+
+  AuthServerImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-auth:latest'
+    Description: Auth server container image URI
+
+  KeycloakImageUri:
+    Type: String
+    Default: 'quay.io/keycloak/keycloak:26.0'
+    Description: Keycloak container image URI
+
+  CurrentTimeImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-currenttime:latest'
+    Description: CurrentTime MCP server image URI
+
+  McpgwImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-mcpgw:latest'
+    Description: MCPGW MCP server image URI
+
+  RealServerFakeToolsImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-realserverfaketools:latest'
+    Description: RealServerFakeTools MCP server image URI
+
+  FlightBookingAgentImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-flight-booking:latest'
+    Description: Flight Booking Agent image URI
+
+  TravelAssistantAgentImageUri:
+    Type: String
+    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-travel-assistant:latest'
+    Description: Travel Assistant Agent image URI
+
+  # Resource Configuration
+  ServiceCpu:
+    Type: String
+    Default: '512'
+    Description: CPU units for main services
+
+  ServiceMemory:
+    Type: String
+    Default: '1024'
+    Description: Memory (MB) for main services
+
+  KeycloakCpu:
+    Type: String
+    Default: '1024'
+    Description: CPU units for Keycloak
+
+  KeycloakMemory:
+    Type: String
+    Default: '2048'
+    Description: Memory (MB) for Keycloak
+
+  # Auto Scaling Configuration
+  EnableAutoScaling:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable auto scaling for ECS services
+
+  MinCapacity:
+    Type: Number
+    Default: 1
+    Description: Minimum number of tasks
+
+  MaxCapacity:
+    Type: Number
+    Default: 4
+    Description: Maximum number of tasks
+
+  TargetCpuUtilization:
+    Type: Number
+    Default: 70
+    Description: Target CPU utilization percentage
+
+  TargetMemoryUtilization:
+    Type: Number
+    Default: 80
+    Description: Target memory utilization percentage
+
+  # Template S3 Location (for nested stacks)
+  TemplateS3Bucket:
+    Type: String
+    Description: S3 bucket containing nested stack templates
+
+  TemplateS3Prefix:
+    Type: String
+    Default: cloudformation/templates
+    Description: S3 prefix for nested stack templates
+
+Conditions:
+  UseRegionalDomainsCondition: !Equals [!Ref UseRegionalDomains, 'true']
+  HasDnsConfig: !And
+    - !Not [!Equals [!Ref BaseDomain, '']]
+    - !Not [!Equals [!Ref HostedZoneId, '']]
+
+Resources:
+
+  #============================================================================
+  # Network Stack
+  #============================================================================
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/network-stack.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcCidr: !Ref VpcCidr
+        IngressCidrBlocks: !Ref IngressCidrBlocks
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-network
+
+  #============================================================================
+  # Data Stack
+  #============================================================================
+  DataStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/data-stack.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        VpcCidr: !Ref VpcCidr
+        PrivateSubnet1: !GetAtt NetworkStack.Outputs.PrivateSubnet1
+        PrivateSubnet2: !GetAtt NetworkStack.Outputs.PrivateSubnet2
+        PrivateSubnet3: !GetAtt NetworkStack.Outputs.PrivateSubnet3
+        DatabaseSecurityGroupId: !GetAtt NetworkStack.Outputs.DatabaseSecurityGroupId
+        EfsSecurityGroupId: !GetAtt NetworkStack.Outputs.EfsSecurityGroupId
+        KeycloakDatabaseUsername: !Ref KeycloakDatabaseUsername
+        KeycloakDatabasePassword: !Ref KeycloakDatabasePassword
+        KeycloakAdminPassword: !Ref KeycloakAdminPassword
+        DatabaseMinACU: !Ref DatabaseMinACU
+        DatabaseMaxACU: !Ref DatabaseMaxACU
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-data
+
+  #============================================================================
+  # Compute Stack
+  #============================================================================
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: DataStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/compute-stack.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        PublicSubnets: !GetAtt NetworkStack.Outputs.PublicSubnets
+        PrivateSubnets: !GetAtt NetworkStack.Outputs.PrivateSubnets
+        MainAlbSecurityGroupId: !GetAtt NetworkStack.Outputs.MainAlbSecurityGroupId
+        KeycloakAlbSecurityGroupId: !GetAtt NetworkStack.Outputs.KeycloakAlbSecurityGroupId
+        EcsTasksSecurityGroupId: !GetAtt NetworkStack.Outputs.EcsTasksSecurityGroupId
+        KeycloakEcsSecurityGroupId: !GetAtt NetworkStack.Outputs.KeycloakEcsSecurityGroupId
+        BaseDomain: !Ref BaseDomain
+        HostedZoneId: !Ref HostedZoneId
+        UseRegionalDomains: !Ref UseRegionalDomains
+        SecretKeySecretArn: !GetAtt DataStack.Outputs.SecretKeySecretArn
+        AdminPasswordSecretArn: !GetAtt DataStack.Outputs.AdminPasswordSecretArn
+        KeycloakClientSecretArn: !GetAtt DataStack.Outputs.KeycloakClientSecretArn
+        KeycloakM2MClientSecretArn: !GetAtt DataStack.Outputs.KeycloakM2MClientSecretArn
+        KeycloakDbSecretArn: !GetAtt DataStack.Outputs.KeycloakDbSecretArn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-compute
+
+  #============================================================================
+  # Services Stack
+  #============================================================================
+  ServicesStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ComputeStack
+    Properties:
+      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/services-stack.yaml
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        MainEcsClusterArn: !GetAtt ComputeStack.Outputs.MainEcsClusterArn
+        KeycloakEcsClusterArn: !GetAtt ComputeStack.Outputs.KeycloakEcsClusterArn
+        ServiceDiscoveryNamespaceArn: !GetAtt ComputeStack.Outputs.ServiceDiscoveryNamespaceArn
+        PrivateSubnet1: !GetAtt NetworkStack.Outputs.PrivateSubnet1
+        PrivateSubnet2: !GetAtt NetworkStack.Outputs.PrivateSubnet2
+        PrivateSubnet3: !GetAtt NetworkStack.Outputs.PrivateSubnet3
+        EcsTasksSecurityGroupId: !GetAtt NetworkStack.Outputs.EcsTasksSecurityGroupId
+        KeycloakEcsSecurityGroupId: !GetAtt NetworkStack.Outputs.KeycloakEcsSecurityGroupId
+        McpServersSecurityGroupId: !GetAtt NetworkStack.Outputs.McpServersSecurityGroupId
+        RegistryTargetGroupArn: !GetAtt ComputeStack.Outputs.RegistryTargetGroupArn
+        AuthTargetGroupArn: !GetAtt ComputeStack.Outputs.AuthTargetGroupArn
+        GradioTargetGroupArn: !GetAtt ComputeStack.Outputs.GradioTargetGroupArn
+        KeycloakTargetGroupArn: !GetAtt ComputeStack.Outputs.KeycloakTargetGroupArn
+        EcsTaskExecutionRoleArn: !GetAtt ComputeStack.Outputs.EcsTaskExecutionRoleArn
+        EcsTaskRoleArn: !GetAtt ComputeStack.Outputs.EcsTaskRoleArn
+        KeycloakTaskExecutionRoleArn: !GetAtt ComputeStack.Outputs.KeycloakTaskExecutionRoleArn
+        EfsFileSystemId: !GetAtt DataStack.Outputs.EfsFileSystemId
+        EfsAccessPointServersId: !GetAtt DataStack.Outputs.EfsAccessPointServersId
+        EfsAccessPointModelsId: !GetAtt DataStack.Outputs.EfsAccessPointModelsId
+        EfsAccessPointLogsId: !GetAtt DataStack.Outputs.EfsAccessPointLogsId
+        EfsAccessPointAgentsId: !GetAtt DataStack.Outputs.EfsAccessPointAgentsId
+        EfsAccessPointAuthConfigId: !GetAtt DataStack.Outputs.EfsAccessPointAuthConfigId
+        EfsAccessPointMcpgwDataId: !GetAtt DataStack.Outputs.EfsAccessPointMcpgwDataId
+        SecretKeySecretArn: !GetAtt DataStack.Outputs.SecretKeySecretArn
+        AdminPasswordSecretArn: !GetAtt DataStack.Outputs.AdminPasswordSecretArn
+        KeycloakClientSecretArn: !GetAtt DataStack.Outputs.KeycloakClientSecretArn
+        KeycloakM2MClientSecretArn: !GetAtt DataStack.Outputs.KeycloakM2MClientSecretArn
+        KeycloakDbSecretArn: !GetAtt DataStack.Outputs.KeycloakDbSecretArn
+        DomainName: !If
+          - HasDnsConfig
+          - !If
+            - UseRegionalDomainsCondition
+            - !Sub registry.${AWS::Region}.${BaseDomain}
+            - !Sub registry.${BaseDomain}
+          - !GetAtt ComputeStack.Outputs.MainAlbDnsName
+        KeycloakDomainName: !If
+          - HasDnsConfig
+          - !If
+            - UseRegionalDomainsCondition
+            - !Sub kc.${AWS::Region}.${BaseDomain}
+            - !Sub kc.${BaseDomain}
+          - !GetAtt ComputeStack.Outputs.KeycloakAlbDnsName
+        RdsProxyEndpoint: !GetAtt DataStack.Outputs.RdsProxyEndpoint
+        RegistryImageUri: !Ref RegistryImageUri
+        AuthServerImageUri: !Ref AuthServerImageUri
+        KeycloakImageUri: !Ref KeycloakImageUri
+        CurrentTimeImageUri: !Ref CurrentTimeImageUri
+        McpgwImageUri: !Ref McpgwImageUri
+        RealServerFakeToolsImageUri: !Ref RealServerFakeToolsImageUri
+        FlightBookingAgentImageUri: !Ref FlightBookingAgentImageUri
+        TravelAssistantAgentImageUri: !Ref TravelAssistantAgentImageUri
+        ServiceCpu: !Ref ServiceCpu
+        ServiceMemory: !Ref ServiceMemory
+        KeycloakCpu: !Ref KeycloakCpu
+        KeycloakMemory: !Ref KeycloakMemory
+        EnableAutoScaling: !Ref EnableAutoScaling
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+        TargetCpuUtilization: !Ref TargetCpuUtilization
+        TargetMemoryUtilization: !Ref TargetMemoryUtilization
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-services
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  # VPC Outputs
+  VpcId:
+    Description: VPC ID
+    Value: !GetAtt NetworkStack.Outputs.VpcId
+
+  # URL Outputs
+  RegistryUrl:
+    Description: Registry URL
+    Value: !GetAtt ComputeStack.Outputs.RegistryUrl
+
+  KeycloakUrl:
+    Description: Keycloak URL
+    Value: !GetAtt ComputeStack.Outputs.KeycloakUrl
+
+  # ALB Outputs
+  MainAlbDnsName:
+    Description: Main ALB DNS Name
+    Value: !GetAtt ComputeStack.Outputs.MainAlbDnsName
+
+  KeycloakAlbDnsName:
+    Description: Keycloak ALB DNS Name
+    Value: !GetAtt ComputeStack.Outputs.KeycloakAlbDnsName
+
+  # Database Outputs
+  AuroraClusterEndpoint:
+    Description: Aurora cluster endpoint
+    Value: !GetAtt DataStack.Outputs.AuroraClusterEndpoint
+
+  RdsProxyEndpoint:
+    Description: RDS Proxy endpoint
+    Value: !GetAtt DataStack.Outputs.RdsProxyEndpoint
+
+  # ECS Cluster Outputs
+  MainEcsClusterArn:
+    Description: Main ECS Cluster ARN
+    Value: !GetAtt ComputeStack.Outputs.MainEcsClusterArn
+
+  KeycloakEcsClusterArn:
+    Description: Keycloak ECS Cluster ARN
+    Value: !GetAtt ComputeStack.Outputs.KeycloakEcsClusterArn
+
+  # ECR Output
+  KeycloakEcrRepositoryUri:
+    Description: Keycloak ECR Repository URI
+    Value: !GetAtt ComputeStack.Outputs.KeycloakEcrRepositoryUri

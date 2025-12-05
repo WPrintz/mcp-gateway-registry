@@ -1,0 +1,586 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Data Stack (Consolidated)
+  Creates EFS, Aurora Serverless v2, RDS Proxy, Secrets Manager, SSM Parameters, and KMS.
+  Matches terraform/aws-ecs/modules/mcp-gateway/storage.tf, secrets.tf and keycloak-database.tf
+  Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources (must match network stack)
+
+  # Database credentials (NoEcho for security)
+  KeycloakDatabaseUsername:
+    Type: String
+    Default: keycloak
+    Description: Keycloak database username
+    NoEcho: true
+
+  KeycloakDatabasePassword:
+    Type: String
+    Default: KeycloakDbPass123!
+    Description: Keycloak database password
+    NoEcho: true
+    MinLength: 8
+
+  KeycloakAdminPassword:
+    Type: String
+    Default: KeycloakAdmin123!
+    Description: Keycloak admin password
+    NoEcho: true
+    MinLength: 12
+
+  # Aurora Serverless scaling
+  DatabaseMinACU:
+    Type: Number
+    Default: 0.5
+    Description: Minimum Aurora Capacity Units
+
+  DatabaseMaxACU:
+    Type: Number
+    Default: 2
+    Description: Maximum Aurora Capacity Units
+
+Resources:
+
+  #============================================================================
+  # KMS Key for RDS Encryption
+  #============================================================================
+  RdsKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for RDS encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow RDS to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rds-kms
+
+  RdsKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/${EnvironmentName}-rds
+      TargetKeyId: !Ref RdsKmsKey
+
+  #============================================================================
+  # EFS File System
+  #============================================================================
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-efs
+
+  # EFS Mount Targets (one per private subnet)
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-EfsSG
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-EfsSG
+
+  EfsMountTarget3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-EfsSG
+
+  #============================================================================
+  # EFS Access Points (6 total)
+  #============================================================================
+  EfsAccessPointServers:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /servers
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-servers
+
+  EfsAccessPointModels:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /models
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-models
+
+  EfsAccessPointLogs:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /logs
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-logs
+
+  EfsAccessPointAgents:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /agents
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-agents
+
+  EfsAccessPointAuthConfig:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /auth_config
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-config
+
+  EfsAccessPointMcpgwData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /mcpgw_data
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw-data
+
+
+  #============================================================================
+  # Secrets Manager Secrets
+  #============================================================================
+  
+  # Database credentials secret
+  KeycloakDbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}/keycloak/database
+      Description: Keycloak database credentials
+      SecretString: !Sub |
+        {
+          "username": "${KeycloakDatabaseUsername}",
+          "password": "${KeycloakDatabasePassword}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-secret
+
+  # Application secret key
+  SecretKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-secret-key
+      Description: Secret key for MCP Gateway Registry
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: secret_key
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-secret-key
+
+  # Admin password secret
+  AdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-admin-password
+      Description: Admin password for MCP Gateway Registry
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: admin_password
+        PasswordLength: 32
+        RequireEachIncludedType: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-admin-password
+
+  # Keycloak client secret (placeholder, updated by init script)
+  KeycloakClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-client-secret
+      Description: Keycloak web client secret (updated by init script after deployment)
+      SecretString: '{"client_secret": "placeholder-will-be-updated-by-init-script"}'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-client-secret
+
+  # Keycloak M2M client secret (placeholder, updated by init script)
+  KeycloakM2MClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-m2m-client-secret
+      Description: Keycloak M2M client secret (updated by init script after deployment)
+      SecretString: '{"client_secret": "placeholder-will-be-updated-by-init-script"}'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-m2m-client-secret
+
+  #============================================================================
+  # Aurora Serverless v2 Database
+  #============================================================================
+  
+  # DB Subnet Group
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub ${EnvironmentName}-keycloak-subnet-group
+      DBSubnetGroupDescription: Subnet group for Keycloak Aurora cluster
+      SubnetIds:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-subnet-group
+
+  # RDS Cluster Parameter Group
+  DbClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      DBClusterParameterGroupName: !Sub ${EnvironmentName}-keycloak-params
+      Description: Keycloak Aurora MySQL parameter group
+      Family: aurora-mysql8.0
+      Parameters:
+        character_set_server: utf8mb4
+        collation_server: utf8mb4_unicode_ci
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-params
+
+  # Aurora Serverless v2 Cluster
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DependsOn: KeycloakDbSecret
+    Properties:
+      DBClusterIdentifier: !Sub ${EnvironmentName}-keycloak
+      Engine: aurora-mysql
+      EngineVersion: 8.0.mysql_aurora.3.08.2
+      DatabaseName: keycloak
+      MasterUsername: !Ref KeycloakDatabaseUsername
+      MasterUserPassword: !Ref KeycloakDatabasePassword
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      DBClusterParameterGroupName: !Ref DbClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-DatabaseSG
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: 02:00-04:00
+      PreferredMaintenanceWindow: sun:04:00-sun:05:00
+      StorageEncrypted: true
+      KmsKeyId: !GetAtt RdsKmsKey.Arn
+      DeletionProtection: false
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref DatabaseMinACU
+        MaxCapacity: !Ref DatabaseMaxACU
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cluster
+
+  # Aurora Cluster Instance (Serverless v2)
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub ${EnvironmentName}-keycloak-instance
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-mysql
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-instance
+
+
+  #============================================================================
+  # RDS Proxy
+  #============================================================================
+  
+  # IAM Role for RDS Proxy
+  RdsProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-rds-proxy-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RdsProxySecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref KeycloakDbSecret
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rds-proxy-role
+
+  # RDS Proxy
+  RdsProxy:
+    Type: AWS::RDS::DBProxy
+    DependsOn: AuroraInstance
+    Properties:
+      DBProxyName: !Sub ${EnvironmentName}-keycloak-proxy
+      EngineFamily: MYSQL
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref KeycloakDbSecret
+          IAMAuth: DISABLED
+      RoleArn: !GetAtt RdsProxyRole.Arn
+      VpcSubnetIds:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      VpcSecurityGroupIds:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-DatabaseSG
+      RequireTLS: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-proxy
+
+  # RDS Proxy Target Group
+  RdsProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref RdsProxy
+      TargetGroupName: default
+      DBClusterIdentifiers:
+        - !Ref AuroraCluster
+
+  #============================================================================
+  # SSM Parameters for Database Connection
+  # Note: CloudFormation doesn't support SecureString directly, using String type
+  # For production, consider using Secrets Manager instead
+  #============================================================================
+  SsmKeycloakDatabaseUrl:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /keycloak/database/url
+      Type: String
+      Value: !Sub jdbc:mysql://${AuroraCluster.Endpoint.Address}:3306/keycloak
+      Description: Keycloak database JDBC URL
+      Tags:
+        Name: !Sub ${EnvironmentName}-keycloak-db-url
+
+  SsmKeycloakDatabaseUsername:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /keycloak/database/username
+      Type: String
+      Value: !Ref KeycloakDatabaseUsername
+      Description: Keycloak database username
+      Tags:
+        Name: !Sub ${EnvironmentName}-keycloak-db-username
+
+  SsmKeycloakDatabasePassword:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /keycloak/database/password
+      Type: String
+      Value: !Ref KeycloakDatabasePassword
+      Description: Keycloak database password
+      Tags:
+        Name: !Sub ${EnvironmentName}-keycloak-db-password
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  # EFS Outputs
+  EfsFileSystemId:
+    Description: EFS File System ID
+    Value: !Ref EfsFileSystem
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsFileSystemId
+
+  EfsAccessPointServersId:
+    Description: EFS Access Point ID for servers
+    Value: !Ref EfsAccessPointServers
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsAccessPointServers
+
+  EfsAccessPointModelsId:
+    Description: EFS Access Point ID for models
+    Value: !Ref EfsAccessPointModels
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsAccessPointModels
+
+  EfsAccessPointLogsId:
+    Description: EFS Access Point ID for logs
+    Value: !Ref EfsAccessPointLogs
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsAccessPointLogs
+
+  EfsAccessPointAgentsId:
+    Description: EFS Access Point ID for agents
+    Value: !Ref EfsAccessPointAgents
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsAccessPointAgents
+
+  EfsAccessPointAuthConfigId:
+    Description: EFS Access Point ID for auth config
+    Value: !Ref EfsAccessPointAuthConfig
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsAccessPointAuthConfig
+
+  EfsAccessPointMcpgwDataId:
+    Description: EFS Access Point ID for mcpgw data
+    Value: !Ref EfsAccessPointMcpgwData
+    Export:
+      Name: !Sub ${EnvironmentName}-EfsAccessPointMcpgwData
+
+  # Database Outputs
+  AuroraClusterEndpoint:
+    Description: Aurora cluster endpoint
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+    Export:
+      Name: !Sub ${EnvironmentName}-AuroraClusterEndpoint
+
+  AuroraClusterPort:
+    Description: Aurora cluster port
+    Value: !GetAtt AuroraCluster.Endpoint.Port
+    Export:
+      Name: !Sub ${EnvironmentName}-AuroraClusterPort
+
+  RdsProxyEndpoint:
+    Description: RDS Proxy endpoint
+    Value: !GetAtt RdsProxy.Endpoint
+    Export:
+      Name: !Sub ${EnvironmentName}-RdsProxyEndpoint
+
+  # Secrets Outputs
+  KeycloakDbSecretArn:
+    Description: Keycloak database secret ARN
+    Value: !Ref KeycloakDbSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakDbSecretArn
+
+  SecretKeySecretArn:
+    Description: Application secret key ARN
+    Value: !Ref SecretKeySecret
+    Export:
+      Name: !Sub ${EnvironmentName}-SecretKeySecretArn
+
+  AdminPasswordSecretArn:
+    Description: Admin password secret ARN
+    Value: !Ref AdminPasswordSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-AdminPasswordSecretArn
+
+  KeycloakClientSecretArn:
+    Description: Keycloak client secret ARN
+    Value: !Ref KeycloakClientSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakClientSecretArn
+
+  KeycloakM2MClientSecretArn:
+    Description: Keycloak M2M client secret ARN
+    Value: !Ref KeycloakM2MClientSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakM2MClientSecretArn
+
+  # KMS Outputs
+  RdsKmsKeyArn:
+    Description: RDS KMS key ARN
+    Value: !GetAtt RdsKmsKey.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-RdsKmsKeyArn

@@ -1,0 +1,679 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Compute Stack (Consolidated)
+  Creates ECS clusters, ALBs, target groups, listeners, ACM certificates (optional), Route53 records (optional), ECR, and IAM roles.
+  Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources (must match network/data stacks)
+
+  BaseDomain:
+    Type: String
+    Default: ''
+    Description: Base domain for regional URLs (leave empty to skip DNS/certs)
+
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 Hosted Zone ID (leave empty to skip DNS/certs)
+
+  UseRegionalDomains:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Use region-based domain names
+
+Conditions:
+  UseRegionalDomainsCondition: !Equals [!Ref UseRegionalDomains, 'true']
+  HasDnsConfig: !And
+    - !Not [!Equals [!Ref BaseDomain, '']]
+    - !Not [!Equals [!Ref HostedZoneId, '']]
+
+Resources:
+  MainEcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: OVERRIDE
+          LogConfiguration:
+            CloudWatchLogGroupName: !Ref EcsClusterLogGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+
+  KeycloakEcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-keycloak-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cluster
+
+  EcsClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/${EnvironmentName}
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecs-logs
+
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub ${EnvironmentName}.local
+      Description: Service discovery namespace for MCP Gateway Registry
+      Vpc: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-namespace
+
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-task-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+        - PolicyName: EcsExecLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-task-execution
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EcsExec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-task-role
+
+  KeycloakTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-keycloak-task-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: KeycloakSecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakDbSecretArn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-task-execution
+
+  KeycloakEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EnvironmentName}-keycloak
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 10,
+                "description": "Keep last 10 git SHA tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["sha-"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 20,
+                "description": "Expire untagged images older than 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowECSPull
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+          - Sid: AllowPush
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak
+
+  RegistryCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDnsConfig
+    Properties:
+      DomainName: !If
+        - UseRegionalDomainsCondition
+        - !Sub registry.${AWS::Region}.${BaseDomain}
+        - !Sub registry.${BaseDomain}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !If
+            - UseRegionalDomainsCondition
+            - !Sub registry.${AWS::Region}.${BaseDomain}
+            - !Sub registry.${BaseDomain}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-cert
+
+  KeycloakCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDnsConfig
+    Properties:
+      DomainName: !If
+        - UseRegionalDomainsCondition
+        - !Sub kc.${AWS::Region}.${BaseDomain}
+        - !Sub kc.${BaseDomain}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !If
+            - UseRegionalDomainsCondition
+            - !Sub kc.${AWS::Region}.${BaseDomain}
+            - !Sub kc.${BaseDomain}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cert
+
+  MainAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-MainAlbSG
+      Subnets: !Split
+        - ','
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PublicSubnets
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-alb
+
+  RegistryTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-registry-tg
+      Port: 7860
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckPort: '7860'
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-tg
+
+  AuthTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-auth-tg
+      Port: 8888
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-tg
+
+  GradioTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-gradio-tg
+      Port: 7860
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-gradio-tg
+
+  MainAlbHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref RegistryTargetGroup
+
+  MainAlbHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasDnsConfig
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref RegistryCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref RegistryTargetGroup
+
+  MainAlbAuthListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 8888
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthTargetGroup
+
+  MainAlbGradioListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 7860
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GradioTargetGroup
+
+  KeycloakAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-KeycloakAlbSG
+      Subnets: !Split
+        - ','
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PublicSubnets
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-alb
+
+  KeycloakTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-tg
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: 200-399
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '86400'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-tg
+
+  KeycloakHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref KeycloakAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref KeycloakTargetGroup
+
+  KeycloakHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasDnsConfig
+    Properties:
+      LoadBalancerArn: !Ref KeycloakAlb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref KeycloakCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref KeycloakTargetGroup
+
+  RegistryDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsConfig
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !If
+        - UseRegionalDomainsCondition
+        - !Sub registry.${AWS::Region}.${BaseDomain}
+        - !Sub registry.${BaseDomain}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt MainAlb.DNSName
+        HostedZoneId: !GetAtt MainAlb.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  KeycloakDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsConfig
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !If
+        - UseRegionalDomainsCondition
+        - !Sub kc.${AWS::Region}.${BaseDomain}
+        - !Sub kc.${BaseDomain}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt KeycloakAlb.DNSName
+        HostedZoneId: !GetAtt KeycloakAlb.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+Outputs:
+  MainEcsClusterArn:
+    Description: Main ECS Cluster ARN
+    Value: !GetAtt MainEcsCluster.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-MainEcsClusterArn
+
+  MainEcsClusterName:
+    Description: Main ECS Cluster Name
+    Value: !Ref MainEcsCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-MainEcsClusterName
+
+  KeycloakEcsClusterArn:
+    Description: Keycloak ECS Cluster ARN
+    Value: !GetAtt KeycloakEcsCluster.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakEcsClusterArn
+
+  KeycloakEcsClusterName:
+    Description: Keycloak ECS Cluster Name
+    Value: !Ref KeycloakEcsCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakEcsClusterName
+
+  ServiceDiscoveryNamespaceArn:
+    Description: Service Discovery Namespace ARN
+    Value: !GetAtt ServiceDiscoveryNamespace.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+
+  ServiceDiscoveryNamespaceId:
+    Description: Service Discovery Namespace ID
+    Value: !Ref ServiceDiscoveryNamespace
+    Export:
+      Name: !Sub ${EnvironmentName}-ServiceDiscoveryNamespaceId
+
+  EcsTaskExecutionRoleArn:
+    Description: ECS Task Execution Role ARN
+    Value: !GetAtt EcsTaskExecutionRole.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-EcsTaskExecutionRoleArn
+
+  EcsTaskRoleArn:
+    Description: ECS Task Role ARN
+    Value: !GetAtt EcsTaskRole.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-EcsTaskRoleArn
+
+  KeycloakTaskExecutionRoleArn:
+    Description: Keycloak Task Execution Role ARN
+    Value: !GetAtt KeycloakTaskExecutionRole.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakTaskExecutionRoleArn
+
+  MainAlbDnsName:
+    Description: Main ALB DNS Name
+    Value: !GetAtt MainAlb.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-MainAlbDnsName
+
+  MainAlbArn:
+    Description: Main ALB ARN
+    Value: !Ref MainAlb
+    Export:
+      Name: !Sub ${EnvironmentName}-MainAlbArn
+
+  KeycloakAlbDnsName:
+    Description: Keycloak ALB DNS Name
+    Value: !GetAtt KeycloakAlb.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakAlbDnsName
+
+  KeycloakAlbArn:
+    Description: Keycloak ALB ARN
+    Value: !Ref KeycloakAlb
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakAlbArn
+
+  RegistryTargetGroupArn:
+    Description: Registry Target Group ARN
+    Value: !Ref RegistryTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryTargetGroupArn
+
+  AuthTargetGroupArn:
+    Description: Auth Target Group ARN
+    Value: !Ref AuthTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthTargetGroupArn
+
+  GradioTargetGroupArn:
+    Description: Gradio Target Group ARN
+    Value: !Ref GradioTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-GradioTargetGroupArn
+
+  KeycloakTargetGroupArn:
+    Description: Keycloak Target Group ARN
+    Value: !Ref KeycloakTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakTargetGroupArn
+
+  KeycloakEcrRepositoryUri:
+    Description: Keycloak ECR Repository URI
+    Value: !GetAtt KeycloakEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakEcrRepositoryUri
+
+  RegistryUrl:
+    Description: Registry URL (DNS name if configured, otherwise ALB DNS)
+    Value: !If
+      - HasDnsConfig
+      - !If
+        - UseRegionalDomainsCondition
+        - !Sub https://registry.${AWS::Region}.${BaseDomain}
+        - !Sub https://registry.${BaseDomain}
+      - !Sub http://${MainAlb.DNSName}
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryUrl
+
+  KeycloakUrl:
+    Description: Keycloak URL (DNS name if configured, otherwise ALB DNS)
+    Value: !If
+      - HasDnsConfig
+      - !If
+        - UseRegionalDomainsCondition
+        - !Sub https://kc.${AWS::Region}.${BaseDomain}
+        - !Sub https://kc.${BaseDomain}
+      - !Sub http://${KeycloakAlb.DNSName}
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakUrl
