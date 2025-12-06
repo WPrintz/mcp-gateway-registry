@@ -11,46 +11,81 @@ Parameters:
     Default: mcp-gateway
     Description: Name prefix for all resources (must match network/data/compute stacks)
 
-  # Container Images
-  RegistryImageUri:
+  # Container Image Repositories (ECR URIs constructed dynamically using AWS::AccountId and AWS::Region)
+  RegistryImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-registry:latest'
-    Description: Registry container image URI
+    Default: 'mcp-gateway-registry'
+    Description: ECR repository name for Registry service
 
-  AuthServerImageUri:
+  RegistryImageTag:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-auth:latest'
-    Description: Auth server container image URI
+    Default: 'latest'
+    Description: Image tag for Registry service
+
+  AuthServerImageRepo:
+    Type: String
+    Default: 'mcp-gateway-auth-server'
+    Description: ECR repository name for Auth Server
+
+  AuthServerImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Auth Server
 
   KeycloakImageUri:
     Type: String
     Default: 'quay.io/keycloak/keycloak:26.0'
-    Description: Keycloak container image URI
+    Description: Keycloak container image URI (external, not ECR)
 
-  CurrentTimeImageUri:
+  CurrentTimeImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-currenttime:latest'
-    Description: CurrentTime MCP server image URI
+    Default: 'mcp-gateway-currenttime'
+    Description: ECR repository name for CurrentTime MCP server
 
-  McpgwImageUri:
+  CurrentTimeImageTag:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-mcpgw:latest'
-    Description: MCPGW MCP server image URI
+    Default: 'latest'
+    Description: Image tag for CurrentTime MCP server
 
-  RealServerFakeToolsImageUri:
+  McpgwImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-realserverfaketools:latest'
-    Description: RealServerFakeTools MCP server image URI
+    Default: 'mcp-gateway-mcpgw'
+    Description: ECR repository name for MCPGW MCP server
 
-  FlightBookingAgentImageUri:
+  McpgwImageTag:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-flight-booking:latest'
-    Description: Flight Booking Agent image URI
+    Default: 'latest'
+    Description: Image tag for MCPGW MCP server
 
-  TravelAssistantAgentImageUri:
+  RealServerFakeToolsImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-travel-assistant:latest'
-    Description: Travel Assistant Agent image URI
+    Default: 'mcp-gateway-realserverfaketools'
+    Description: ECR repository name for RealServerFakeTools MCP server
+
+  RealServerFakeToolsImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for RealServerFakeTools MCP server
+
+  FlightBookingAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-flight-booking-agent'
+    Description: ECR repository name for Flight Booking Agent
+
+  FlightBookingAgentImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Flight Booking Agent
+
+  TravelAssistantAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-travel-assistant-agent'
+    Description: ECR repository name for Travel Assistant Agent
+
+  TravelAssistantAgentImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Travel Assistant Agent
 
   # Resource Configuration
   ServiceCpu:
@@ -181,7 +216,7 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointLogsId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointLogs
         - Name: auth-config
           EFSVolumeConfiguration:
             FilesystemId: !ImportValue
@@ -189,10 +224,10 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointAuthConfigId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointAuthConfig
       ContainerDefinitions:
         - Name: auth-server
-          Image: !Ref AuthServerImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AuthServerImageRepo}:${AuthServerImageTag}'
           Essential: true
           PortMappings:
             - Name: auth-server
@@ -282,7 +317,7 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointServersId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointServers
         - Name: mcp-agents
           EFSVolumeConfiguration:
             FilesystemId: !ImportValue
@@ -290,7 +325,7 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointAgentsId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointAgents
         - Name: mcp-models
           EFSVolumeConfiguration:
             FilesystemId: !ImportValue
@@ -298,7 +333,7 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointModelsId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointModels
         - Name: mcp-logs
           EFSVolumeConfiguration:
             FilesystemId: !ImportValue
@@ -306,7 +341,7 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointLogsId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointLogs
         - Name: auth-config
           EFSVolumeConfiguration:
             FilesystemId: !ImportValue
@@ -314,10 +349,10 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointAuthConfigId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointAuthConfig
       ContainerDefinitions:
         - Name: registry
-          Image: !Ref RegistryImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RegistryImageRepo}:${RegistryImageTag}'
           Essential: true
           PortMappings:
             - Name: http
@@ -517,7 +552,7 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
       ContainerDefinitions:
         - Name: currenttime-server
-          Image: !Ref CurrentTimeImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${CurrentTimeImageRepo}:${CurrentTimeImageTag}'
           Essential: true
           PortMappings:
             - Name: currenttime
@@ -571,10 +606,10 @@ Resources:
             TransitEncryption: ENABLED
             AuthorizationConfig:
               AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointMcpgwDataId
+                Fn::Sub: ${EnvironmentName}-EfsAccessPointMcpgwData
       ContainerDefinitions:
         - Name: mcpgw-server
-          Image: !Ref McpgwImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${McpgwImageRepo}:${McpgwImageTag}'
           Essential: true
           PortMappings:
             - Name: mcpgw
@@ -631,7 +666,7 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
       ContainerDefinitions:
         - Name: realserverfaketools-server
-          Image: !Ref RealServerFakeToolsImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RealServerFakeToolsImageRepo}:${RealServerFakeToolsImageTag}'
           Essential: true
           PortMappings:
             - Name: realserverfaketools
@@ -678,7 +713,7 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
       ContainerDefinitions:
         - Name: flight-booking-agent
-          Image: !Ref FlightBookingAgentImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FlightBookingAgentImageRepo}:${FlightBookingAgentImageTag}'
           Essential: true
           PortMappings:
             - Name: flight-booking
@@ -725,7 +760,7 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
       ContainerDefinitions:
         - Name: travel-assistant-agent
-          Image: !Ref TravelAssistantAgentImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TravelAssistantAgentImageRepo}:${TravelAssistantAgentImageTag}'
           Essential: true
           PortMappings:
             - Name: travel-assistant

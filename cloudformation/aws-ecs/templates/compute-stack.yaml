@@ -26,6 +26,11 @@ Parameters:
     AllowedValues: ['true', 'false']
     Description: Use region-based domain names
 
+  GitHubRepoUrl:
+    Type: String
+    Default: 'https://github.com/WPrintz/mcp-gateway-registry.git'
+    Description: GitHub repository URL for source code (public repo, no auth needed)
+
 Conditions:
   UseRegionalDomainsCondition: !Equals [!Ref UseRegionalDomains, 'true']
   HasDnsConfig: !And
@@ -267,6 +272,308 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak
+
+  #============================================================================
+  # ECR Repositories for All Services
+  #============================================================================
+  RegistryEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-registry
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-ecr
+
+  AuthServerEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-auth-server
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-server-ecr
+
+  CurrentTimeEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-currenttime
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-currenttime-ecr
+
+  McpgwEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-mcpgw
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw-ecr
+
+  RealServerFakeToolsEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-realserverfaketools
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-realserverfaketools-ecr
+
+  FlightBookingAgentEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-flight-booking-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-flight-booking-agent-ecr
+
+  TravelAssistantAgentEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-travel-assistant-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-travel-assistant-agent-ecr
+
+  #============================================================================
+  # CodeBuild Project for Building Container Images
+  #============================================================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-*
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/mcp-gateway-*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-codebuild-role
+
+  ContainerBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${EnvironmentName}-container-build
+      Description: Build and push MCP Gateway container images to ECR
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: ECR_REGISTRY
+            Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepoUrl
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+            build:
+              commands:
+                - echo Building container images...
+                # Registry
+                - docker build -t $ECR_REGISTRY/mcp-gateway-registry:latest -f docker/Dockerfile.registry .
+                - docker push $ECR_REGISTRY/mcp-gateway-registry:latest
+                # Auth Server
+                - docker build -t $ECR_REGISTRY/mcp-gateway-auth-server:latest -f docker/Dockerfile.auth .
+                - docker push $ECR_REGISTRY/mcp-gateway-auth-server:latest
+                # CurrentTime MCP Server
+                - docker build -t $ECR_REGISTRY/mcp-gateway-currenttime:latest -f docker/Dockerfile.mcp-server servers/currenttime
+                - docker push $ECR_REGISTRY/mcp-gateway-currenttime:latest
+                # MCPGW MCP Server
+                - docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:latest -f docker/Dockerfile.mcp-server servers/mcpgw
+                - docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest
+                # RealServerFakeTools MCP Server
+                - docker build -t $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest -f docker/Dockerfile.mcp-server servers/realserverfaketools
+                - docker push $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest
+                # Flight Booking Agent - setup .tmp directory with dependencies first
+                - mkdir -p agents/a2a/src/flight-booking-agent/.tmp
+                - cp agents/a2a/pyproject.toml agents/a2a/src/flight-booking-agent/.tmp/
+                - cp agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+                - docker build -t $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest -f agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent
+                - docker push $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest
+                # Travel Assistant Agent - setup .tmp directory with dependencies first
+                - mkdir -p agents/a2a/src/travel-assistant-agent/.tmp
+                - cp agents/a2a/pyproject.toml agents/a2a/src/travel-assistant-agent/.tmp/
+                - cp agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
+                - docker build -t $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest -f agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent
+                - docker push $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest
+            post_build:
+              commands:
+                - echo Build completed on `date`
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-container-build
+
+  #============================================================================
+  # Lambda to Trigger CodeBuild on Stack Creation
+  #============================================================================
+  TriggerBuildLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-trigger-build-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TriggerBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt ContainerBuildProject.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-trigger-build-lambda-role
+
+  TriggerBuildLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-trigger-container-build
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TriggerBuildLambdaRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import time
+
+          def handler(event, context):
+              print(f"Event: {event}")
+              
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+              
+              try:
+                  codebuild = boto3.client('codebuild')
+                  project_name = event['ResourceProperties']['ProjectName']
+                  
+                  # Start the build
+                  response = codebuild.start_build(projectName=project_name)
+                  build_id = response['build']['id']
+                  print(f"Started build: {build_id}")
+                  
+                  # Wait for build to complete (with timeout)
+                  max_wait = 1800  # 30 minutes
+                  wait_interval = 30
+                  elapsed = 0
+                  
+                  while elapsed < max_wait:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+                      
+                      builds = codebuild.batch_get_builds(ids=[build_id])
+                      build_status = builds['builds'][0]['buildStatus']
+                      print(f"Build status: {build_status} (elapsed: {elapsed}s)")
+                      
+                      if build_status == 'SUCCEEDED':
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {'BuildId': build_id})
+                          return
+                      elif build_status in ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT']:
+                          cfnresponse.send(event, context, cfnresponse.FAILED, {'BuildId': build_id, 'Status': build_status})
+                          return
+                  
+                  # Timeout waiting for build
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': 'Build timed out'})
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-trigger-build-lambda
+
+  TriggerContainerBuild:
+    Type: Custom::TriggerBuild
+    DependsOn:
+      - RegistryEcrRepository
+      - AuthServerEcrRepository
+      - CurrentTimeEcrRepository
+      - McpgwEcrRepository
+      - RealServerFakeToolsEcrRepository
+      - FlightBookingAgentEcrRepository
+      - TravelAssistantAgentEcrRepository
+      - ContainerBuildProject
+    Properties:
+      ServiceToken: !GetAtt TriggerBuildLambda.Arn
+      ProjectName: !Ref ContainerBuildProject
 
   RegistryCertificate:
     Type: AWS::CertificateManager::Certificate
@@ -677,3 +984,55 @@ Outputs:
       - !Sub http://${KeycloakAlb.DNSName}
     Export:
       Name: !Sub ${EnvironmentName}-KeycloakUrl
+
+  ContainerBuildProjectName:
+    Description: CodeBuild project name for container builds
+    Value: !Ref ContainerBuildProject
+    Export:
+      Name: !Sub ${EnvironmentName}-ContainerBuildProjectName
+
+  ContainerBuildStatus:
+    Description: Container build was triggered (check CodeBuild console for status)
+    Value: !GetAtt TriggerContainerBuild.BuildId
+
+  RegistryEcrRepositoryUri:
+    Description: Registry ECR Repository URI
+    Value: !GetAtt RegistryEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryEcrRepositoryUri
+
+  AuthServerEcrRepositoryUri:
+    Description: Auth Server ECR Repository URI
+    Value: !GetAtt AuthServerEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthServerEcrRepositoryUri
+
+  CurrentTimeEcrRepositoryUri:
+    Description: CurrentTime ECR Repository URI
+    Value: !GetAtt CurrentTimeEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-CurrentTimeEcrRepositoryUri
+
+  McpgwEcrRepositoryUri:
+    Description: MCPGW ECR Repository URI
+    Value: !GetAtt McpgwEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-McpgwEcrRepositoryUri
+
+  RealServerFakeToolsEcrRepositoryUri:
+    Description: RealServerFakeTools ECR Repository URI
+    Value: !GetAtt RealServerFakeToolsEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-RealServerFakeToolsEcrRepositoryUri
+
+  FlightBookingAgentEcrRepositoryUri:
+    Description: Flight Booking Agent ECR Repository URI
+    Value: !GetAtt FlightBookingAgentEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-FlightBookingAgentEcrRepositoryUri
+
+  TravelAssistantAgentEcrRepositoryUri:
+    Description: Travel Assistant Agent ECR Repository URI
+    Value: !GetAtt TravelAssistantAgentEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-TravelAssistantAgentEcrRepositoryUri

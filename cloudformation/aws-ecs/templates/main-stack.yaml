@@ -68,46 +68,81 @@ Parameters:
     Default: 2
     Description: Maximum Aurora Capacity Units
 
-  # Container Images
-  RegistryImageUri:
+  # Container Image Repositories (ECR URIs constructed dynamically using AWS::AccountId and AWS::Region)
+  RegistryImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-registry:latest'
-    Description: Registry container image URI
+    Default: 'mcp-gateway-registry'
+    Description: ECR repository name for Registry service
 
-  AuthServerImageUri:
+  RegistryImageTag:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-gateway-auth:latest'
-    Description: Auth server container image URI
+    Default: 'latest'
+    Description: Image tag for Registry service
+
+  AuthServerImageRepo:
+    Type: String
+    Default: 'mcp-gateway-auth-server'
+    Description: ECR repository name for Auth Server
+
+  AuthServerImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Auth Server
 
   KeycloakImageUri:
     Type: String
     Default: 'quay.io/keycloak/keycloak:26.0'
-    Description: Keycloak container image URI
+    Description: Keycloak container image URI (external, not ECR)
 
-  CurrentTimeImageUri:
+  CurrentTimeImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-currenttime:latest'
-    Description: CurrentTime MCP server image URI
+    Default: 'mcp-gateway-currenttime'
+    Description: ECR repository name for CurrentTime MCP server
 
-  McpgwImageUri:
+  CurrentTimeImageTag:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-mcpgw:latest'
-    Description: MCPGW MCP server image URI
+    Default: 'latest'
+    Description: Image tag for CurrentTime MCP server
 
-  RealServerFakeToolsImageUri:
+  McpgwImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-realserverfaketools:latest'
-    Description: RealServerFakeTools MCP server image URI
+    Default: 'mcp-gateway-mcpgw'
+    Description: ECR repository name for MCPGW MCP server
 
-  FlightBookingAgentImageUri:
+  McpgwImageTag:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-flight-booking:latest'
-    Description: Flight Booking Agent image URI
+    Default: 'latest'
+    Description: Image tag for MCPGW MCP server
 
-  TravelAssistantAgentImageUri:
+  RealServerFakeToolsImageRepo:
     Type: String
-    Default: '704390743772.dkr.ecr.us-west-2.amazonaws.com/mcp-travel-assistant:latest'
-    Description: Travel Assistant Agent image URI
+    Default: 'mcp-gateway-realserverfaketools'
+    Description: ECR repository name for RealServerFakeTools MCP server
+
+  RealServerFakeToolsImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for RealServerFakeTools MCP server
+
+  FlightBookingAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-flight-booking-agent'
+    Description: ECR repository name for Flight Booking Agent
+
+  FlightBookingAgentImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Flight Booking Agent
+
+  TravelAssistantAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-travel-assistant-agent'
+    Description: ECR repository name for Travel Assistant Agent
+
+  TravelAssistantAgentImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Travel Assistant Agent
 
   # Resource Configuration
   ServiceCpu:
@@ -298,14 +333,21 @@ Resources:
             - !Sub kc.${BaseDomain}
           - !GetAtt ComputeStack.Outputs.KeycloakAlbDnsName
         RdsProxyEndpoint: !GetAtt DataStack.Outputs.RdsProxyEndpoint
-        RegistryImageUri: !Ref RegistryImageUri
-        AuthServerImageUri: !Ref AuthServerImageUri
+        RegistryImageRepo: !Ref RegistryImageRepo
+        RegistryImageTag: !Ref RegistryImageTag
+        AuthServerImageRepo: !Ref AuthServerImageRepo
+        AuthServerImageTag: !Ref AuthServerImageTag
         KeycloakImageUri: !Ref KeycloakImageUri
-        CurrentTimeImageUri: !Ref CurrentTimeImageUri
-        McpgwImageUri: !Ref McpgwImageUri
-        RealServerFakeToolsImageUri: !Ref RealServerFakeToolsImageUri
-        FlightBookingAgentImageUri: !Ref FlightBookingAgentImageUri
-        TravelAssistantAgentImageUri: !Ref TravelAssistantAgentImageUri
+        CurrentTimeImageRepo: !Ref CurrentTimeImageRepo
+        CurrentTimeImageTag: !Ref CurrentTimeImageTag
+        McpgwImageRepo: !Ref McpgwImageRepo
+        McpgwImageTag: !Ref McpgwImageTag
+        RealServerFakeToolsImageRepo: !Ref RealServerFakeToolsImageRepo
+        RealServerFakeToolsImageTag: !Ref RealServerFakeToolsImageTag
+        FlightBookingAgentImageRepo: !Ref FlightBookingAgentImageRepo
+        FlightBookingAgentImageTag: !Ref FlightBookingAgentImageTag
+        TravelAssistantAgentImageRepo: !Ref TravelAssistantAgentImageRepo
+        TravelAssistantAgentImageTag: !Ref TravelAssistantAgentImageTag
         ServiceCpu: !Ref ServiceCpu
         ServiceMemory: !Ref ServiceMemory
         KeycloakCpu: !Ref KeycloakCpu
