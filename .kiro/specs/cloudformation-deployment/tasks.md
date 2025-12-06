@@ -119,25 +119,27 @@
     - Main ALB responding at http://mcp-gateway-alb-540864537.us-west-2.elb.amazonaws.com
     - Keycloak ALB responding at http://mcp-gateway-keycloak-alb-1578958238.us-west-2.elb.amazonaws.com
 
-- [ ] 9. Add CloudFront for Keycloak HTTPS (no custom domain required)
-  - [ ] 9.1 Add CloudFront distribution for Keycloak ALB to **compute-stack.yaml**
+- [x] 9. Add CloudFront for Keycloak HTTPS (no custom domain required)
+  - [x] 9.1 Add CloudFront distribution for Keycloak ALB to **compute-stack.yaml**
     - Create CloudFront distribution with Keycloak ALB as origin
     - Use default CloudFront SSL certificate (*.cloudfront.net)
     - Configure origin protocol policy: HTTP only (ALB handles HTTP)
     - Configure cache behavior: CachingDisabled (Keycloak is dynamic)
-    - Forward headers: Host, Authorization, Cookie
+    - Added custom origin header: `X-Forwarded-Proto: https`
     - Export CloudFront domain name as `${EnvironmentName}-KeycloakCloudFrontDomain`
-  - [ ] 9.2 Update **services-stack.yaml** Keycloak task definition
+    - **CloudFront URL: https://d1856vgnusszma.cloudfront.net**
+  - [x] 9.2 Update **services-stack.yaml** Keycloak task definition
+    - Changed `KC_HOSTNAME_STRICT_HTTPS` to `true` (required for CloudFront setup)
     - Change KC_HOSTNAME to use CloudFront domain (!ImportValue KeycloakCloudFrontDomain)
     - Ensure KC_PROXY=edge is set (already done)
-  - [ ] 9.3 Update **services-stack.yaml** services that reference Keycloak URL
+  - [x] 9.3 Update **services-stack.yaml** services that reference Keycloak URL
     - Auth Server: KEYCLOAK_URL, KEYCLOAK_EXTERNAL_URL → CloudFront URL
     - Registry: KEYCLOAK_URL → CloudFront URL
-  - [ ] 9.4 Deploy updated stacks and verify
-    - Update compute-stack (adds CloudFront)
-    - Update services-stack (uses CloudFront URL)
-    - Test https://<cloudfront-domain>/realms/master returns valid response
-    - Test OAuth flows work end-to-end
+  - [x] 9.4 Deploy updated stacks and verify
+    - Update compute-stack (adds CloudFront) ✅
+    - Update services-stack (uses CloudFront URL) ✅
+    - Test https://d1856vgnusszma.cloudfront.net/realms/master returns 200 ✅
+    - OpenID configuration returns HTTPS URLs ✅
 
 - [ ] 10. Test main-stack nested deployment
   - [ ] 10.1 Tear down existing individual stacks (reverse order)

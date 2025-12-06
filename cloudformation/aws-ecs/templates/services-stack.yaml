@@ -267,10 +267,10 @@ Resources:
               Value: keycloak
             - Name: KEYCLOAK_URL
               Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-KeycloakUrl
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
             - Name: KEYCLOAK_EXTERNAL_URL
               Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-KeycloakUrl
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
             - Name: KEYCLOAK_REALM
               Value: mcp-gateway
             - Name: KEYCLOAK_CLIENT_ID
@@ -399,7 +399,7 @@ Resources:
                     Fn::Sub: ${EnvironmentName}-RegistryUrl
             - Name: KEYCLOAK_URL
               Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-KeycloakUrl
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
             - Name: KEYCLOAK_ENABLED
               Value: 'true'
             - Name: KEYCLOAK_REALM
@@ -504,11 +504,11 @@ Resources:
               Value: 'true'
             - Name: KC_HOSTNAME
               Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-KeycloakAlbDnsName
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontDomain
             - Name: KC_HOSTNAME_STRICT
               Value: 'false'
             - Name: KC_HOSTNAME_STRICT_HTTPS
-              Value: 'false'
+              Value: 'true'
             - Name: KC_HEALTH_ENABLED
               Value: 'true'
             - Name: KC_METRICS_ENABLED

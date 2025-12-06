@@ -447,60 +447,169 @@ Resources:
         - !Ref AuroraCluster
 
   #============================================================================
-  # SSM Parameters for Database Connection
-  # Note: CloudFormation doesn't support SecureString directly, using String type
-  # For production, consider using Secrets Manager instead
+  # SSM SecureString Parameters via Custom Resource
+  # CloudFormation doesn't support SecureString with dynamic values directly,
+  # so we use a Lambda custom resource to create SecureString parameters
+  # (matching Terraform's aws_ssm_parameter with type = "SecureString")
   #============================================================================
-  SsmKeycloakDatabaseUrl:
-    Type: AWS::SSM::Parameter
+  SsmSecureStringLambdaRole:
+    Type: AWS::IAM::Role
     Properties:
+      RoleName: !Sub ${EnvironmentName}-ssm-securestring-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SsmSecureStringPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParameter
+                  - ssm:AddTagsToResource
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ssm-securestring-role
+
+  SsmSecureStringLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-ssm-securestring
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt SsmSecureStringLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              print(f"Event: {event}")
+              ssm = boto3.client('ssm')
+              
+              try:
+                  name = event['ResourceProperties']['Name']
+                  
+                  if event['RequestType'] == 'Delete':
+                      try:
+                          ssm.delete_parameter(Name=name)
+                          print(f"Deleted parameter: {name}")
+                      except ssm.exceptions.ParameterNotFound:
+                          print(f"Parameter not found (already deleted): {name}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  # Create or Update
+                  value = event['ResourceProperties']['Value']
+                  description = event['ResourceProperties'].get('Description', '')
+                  tags = event['ResourceProperties'].get('Tags', [])
+                  
+                  ssm.put_parameter(
+                      Name=name,
+                      Value=value,
+                      Type='SecureString',
+                      Description=description,
+                      Overwrite=True
+                  )
+                  print(f"Created/Updated SecureString parameter: {name}")
+                  
+                  # Add tags if provided
+                  if tags:
+                      ssm.add_tags_to_resource(
+                          ResourceType='Parameter',
+                          ResourceId=name,
+                          Tags=tags
+                      )
+                  
+                  # Return the ARN
+                  region = context.invoked_function_arn.split(':')[3]
+                  account = context.invoked_function_arn.split(':')[4]
+                  arn = f"arn:aws:ssm:{region}:{account}:parameter{name}"
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Arn': arn})
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ssm-securestring
+
+  # SSM SecureString Parameters (matching Terraform exactly)
+  SsmKeycloakDatabaseUrl:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
       Name: /keycloak/database/url
-      Type: String
       Value: !Sub jdbc:mysql://${AuroraCluster.Endpoint.Address}:3306/keycloak
       Description: Keycloak database JDBC URL
       Tags:
-        Name: !Sub ${EnvironmentName}-keycloak-db-url
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-url
 
   SsmKeycloakDatabaseUsername:
-    Type: AWS::SSM::Parameter
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
     Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
       Name: /keycloak/database/username
-      Type: String
       Value: !Ref KeycloakDatabaseUsername
       Description: Keycloak database username
       Tags:
-        Name: !Sub ${EnvironmentName}-keycloak-db-username
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-username
 
   SsmKeycloakDatabasePassword:
-    Type: AWS::SSM::Parameter
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
     Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
       Name: /keycloak/database/password
-      Type: String
       Value: !Ref KeycloakDatabasePassword
       Description: Keycloak database password
       Tags:
-        Name: !Sub ${EnvironmentName}-keycloak-db-password
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-password
 
-  # SSM Parameters for Keycloak Admin Credentials (matching Terraform)
   SsmKeycloakAdmin:
-    Type: AWS::SSM::Parameter
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
     Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
       Name: /keycloak/admin
-      Type: String
       Value: admin
       Description: Keycloak admin username
       Tags:
-        Name: !Sub ${EnvironmentName}-keycloak-admin
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-admin
 
   SsmKeycloakAdminPassword:
-    Type: AWS::SSM::Parameter
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
     Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
       Name: /keycloak/admin_password
-      Type: String
       Value: !Ref KeycloakAdminPassword
       Description: Keycloak admin password
       Tags:
-        Name: !Sub ${EnvironmentName}-keycloak-admin-password
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-admin-password
 
 #============================================================================
 # Outputs

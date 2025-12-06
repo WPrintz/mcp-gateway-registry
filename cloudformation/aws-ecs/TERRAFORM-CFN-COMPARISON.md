@@ -440,13 +440,89 @@ All Keycloak configuration has been updated to match Terraform exactly:
 
 ---
 
+## CloudFront for Keycloak HTTPS (CloudFormation-Only)
+
+**Why This Is Needed:**
+Terraform uses Route53 hosted zones with ACM certificates to provide HTTPS for Keycloak. In environments without a Route53 hosted zone (e.g., workshop accounts), CloudFront provides HTTPS using the default `*.cloudfront.net` certificate.
+
+### Architecture Difference
+
+| Component | Terraform | CloudFormation (No Route53) |
+|-----------|-----------|----------------------------|
+| Keycloak HTTPS | ACM cert + Route53 + ALB HTTPS listener | CloudFront + ALB HTTP |
+| Certificate | Custom domain ACM cert | Default CloudFront cert |
+| URL | `https://keycloak.yourdomain.com` | `https://d1856vgnusszma.cloudfront.net` |
+
+### CloudFront Configuration (compute-stack.yaml)
+
+```yaml
+KeycloakCloudFrontDistribution:
+  Type: AWS::CloudFront::Distribution
+  Properties:
+    DistributionConfig:
+      Origins:
+        - Id: KeycloakAlbOrigin
+          DomainName: !GetAtt KeycloakAlb.DNSName
+          CustomOriginConfig:
+            OriginProtocolPolicy: http-only  # CloudFront → ALB via HTTP
+          OriginCustomHeaders:
+            - HeaderName: X-Forwarded-Proto
+              HeaderValue: https  # Tell Keycloak original request was HTTPS
+      DefaultCacheBehavior:
+        ViewerProtocolPolicy: redirect-to-https
+        CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+        OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+      ViewerCertificate:
+        CloudFrontDefaultCertificate: true  # Uses *.cloudfront.net cert
+```
+
+### Keycloak Configuration Changes
+
+| Setting | Terraform | CloudFormation (CloudFront) | Reason |
+|---------|-----------|----------------------------|--------|
+| KC_HOSTNAME | `keycloak.yourdomain.com` | `d1856vgnusszma.cloudfront.net` | CloudFront domain |
+| KC_HOSTNAME_STRICT_HTTPS | `false` | `true` | Force HTTPS URLs since ALB receives HTTP |
+| KC_PROXY | `edge` | `edge` | Same - trust proxy headers |
+
+### Key Points for Team
+
+1. **CloudFront adds `X-Forwarded-Proto: https` header** - This custom origin header tells the ALB/Keycloak that the original request was HTTPS, even though CloudFront connects to ALB via HTTP.
+
+2. **KC_HOSTNAME_STRICT_HTTPS=true is required** - Without Route53/ACM, the ALB listener is HTTP-only. The ALB overwrites `X-Forwarded-Proto` based on its incoming connection (HTTP). Setting `KC_HOSTNAME_STRICT_HTTPS=true` forces Keycloak to always generate HTTPS URLs regardless of the incoming protocol.
+
+3. **CachingDisabled policy is essential** - Keycloak is a dynamic application with session state. Caching would break authentication flows.
+
+4. **AllViewer origin request policy** - Forwards all viewer headers (cookies, authorization) to the origin, required for OAuth flows.
+
+### Exports Added
+
+| Export | Value | Used By |
+|--------|-------|---------|
+| `${EnvironmentName}-KeycloakCloudFrontUrl` | `https://d1856vgnusszma.cloudfront.net` | Auth Server, Registry |
+| `${EnvironmentName}-KeycloakCloudFrontDomain` | `d1856vgnusszma.cloudfront.net` | Keycloak KC_HOSTNAME |
+
+### Services Updated to Use CloudFront URL
+
+- **Auth Server**: `KEYCLOAK_URL`, `KEYCLOAK_EXTERNAL_URL` → CloudFront URL
+- **Registry**: `KEYCLOAK_URL` → CloudFront URL
+- **Keycloak**: `KC_HOSTNAME` → CloudFront domain
+
+---
+
 ## Files Modified
 
 1. `cloudformation/aws-ecs/templates/data-stack.yaml`
    - Added SSM parameters: `/keycloak/admin`, `/keycloak/admin_password`
    - Added exports for all Keycloak SSM parameter ARNs
 
-2. `cloudformation/aws-ecs/templates/services-stack.yaml`
+2. `cloudformation/aws-ecs/templates/compute-stack.yaml`
+   - Added CloudFront distribution for Keycloak HTTPS (when Route53 not available)
+   - Added `X-Forwarded-Proto: https` custom origin header
+   - Added exports: `KeycloakCloudFrontUrl`, `KeycloakCloudFrontDomain`
+
+3. `cloudformation/aws-ecs/templates/services-stack.yaml`
    - Updated Keycloak task definition to match Terraform exactly
    - Added KeycloakLogLevel parameter
    - Added Keycloak auto scaling (ScalableTarget + CPU/Memory policies)
+   - Changed `KC_HOSTNAME_STRICT_HTTPS` to `true` (required for CloudFront setup)
+   - Updated Auth Server and Registry to use CloudFront URL for Keycloak
