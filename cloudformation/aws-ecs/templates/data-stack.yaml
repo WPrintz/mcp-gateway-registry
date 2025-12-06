@@ -481,6 +481,27 @@ Resources:
       Tags:
         Name: !Sub ${EnvironmentName}-keycloak-db-password
 
+  # SSM Parameters for Keycloak Admin Credentials (matching Terraform)
+  SsmKeycloakAdmin:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /keycloak/admin
+      Type: String
+      Value: admin
+      Description: Keycloak admin username
+      Tags:
+        Name: !Sub ${EnvironmentName}-keycloak-admin
+
+  SsmKeycloakAdminPassword:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /keycloak/admin_password
+      Type: String
+      Value: !Ref KeycloakAdminPassword
+      Description: Keycloak admin password
+      Tags:
+        Name: !Sub ${EnvironmentName}-keycloak-admin-password
+
 #============================================================================
 # Outputs
 #============================================================================
@@ -577,6 +598,37 @@ Outputs:
     Value: !Ref KeycloakM2MClientSecret
     Export:
       Name: !Sub ${EnvironmentName}-KeycloakM2MClientSecretArn
+
+  # SSM Parameter Outputs (for Keycloak - matching Terraform)
+  SsmKeycloakAdminArn:
+    Description: SSM Parameter ARN for Keycloak admin username
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/admin
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakAdminArn
+
+  SsmKeycloakAdminPasswordArn:
+    Description: SSM Parameter ARN for Keycloak admin password
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/admin_password
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakAdminPasswordArn
+
+  SsmKeycloakDatabaseUrlArn:
+    Description: SSM Parameter ARN for Keycloak database URL
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/url
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakDatabaseUrlArn
+
+  SsmKeycloakDatabaseUsernameArn:
+    Description: SSM Parameter ARN for Keycloak database username
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/username
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakDatabaseUsernameArn
+
+  SsmKeycloakDatabasePasswordArn:
+    Description: SSM Parameter ARN for Keycloak database password
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/password
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakDatabasePasswordArn
 
   # KMS Outputs
   RdsKmsKeyArn:

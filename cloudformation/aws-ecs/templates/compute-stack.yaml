@@ -1,8 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: >
-  MCP Gateway Registry - Compute Stack (Consolidated)
-  Creates ECS clusters, ALBs, target groups, listeners, ACM certificates (optional), Route53 records (optional), ECR, and IAM roles.
-  Target Region: us-west-2
+Description: |
+  MCP Gateway Registry - Compute Stack (Consolidated) Creates ECS clusters, ALBs, target groups, listeners, ACM certificates (optional), Route53 records (optional), ECR, and IAM roles. Target Region: us-west-2
 
 Parameters:
   EnvironmentName:
@@ -23,19 +21,29 @@ Parameters:
   UseRegionalDomains:
     Type: String
     Default: 'true'
-    AllowedValues: ['true', 'false']
+    AllowedValues:
+      - 'true'
+      - 'false'
     Description: Use region-based domain names
 
   GitHubRepoUrl:
     Type: String
-    Default: 'https://github.com/WPrintz/mcp-gateway-registry.git'
+    Default: https://github.com/WPrintz/mcp-gateway-registry.git
     Description: GitHub repository URL for source code (public repo, no auth needed)
 
 Conditions:
-  UseRegionalDomainsCondition: !Equals [!Ref UseRegionalDomains, 'true']
+  UseRegionalDomainsCondition: !Equals
+    - !Ref UseRegionalDomains
+    - 'true'
   HasDnsConfig: !And
-    - !Not [!Equals [!Ref BaseDomain, '']]
-    - !Not [!Equals [!Ref HostedZoneId, '']]
+    - !Not
+      - !Equals
+        - !Ref BaseDomain
+        - ''
+    - !Not
+      - !Equals
+        - !Ref HostedZoneId
+        - ''
 
 Resources:
   MainEcsCluster:
@@ -408,7 +416,7 @@ Resources:
         Type: NO_ARTIFACTS
       Environment:
         Type: LINUX_CONTAINER
-        ComputeType: BUILD_GENERAL1_MEDIUM
+        ComputeType: BUILD_GENERAL1_LARGE
         Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
         PrivilegedMode: true
         EnvironmentVariables:
@@ -428,36 +436,50 @@ Resources:
               commands:
                 - echo Logging in to Amazon ECR...
                 - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+                # Pre-pull base images to cache them before parallel builds
+                - echo Pre-pulling base images for layer caching...
+                - docker pull public.ecr.aws/docker/library/python:3.12-slim
+                - docker pull quay.io/keycloak/keycloak:23.0
+                # Setup A2A agent dependencies
+                - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
+                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
             build:
               commands:
-                - echo Building container images...
-                # Registry
-                - docker build -t $ECR_REGISTRY/mcp-gateway-registry:latest -f docker/Dockerfile.registry .
-                - docker push $ECR_REGISTRY/mcp-gateway-registry:latest
-                # Auth Server
-                - docker build -t $ECR_REGISTRY/mcp-gateway-auth-server:latest -f docker/Dockerfile.auth .
-                - docker push $ECR_REGISTRY/mcp-gateway-auth-server:latest
-                # CurrentTime MCP Server
-                - docker build -t $ECR_REGISTRY/mcp-gateway-currenttime:latest -f docker/Dockerfile.mcp-server servers/currenttime
-                - docker push $ECR_REGISTRY/mcp-gateway-currenttime:latest
-                # MCPGW MCP Server
-                - docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:latest -f docker/Dockerfile.mcp-server servers/mcpgw
-                - docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest
-                # RealServerFakeTools MCP Server
-                - docker build -t $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest -f docker/Dockerfile.mcp-server servers/realserverfaketools
-                - docker push $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest
-                # Flight Booking Agent - setup .tmp directory with dependencies first
-                - mkdir -p agents/a2a/src/flight-booking-agent/.tmp
-                - cp agents/a2a/pyproject.toml agents/a2a/src/flight-booking-agent/.tmp/
-                - cp agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
-                - docker build -t $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest -f agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent
-                - docker push $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest
-                # Travel Assistant Agent - setup .tmp directory with dependencies first
-                - mkdir -p agents/a2a/src/travel-assistant-agent/.tmp
-                - cp agents/a2a/pyproject.toml agents/a2a/src/travel-assistant-agent/.tmp/
-                - cp agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
-                - docker build -t $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest -f agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent
-                - docker push $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest
+                - echo Building container images in parallel...
+                - |
+                  # Build function that builds and pushes an image
+                  build_and_push() {
+                    local name=$1
+                    local dockerfile=$2
+                    local context=$3
+                    echo "Starting build: $name"
+                    docker build -t $ECR_REGISTRY/$name:latest -f $dockerfile $context && \
+                    docker push $ECR_REGISTRY/$name:latest && \
+                    echo "Completed: $name" || echo "FAILED: $name"
+                  }
+
+                  # Start all builds in parallel
+                  build_and_push mcp-gateway-registry docker/Dockerfile.registry . &
+                  build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
+                  build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
+                  build_and_push mcp-gateway-mcpgw docker/Dockerfile.mcp-server servers/mcpgw &
+                  build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
+                  build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
+                  build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
+                  build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
+
+                  # Wait for all background jobs and capture exit codes
+                  FAILED=0
+                  for job in $(jobs -p); do
+                    wait $job || FAILED=$((FAILED+1))
+                  done
+
+                  if [ $FAILED -gt 0 ]; then
+                    echo "$FAILED build(s) failed"
+                    exit 1
+                  fi
+                  echo "All builds completed successfully"
             post_build:
               commands:
                 - echo Build completed on `date`
@@ -516,43 +538,44 @@ Resources:
 
           def handler(event, context):
               print(f"Event: {event}")
-              
+
+              # Skip build on Delete
               if event['RequestType'] == 'Delete':
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                   return
-              
+
               try:
                   codebuild = boto3.client('codebuild')
                   project_name = event['ResourceProperties']['ProjectName']
-                  
+
                   # Start the build
                   response = codebuild.start_build(projectName=project_name)
                   build_id = response['build']['id']
                   print(f"Started build: {build_id}")
-                  
+
                   # Wait for build to complete (with timeout)
                   max_wait = 1800  # 30 minutes
                   wait_interval = 30
                   elapsed = 0
-                  
+
                   while elapsed < max_wait:
                       time.sleep(wait_interval)
                       elapsed += wait_interval
-                      
+
                       builds = codebuild.batch_get_builds(ids=[build_id])
                       build_status = builds['builds'][0]['buildStatus']
                       print(f"Build status: {build_status} (elapsed: {elapsed}s)")
-                      
+
                       if build_status == 'SUCCEEDED':
                           cfnresponse.send(event, context, cfnresponse.SUCCESS, {'BuildId': build_id})
                           return
                       elif build_status in ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT']:
                           cfnresponse.send(event, context, cfnresponse.FAILED, {'BuildId': build_id, 'Status': build_status})
                           return
-                  
+
                   # Timeout waiting for build
                   cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': 'Build timed out'})
-                  
+
               except Exception as e:
                   print(f"Error: {str(e)}")
                   cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})

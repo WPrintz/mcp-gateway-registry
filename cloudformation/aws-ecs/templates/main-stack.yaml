@@ -89,10 +89,15 @@ Parameters:
     Default: 'latest'
     Description: Image tag for Auth Server
 
-  KeycloakImageUri:
+  KeycloakImageRepo:
     Type: String
-    Default: 'quay.io/keycloak/keycloak:26.0'
-    Description: Keycloak container image URI (external, not ECR)
+    Default: 'mcp-gateway-keycloak'
+    Description: ECR repository name for Keycloak
+
+  KeycloakImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Keycloak
 
   CurrentTimeImageRepo:
     Type: String
@@ -191,6 +196,21 @@ Parameters:
     Type: Number
     Default: 80
     Description: Target memory utilization percentage
+
+  # Keycloak Configuration
+  KeycloakLogLevel:
+    Type: String
+    Default: 'INFO'
+    Description: Keycloak log level
+    AllowedValues:
+      - 'ALL'
+      - 'DEBUG'
+      - 'ERROR'
+      - 'FATAL'
+      - 'INFO'
+      - 'OFF'
+      - 'TRACE'
+      - 'WARN'
 
   # Template S3 Location (for nested stacks)
   TemplateS3Bucket:
@@ -337,7 +357,8 @@ Resources:
         RegistryImageTag: !Ref RegistryImageTag
         AuthServerImageRepo: !Ref AuthServerImageRepo
         AuthServerImageTag: !Ref AuthServerImageTag
-        KeycloakImageUri: !Ref KeycloakImageUri
+        KeycloakImageRepo: !Ref KeycloakImageRepo
+        KeycloakImageTag: !Ref KeycloakImageTag
         CurrentTimeImageRepo: !Ref CurrentTimeImageRepo
         CurrentTimeImageTag: !Ref CurrentTimeImageTag
         McpgwImageRepo: !Ref McpgwImageRepo
@@ -357,6 +378,7 @@ Resources:
         MaxCapacity: !Ref MaxCapacity
         TargetCpuUtilization: !Ref TargetCpuUtilization
         TargetMemoryUtilization: !Ref TargetMemoryUtilization
+        KeycloakLogLevel: !Ref KeycloakLogLevel
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services

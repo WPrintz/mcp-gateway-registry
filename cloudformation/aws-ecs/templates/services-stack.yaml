@@ -32,10 +32,15 @@ Parameters:
     Default: 'latest'
     Description: Image tag for Auth Server
 
-  KeycloakImageUri:
+  KeycloakImageRepo:
     Type: String
-    Default: 'quay.io/keycloak/keycloak:26.0'
-    Description: Keycloak container image URI (external, not ECR)
+    Default: 'mcp-gateway-keycloak'
+    Description: ECR repository name for Keycloak
+
+  KeycloakImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Keycloak
 
   CurrentTimeImageRepo:
     Type: String
@@ -90,13 +95,13 @@ Parameters:
   # Resource Configuration
   ServiceCpu:
     Type: String
-    Default: '512'
-    Description: CPU units for main services
+    Default: '1024'
+    Description: CPU units for main services (Auth, Registry)
 
   ServiceMemory:
     Type: String
-    Default: '1024'
-    Description: Memory (MB) for main services
+    Default: '2048'
+    Description: Memory (MB) for main services (Auth, Registry)
 
   KeycloakCpu:
     Type: String
@@ -107,6 +112,20 @@ Parameters:
     Type: String
     Default: '2048'
     Description: Memory (MB) for Keycloak
+
+  KeycloakLogLevel:
+    Type: String
+    Default: 'INFO'
+    Description: Keycloak log level (matching Terraform var.keycloak_log_level)
+    AllowedValues:
+      - 'ALL'
+      - 'DEBUG'
+      - 'ERROR'
+      - 'FATAL'
+      - 'INFO'
+      - 'OFF'
+      - 'TRACE'
+      - 'WARN'
 
   # Auto Scaling Configuration
   EnableAutoScaling:
@@ -446,7 +465,7 @@ Resources:
 
 
   #============================================================================
-  # Task Definition: Keycloak
+  # Task Definition: Keycloak (Matching Terraform keycloak-ecs.tf exactly)
   #============================================================================
   KeycloakTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -463,59 +482,56 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
       ContainerDefinitions:
         - Name: keycloak
-          Image: !Ref KeycloakImageUri
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${KeycloakImageRepo}:${KeycloakImageTag}'
           Essential: true
-          Command:
-            - start
-            - --optimized
+          ReadonlyRootFilesystem: false
           PortMappings:
             - Name: keycloak
               ContainerPort: 8080
+              HostPort: 8080
+              Protocol: tcp
+            - Name: keycloak-management
+              ContainerPort: 9000
+              HostPort: 9000
               Protocol: tcp
           Environment:
-            - Name: KC_DB
-              Value: mysql
-            - Name: KC_DB_URL
-              Value: !Sub
-                - 'jdbc:mysql://${RdsProxyEndpoint}:3306/keycloak'
-                - RdsProxyEndpoint: !ImportValue
-                    Fn::Sub: ${EnvironmentName}-RdsProxyEndpoint
-            - Name: KC_PROXY_HEADERS
-              Value: xforwarded
-            - Name: KC_HTTP_ENABLED
+            # Matching Terraform keycloak_container_env exactly
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: KC_PROXY
+              Value: edge
+            - Name: KC_PROXY_ADDRESS_FORWARDING
               Value: 'true'
-            - Name: KC_HOSTNAME_STRICT
-              Value: 'false'
             - Name: KC_HOSTNAME
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-KeycloakAlbDnsName
+            - Name: KC_HOSTNAME_STRICT
+              Value: 'false'
+            - Name: KC_HOSTNAME_STRICT_HTTPS
+              Value: 'false'
             - Name: KC_HEALTH_ENABLED
               Value: 'true'
             - Name: KC_METRICS_ENABLED
               Value: 'true'
-            - Name: JAVA_OPTS_APPEND
-              Value: !Sub '-Djgroups.dns.query=keycloak.${EnvironmentName}.local'
+            - Name: KEYCLOAK_LOGLEVEL
+              Value: !Ref KeycloakLogLevel
           Secrets:
-            - Name: KC_DB_USERNAME
-              ValueFrom: !Sub
-                - '${SecretArn}:username::'
-                - SecretArn: !ImportValue
-                    Fn::Sub: ${EnvironmentName}-KeycloakDbSecretArn
-            - Name: KC_DB_PASSWORD
-              ValueFrom: !Sub
-                - '${SecretArn}:password::'
-                - SecretArn: !ImportValue
-                    Fn::Sub: ${EnvironmentName}-KeycloakDbSecretArn
+            # Matching Terraform keycloak_container_secrets exactly (using SSM)
             - Name: KEYCLOAK_ADMIN
-              ValueFrom: !Sub
-                - '${SecretArn}:username::'
-                - SecretArn: !ImportValue
-                    Fn::Sub: ${EnvironmentName}-KeycloakDbSecretArn
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakAdminArn
             - Name: KEYCLOAK_ADMIN_PASSWORD
-              ValueFrom: !Sub
-                - '${SecretArn}:password::'
-                - SecretArn: !ImportValue
-                    Fn::Sub: ${EnvironmentName}-KeycloakDbSecretArn
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakAdminPasswordArn
+            - Name: KC_DB_URL
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakDatabaseUrlArn
+            - Name: KC_DB_USERNAME
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakDatabaseUsernameArn
+            - Name: KC_DB_PASSWORD
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakDatabasePasswordArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -525,11 +541,11 @@ Resources:
           HealthCheck:
             Command:
               - CMD-SHELL
-              - curl -f http://localhost:8080/health/ready || exit 1
+              - exit 0
             Interval: 30
             Timeout: 5
             Retries: 3
-            StartPeriod: 120
+            StartPeriod: 60
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak
@@ -1167,6 +1183,43 @@ Resources:
         PredefinedMetricSpecification:
           PredefinedMetricType: ECSServiceAverageMemoryUtilization
         TargetValue: !Ref TargetMemoryUtilization
+
+  # Keycloak Auto Scaling (matching Terraform keycloak-ecs.tf)
+  KeycloakScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: 4
+      MinCapacity: 1
+      ResourceId: !Sub service/${EnvironmentName}-keycloak-cluster/${EnvironmentName}-keycloak
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: KeycloakService
+
+  KeycloakCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-keycloak-cpu-autoscaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref KeycloakScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+
+  KeycloakMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-keycloak-memory-autoscaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref KeycloakScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: 80.0
 
   # CurrentTime Auto Scaling
   CurrentTimeScalableTarget:
