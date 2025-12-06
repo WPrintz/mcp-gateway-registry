@@ -119,41 +119,61 @@
     - Main ALB responding at http://mcp-gateway-alb-540864537.us-west-2.elb.amazonaws.com
     - Keycloak ALB responding at http://mcp-gateway-keycloak-alb-1578958238.us-west-2.elb.amazonaws.com
 
-- [ ] 9. Test main-stack nested deployment
-  - [ ] 9.1 Tear down existing individual stacks (reverse order)
+- [ ] 9. Add CloudFront for Keycloak HTTPS (no custom domain required)
+  - [ ] 9.1 Add CloudFront distribution for Keycloak ALB to **compute-stack.yaml**
+    - Create CloudFront distribution with Keycloak ALB as origin
+    - Use default CloudFront SSL certificate (*.cloudfront.net)
+    - Configure origin protocol policy: HTTP only (ALB handles HTTP)
+    - Configure cache behavior: CachingDisabled (Keycloak is dynamic)
+    - Forward headers: Host, Authorization, Cookie
+    - Export CloudFront domain name as `${EnvironmentName}-KeycloakCloudFrontDomain`
+  - [ ] 9.2 Update **services-stack.yaml** Keycloak task definition
+    - Change KC_HOSTNAME to use CloudFront domain (!ImportValue KeycloakCloudFrontDomain)
+    - Ensure KC_PROXY=edge is set (already done)
+  - [ ] 9.3 Update **services-stack.yaml** services that reference Keycloak URL
+    - Auth Server: KEYCLOAK_URL, KEYCLOAK_EXTERNAL_URL → CloudFront URL
+    - Registry: KEYCLOAK_URL → CloudFront URL
+  - [ ] 9.4 Deploy updated stacks and verify
+    - Update compute-stack (adds CloudFront)
+    - Update services-stack (uses CloudFront URL)
+    - Test https://<cloudfront-domain>/realms/master returns valid response
+    - Test OAuth flows work end-to-end
+
+- [ ] 10. Test main-stack nested deployment
+  - [ ] 10.1 Tear down existing individual stacks (reverse order)
     - Delete mcp-gateway-services stack
     - Delete mcp-gateway-compute stack
     - Delete mcp-gateway-data stack
     - Delete mcp-gateway-network stack
-  - [ ] 9.2 Upload templates to S3 bucket
+  - [ ] 10.2 Upload templates to S3 bucket
     - Create S3 bucket for CloudFormation templates
     - Upload all 4 component templates to S3
-  - [ ] 9.3 Deploy main-stack.yaml as nested stack
+  - [ ] 10.3 Deploy main-stack.yaml as nested stack
     - Deploy with required parameters (TemplateS3Bucket, database passwords)
     - Verify all nested stacks create successfully
-  - [ ] 9.4 Verify all services healthy after nested deployment
+  - [ ] 10.4 Verify all services healthy after nested deployment
     - All 8 ECS services running
     - All target groups healthy
     - Both ALBs responding
 
-- [ ] 10. Write property-based tests
-  - [ ] 10.1 Property 1: Task Definition Fargate Configuration
-  - [ ] 10.2 Property 2: Task Definition Logging Configuration
-  - [ ] 10.3 Property 3: Task Definition Health Check Configuration
-  - [ ] 10.4 Property 4: Target Group Health Check Configuration
-  - [ ] 10.5 Property 5: EFS Access Point POSIX Configuration
-  - [ ] 10.6 Property 6: Regional Domain Name Pattern
-  - [ ] 10.7 Property 7: IAM Policy Least Privilege
-  - [ ] 10.8 Property 8: Sensitive Parameter NoEcho
-  - [ ] 10.9 Property 9: Log Group Retention Configuration
-  - [ ] 10.10 Property 10: ECS Security Group Ingress Restriction
-  - [ ] 10.11 Property 11: Parameter Defaults Match Terraform
+- [ ] 11. Write property-based tests
+  - [ ] 11.1 Property 1: Task Definition Fargate Configuration
+  - [ ] 11.2 Property 2: Task Definition Logging Configuration
+  - [ ] 11.3 Property 3: Task Definition Health Check Configuration
+  - [ ] 11.4 Property 4: Target Group Health Check Configuration
+  - [ ] 11.5 Property 5: EFS Access Point POSIX Configuration
+  - [ ] 11.6 Property 6: Regional Domain Name Pattern
+  - [ ] 11.7 Property 7: IAM Policy Least Privilege
+  - [ ] 11.8 Property 8: Sensitive Parameter NoEcho
+  - [ ] 11.9 Property 9: Log Group Retention Configuration
+  - [ ] 11.10 Property 10: ECS Security Group Ingress Restriction
+  - [ ] 11.11 Property 11: Parameter Defaults Match Terraform
 
-- [ ] 11. Create test infrastructure
-  - [ ] 11.1 Set up pytest test framework with AWS fixtures
-  - [ ] 11.2 Create cfn-lint configuration
+- [ ] 12. Create test infrastructure
+  - [ ] 12.1 Set up pytest test framework with AWS fixtures
+  - [ ] 12.2 Create cfn-lint configuration
 
-- [ ] 12. Final Checkpoint - Complete validation
+- [ ] 13. Final Checkpoint - Complete validation
   - Ensure all tests pass, ask the user if questions arise.
 
 ---
