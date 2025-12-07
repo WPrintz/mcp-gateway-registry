@@ -173,6 +173,20 @@ mappings:
   "module.mcp_gateway.aws_secretsmanager_secret.keycloak_m2m_client_secret": "KeycloakM2MClientSecret"
 
   # ---------------------------------------------------------------------------
+  # CloudWatch Alarms (matching Terraform monitoring.tf)
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.auth_cpu_high*": "AuthCpuHighAlarm"
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.registry_cpu_high*": "RegistryCpuHighAlarm"
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.auth_memory_high*": "AuthMemoryHighAlarm"
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.registry_memory_high*": "RegistryMemoryHighAlarm"
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.alb_unhealthy_targets*": "AlbUnhealthyTargetsAlarm"
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.alb_5xx_errors*": "Alb5xxErrorsAlarm"
+  "module.mcp_gateway.aws_cloudwatch_metric_alarm.alb_response_time*": "AlbResponseTimeAlarm"
+
+  # SNS Topic for Alarms
+  "module.mcp_gateway.module.sns_alarms.aws_sns_topic.this*": "AlarmSnsTopic"
+
+  # ---------------------------------------------------------------------------
   # IAM Roles (TF per-service → CFN shared)
   # CFN uses shared roles, so multiple TF roles map to same CFN role
   # ---------------------------------------------------------------------------
@@ -279,9 +293,6 @@ skip_cfn_patterns:
 # =============================================================================
 # AI ASSISTANT: When you see resources listed here, consider adding them to CFN
 
-known_gaps:
-  # CloudWatch Alarms - TF has these, CFN should add them
-  - pattern: "module.mcp_gateway.aws_cloudwatch_metric_alarm.*"
-    description: "Monitoring alarms for ALB errors, response time, CPU/memory"
-    recommendation: "Add AWS::CloudWatch::Alarm resources to services-stack.yaml"
-    priority: "medium"
+known_gaps: []
+  # All gaps have been addressed!
+  # CloudWatch Alarms were added to services-stack.yaml on 2025-12-07

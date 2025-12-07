@@ -154,8 +154,25 @@ Parameters:
     Default: 80
     Description: Target memory utilization percentage
 
+  # Monitoring Configuration (matching Terraform monitoring.tf)
+  EnableMonitoring:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable CloudWatch monitoring alarms
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Email address for CloudWatch alarm notifications (leave empty to disable SNS)
+
 Conditions:
   EnableAutoScalingCondition: !Equals [!Ref EnableAutoScaling, 'true']
+  EnableMonitoringCondition: !Equals [!Ref EnableMonitoring, 'true']
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+  CreateSnsTopicCondition: !And
+    - !Condition EnableMonitoringCondition
+    - !Condition HasAlarmEmail
 
 Resources:
 
@@ -1346,6 +1363,204 @@ Resources:
           PredefinedMetricType: ECSServiceAverageCPUUtilization
         TargetValue: !Ref TargetCpuUtilization
 
+  #============================================================================
+  # CloudWatch Monitoring and Alarms (matching Terraform monitoring.tf)
+  #============================================================================
+
+  # SNS Topic for Alarm Notifications
+  AlarmSnsTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateSnsTopicCondition
+    Properties:
+      TopicName: !Sub ${EnvironmentName}-alarms
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-alarms
+
+  AlarmSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateSnsTopicCondition
+    Properties:
+      TopicArn: !Ref AlarmSnsTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # ECS Service CPU Alarms
+  AuthCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-auth-cpu-high
+      AlarmDescription: Auth service CPU utilization is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-auth-server
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  RegistryCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-registry-cpu-high
+      AlarmDescription: Registry service CPU utilization is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-registry
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  # ECS Service Memory Alarms
+  AuthMemoryHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-auth-memory-high
+      AlarmDescription: Auth service memory utilization is too high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-auth-server
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  RegistryMemoryHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-registry-memory-high
+      AlarmDescription: Registry service memory utilization is too high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-registry
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  # ALB Target Health Alarm
+  AlbUnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-alb-unhealthy-targets
+      AlarmDescription: ALB has unhealthy targets
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - 'loadbalancer/'
+              - !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainAlbArn
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  # ALB 5XX Error Rate Alarm
+  Alb5xxErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-alb-5xx-errors
+      AlarmDescription: ALB is receiving too many 5XX errors
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - 'loadbalancer/'
+              - !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainAlbArn
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+      TreatMissingData: notBreaching
+
+  # ALB Response Time Alarm
+  AlbResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-alb-response-time
+      AlarmDescription: ALB response time is too high
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - 'loadbalancer/'
+              - !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainAlbArn
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
 #============================================================================
 # Outputs
 #============================================================================
@@ -1397,3 +1612,11 @@ Outputs:
     Value: !Ref TravelAssistantAgentService
     Export:
       Name: !Sub ${EnvironmentName}-TravelAssistantAgentServiceArn
+
+  # Monitoring Outputs
+  AlarmSnsTopicArn:
+    Condition: CreateSnsTopicCondition
+    Description: SNS Topic ARN for CloudWatch Alarms
+    Value: !Ref AlarmSnsTopic
+    Export:
+      Name: !Sub ${EnvironmentName}-AlarmSnsTopicArn

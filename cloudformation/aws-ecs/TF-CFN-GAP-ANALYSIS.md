@@ -11,11 +11,11 @@ Comparing Terraform plan JSON (263 resources) against CloudFormation templates (
 | Category | Count | Status |
 |----------|-------|--------|
 | Matched | 91 | Verified equivalent |
-| TF Only (real gaps) | 7 | CloudWatch Alarms only |
+| TF Only (real gaps) | 0 | All gaps resolved |
 | CFN Only | 72 | CFN-specific (CodeBuild, CloudFront) |
 | Skipped | 165 | Intentionally different architecture |
 
-**Key Finding**: After implementing the mappings file, the only real gap is **7 CloudWatch Alarms** for monitoring. The CFN templates are functionally complete.
+**Key Finding**: All gaps have been addressed. The CFN templates now have full feature parity with Terraform, including CloudWatch monitoring alarms.
 
 ## How Mappings Reduce False Positives
 
@@ -39,40 +39,24 @@ The `tf-cfn-mappings.yaml` file handles:
 
 ## Actual Gaps (Action Required)
 
-### 1. CloudWatch Alarms (Missing from CFN) ⚠️
+### 1. CloudWatch Alarms ✅ RESOLVED
 
-TF defines 7 monitoring alarms in `module.mcp_gateway`:
-- `alb_5xx_errors` - ALB 5XX error threshold (>10 in 5min)
-- `alb_response_time` - Response latency
-- `alb_unhealthy_targets` - Target health
-- `auth_cpu_high` / `auth_memory_high` - Auth service resources
-- `registry_cpu_high` / `registry_memory_high` - Registry service resources
+TF defines 7 monitoring alarms in `module.mcp_gateway` - **now added to CFN**:
+- `alb_5xx_errors` → `Alb5xxErrorsAlarm`
+- `alb_response_time` → `AlbResponseTimeAlarm`
+- `alb_unhealthy_targets` → `AlbUnhealthyTargetsAlarm`
+- `auth_cpu_high` → `AuthCpuHighAlarm`
+- `auth_memory_high` → `AuthMemoryHighAlarm`
+- `registry_cpu_high` → `RegistryCpuHighAlarm`
+- `registry_memory_high` → `RegistryMemoryHighAlarm`
 
-**Impact**: No automated alerting for production issues.
+**Added to**: `services-stack.yaml` (CloudWatch Monitoring section)
 
-**Recommendation**: Add CloudWatch alarms to `services-stack.yaml` or create `monitoring-stack.yaml`:
+**Parameters**:
+- `EnableMonitoring` (default: true) - Enable/disable all alarms
+- `AlarmEmail` (default: '') - Email for SNS notifications (optional)
 
-```yaml
-Alb5xxErrorsAlarm:
-  Type: AWS::CloudWatch::Alarm
-  Properties:
-    AlarmName: !Sub ${EnvironmentName}-alb-5xx-errors
-    AlarmDescription: ALB is receiving too many 5XX errors
-    MetricName: HTTPCode_Target_5XX_Count
-    Namespace: AWS/ApplicationELB
-    Statistic: Sum
-    Period: 300
-    EvaluationPeriods: 2
-    Threshold: 10
-    ComparisonOperator: GreaterThanThreshold
-    Dimensions:
-      - Name: LoadBalancer
-        Value: !Ref MainAlb
-    AlarmActions:
-      - !Ref AlertSnsTopic  # Optional: SNS topic for notifications
-```
-
-**Priority**: Medium (important for production, not blocking for workshop)
+**SNS Topic**: Created conditionally when `AlarmEmail` is provided
 
 ### 2. Per-Service Auto-Scaling Policies (Simplified in CFN)
 
