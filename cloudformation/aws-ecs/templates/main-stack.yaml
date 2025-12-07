@@ -215,6 +215,8 @@ Parameters:
       - 'WARN'
 
   # Template S3 Location (for nested stacks)
+  # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
+  # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
   TemplateS3Bucket:
     Type: String
     Default: mcp-gateway-cfn-templates-704390743772
@@ -222,8 +224,8 @@ Parameters:
 
   TemplateS3Prefix:
     Type: String
-    Default: cloudformation/templates
-    Description: S3 prefix for nested stack templates
+    Default: cloudformation/templates/
+    Description: S3 prefix for nested stack templates (must include trailing slash)
 
 Conditions:
   UseRegionalDomainsCondition: !Equals [!Ref UseRegionalDomains, 'true']
@@ -240,7 +242,7 @@ Resources:
   NetworkStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/network-stack.yaml
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}network-stack.yaml'
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         VpcCidr: !Ref VpcCidr
@@ -257,7 +259,7 @@ Resources:
     Type: AWS::CloudFormation::Stack
     DependsOn: NetworkStack
     Properties:
-      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/data-stack.yaml
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}data-stack.yaml'
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         VpcId: !GetAtt NetworkStack.Outputs.VpcId
@@ -284,7 +286,7 @@ Resources:
     Type: AWS::CloudFormation::Stack
     DependsOn: DataStack
     Properties:
-      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/compute-stack.yaml
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}compute-stack.yaml'
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         BaseDomain: !Ref BaseDomain
@@ -304,7 +306,7 @@ Resources:
     Type: AWS::CloudFormation::Stack
     DependsOn: ComputeStack
     Properties:
-      TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/services-stack.yaml
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}services-stack.yaml'
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         RegistryImageRepo: !Ref RegistryImageRepo
