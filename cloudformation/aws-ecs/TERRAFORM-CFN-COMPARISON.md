@@ -509,6 +509,28 @@ KeycloakCloudFrontDistribution:
 
 ---
 
+## Known Issues
+
+### Keycloak ALB HTTP Listener Auto-Deletion
+
+**Issue**: The Keycloak ALB HTTP listener (port 80) may be automatically deleted by AWS internal security automation.
+
+**Evidence from CloudTrail**:
+```
+EventName: DeleteListener
+Username: EpoxyAccess+epoxy-mitigations-prod+ELBListenerDelete+7a993163-31
+```
+
+**Root Cause**: AWS internal security mitigations (`epoxy-mitigations-prod`) automatically delete HTTP-only listeners on public ALBs in certain account types. This is not a CloudFormation issue - the listener is created successfully but then deleted by AWS automation.
+
+**Impact**: CloudFront cannot reach the Keycloak ALB origin, causing 502 errors.
+
+**Workaround**: Manually recreate the listener after deployment (see README.md for commands).
+
+**Terraform Comparison**: This issue does not affect Terraform deployments because Terraform uses Route53 + ACM certificates to create HTTPS listeners directly on the ALB. The CloudFormation approach uses CloudFront for HTTPS (to avoid requiring a Route53 hosted zone), which requires an HTTP-only ALB listener as the CloudFront origin.
+
+---
+
 ## Files Modified
 
 1. `cloudformation/aws-ecs/templates/data-stack.yaml`

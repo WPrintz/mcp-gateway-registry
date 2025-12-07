@@ -8,6 +8,68 @@ Parameters:
     Default: mcp-gateway
     Description: Name prefix for all resources (must match network/data stacks)
 
+  # Network references (passed from main-stack or use ImportValue)
+  VpcId:
+    Type: String
+    Default: ''
+    Description: VPC ID (leave empty to use ImportValue)
+
+  PublicSubnets:
+    Type: String
+    Default: ''
+    Description: Comma-separated public subnet IDs (leave empty to use ImportValue)
+
+  PrivateSubnets:
+    Type: String
+    Default: ''
+    Description: Comma-separated private subnet IDs (leave empty to use ImportValue)
+
+  MainAlbSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Main ALB Security Group ID (leave empty to use ImportValue)
+
+  KeycloakAlbSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Keycloak ALB Security Group ID (leave empty to use ImportValue)
+
+  EcsTasksSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: ECS Tasks Security Group ID (leave empty to use ImportValue)
+
+  KeycloakEcsSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Keycloak ECS Security Group ID (leave empty to use ImportValue)
+
+  # Secrets references (passed from main-stack or use ImportValue)
+  KeycloakDbSecretArn:
+    Type: String
+    Default: ''
+    Description: Keycloak DB Secret ARN (leave empty to use ImportValue)
+
+  KeycloakClientSecretArn:
+    Type: String
+    Default: ''
+    Description: Keycloak Client Secret ARN (leave empty to use ImportValue)
+
+  KeycloakM2MClientSecretArn:
+    Type: String
+    Default: ''
+    Description: Keycloak M2M Client Secret ARN (leave empty to use ImportValue)
+
+  AdminPasswordSecretArn:
+    Type: String
+    Default: ''
+    Description: Admin Password Secret ARN (leave empty to use ImportValue)
+
+  SecretKeySecretArn:
+    Type: String
+    Default: ''
+    Description: Secret Key Secret ARN (leave empty to use ImportValue)
+
   BaseDomain:
     Type: String
     Default: ''
@@ -44,6 +106,13 @@ Conditions:
       - !Equals
         - !Ref HostedZoneId
         - ''
+  UseVpcIdParam: !Not [!Equals [!Ref VpcId, '']]
+  UsePublicSubnetsParam: !Not [!Equals [!Ref PublicSubnets, '']]
+  UsePrivateSubnetsParam: !Not [!Equals [!Ref PrivateSubnets, '']]
+  UseMainAlbSgParam: !Not [!Equals [!Ref MainAlbSecurityGroupId, '']]
+  UseKeycloakAlbSgParam: !Not [!Equals [!Ref KeycloakAlbSecurityGroupId, '']]
+  UseEcsTasksSgParam: !Not [!Equals [!Ref EcsTasksSecurityGroupId, '']]
+  UseKeycloakEcsSgParam: !Not [!Equals [!Ref KeycloakEcsSecurityGroupId, '']]
 
 Resources:
   MainEcsCluster:

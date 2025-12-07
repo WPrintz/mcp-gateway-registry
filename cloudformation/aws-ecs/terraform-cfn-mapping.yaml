@@ -1,0 +1,442 @@
+# Terraform to CloudFormation Resource Mapping
+# 
+# This file explicitly maps Terraform resources to their CloudFormation equivalents.
+# It serves as the source of truth for keeping CFN templates in sync with Terraform.
+#
+# Usage:
+#   python scripts/tf-cfn-compare.py --mapping terraform-cfn-mapping.yaml
+#
+# Structure:
+#   mappings: List of explicit TF -> CFN resource mappings
+#   ignored_tf: TF resources intentionally not in CFN (e.g., data sources)
+#   ignored_cfn: CFN resources intentionally not in TF (e.g., workshop-specific)
+#   property_mappings: Key property comparisons for drift detection
+
+version: "1.0"
+last_updated: "2025-12-07"
+
+# =============================================================================
+# EXPLICIT RESOURCE MAPPINGS
+# =============================================================================
+# Format:
+#   - terraform: <tf_resource_address>
+#     cloudformation: <cfn_logical_id>
+#     cfn_file: <template_file>  # optional
+#     properties:  # optional - key properties to compare
+#       tf_property: cfn_property
+#     notes: <description>
+
+mappings:
+  # ---------------------------------------------------------------------------
+  # VPC & Networking (network-stack.yaml)
+  # ---------------------------------------------------------------------------
+  - terraform: module.vpc.aws_vpc.this[0]
+    cloudformation: VPC
+    cfn_file: network-stack.yaml
+    properties:
+      cidr_block: CidrBlock
+      enable_dns_hostnames: EnableDnsHostnames
+      enable_dns_support: EnableDnsSupport
+
+  - terraform: module.vpc.aws_internet_gateway.this[0]
+    cloudformation: InternetGateway
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_subnet.public[0]
+    cloudformation: PublicSubnet1
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_subnet.public[1]
+    cloudformation: PublicSubnet2
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_subnet.public[2]
+    cloudformation: PublicSubnet3
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_subnet.private[0]
+    cloudformation: PrivateSubnet1
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_subnet.private[1]
+    cloudformation: PrivateSubnet2
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_subnet.private[2]
+    cloudformation: PrivateSubnet3
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_nat_gateway.this[0]
+    cloudformation: NatGateway1
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_nat_gateway.this[1]
+    cloudformation: NatGateway2
+    cfn_file: network-stack.yaml
+
+  - terraform: module.vpc.aws_nat_gateway.this[2]
+    cloudformation: NatGateway3
+    cfn_file: network-stack.yaml
+
+  - terraform: aws_vpc_endpoint.sts
+    cloudformation: STSEndpoint
+    cfn_file: network-stack.yaml
+
+  - terraform: aws_vpc_endpoint.s3
+    cloudformation: S3Endpoint
+    cfn_file: network-stack.yaml
+
+  - terraform: aws_security_group.vpc_endpoints
+    cloudformation: VpcEndpointsSG
+    cfn_file: network-stack.yaml
+
+  # ---------------------------------------------------------------------------
+  # Security Groups (network-stack.yaml)
+  # ---------------------------------------------------------------------------
+  - terraform: module.mcp_gateway.module.alb.aws_security_group.this[0]
+    cloudformation: MainAlbSG
+    cfn_file: network-stack.yaml
+
+  - terraform: module.keycloak_alb.aws_security_group.this[0]
+    cloudformation: KeycloakAlbSG
+    cfn_file: network-stack.yaml
+
+  - terraform: module.mcp_gateway.module.ecs_service_registry.aws_security_group.this[0]
+    cloudformation: EcsTasksSG
+    cfn_file: network-stack.yaml
+
+  - terraform: module.keycloak_ecs.aws_security_group.this[0]
+    cloudformation: KeycloakEcsSG
+    cfn_file: network-stack.yaml
+
+  - terraform: module.keycloak_database.aws_security_group.this[0]
+    cloudformation: DatabaseSG
+    cfn_file: network-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_security_group.this[0]
+    cloudformation: EfsSG
+    cfn_file: network-stack.yaml
+
+  # ---------------------------------------------------------------------------
+  # Data Resources (data-stack.yaml)
+  # ---------------------------------------------------------------------------
+  - terraform: module.mcp_gateway.module.efs.aws_efs_file_system.this[0]
+    cloudformation: EfsFileSystem
+    cfn_file: data-stack.yaml
+    properties:
+      encrypted: Encrypted
+      performance_mode: PerformanceMode
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_mount_target.this[0]
+    cloudformation: EfsMountTarget1
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_mount_target.this[1]
+    cloudformation: EfsMountTarget2
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_mount_target.this[2]
+    cloudformation: EfsMountTarget3
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_access_point.this["servers"]
+    cloudformation: EfsAccessPointServers
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_access_point.this["models"]
+    cloudformation: EfsAccessPointModels
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_access_point.this["logs"]
+    cloudformation: EfsAccessPointLogs
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_access_point.this["agents"]
+    cloudformation: EfsAccessPointAgents
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_access_point.this["auth_config"]
+    cloudformation: EfsAccessPointAuthConfig
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.module.efs.aws_efs_access_point.this["mcpgw_data"]
+    cloudformation: EfsAccessPointMcpgwData
+    cfn_file: data-stack.yaml
+
+  # Aurora Database
+  - terraform: module.keycloak_database.aws_rds_cluster.this[0]
+    cloudformation: AuroraCluster
+    cfn_file: data-stack.yaml
+    properties:
+      engine: Engine
+      engine_version: EngineVersion
+      database_name: DatabaseName
+
+  - terraform: module.keycloak_database.aws_rds_cluster_instance.this["one"]
+    cloudformation: AuroraInstance
+    cfn_file: data-stack.yaml
+
+  - terraform: module.keycloak_database.aws_db_subnet_group.this[0]
+    cloudformation: DbSubnetGroup
+    cfn_file: data-stack.yaml
+
+  - terraform: module.keycloak_database.aws_rds_cluster_parameter_group.this[0]
+    cloudformation: DbClusterParameterGroup
+    cfn_file: data-stack.yaml
+
+  - terraform: aws_db_proxy.keycloak
+    cloudformation: RdsProxy
+    cfn_file: data-stack.yaml
+
+  - terraform: aws_db_proxy_default_target_group.keycloak
+    cloudformation: RdsProxyTargetGroup
+    cfn_file: data-stack.yaml
+
+  # Secrets
+  - terraform: module.mcp_gateway.aws_secretsmanager_secret.secret_key
+    cloudformation: SecretKeySecret
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.aws_secretsmanager_secret.admin_password
+    cloudformation: AdminPasswordSecret
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.aws_secretsmanager_secret.keycloak_client_secret
+    cloudformation: KeycloakClientSecret
+    cfn_file: data-stack.yaml
+
+  - terraform: module.mcp_gateway.aws_secretsmanager_secret.keycloak_m2m_client_secret
+    cloudformation: KeycloakM2MClientSecret
+    cfn_file: data-stack.yaml
+
+  - terraform: aws_secretsmanager_secret.keycloak_db
+    cloudformation: KeycloakDbSecret
+    cfn_file: data-stack.yaml
+
+  # KMS
+  - terraform: module.keycloak_database.aws_kms_key.this[0]
+    cloudformation: RdsKmsKey
+    cfn_file: data-stack.yaml
+
+  # ---------------------------------------------------------------------------
+  # Compute Resources (compute-stack.yaml)
+  # ---------------------------------------------------------------------------
+  - terraform: module.ecs_cluster.aws_ecs_cluster.this[0]
+    cloudformation: MainEcsCluster
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.keycloak_ecs_cluster.aws_ecs_cluster.this[0]
+    cloudformation: KeycloakEcsCluster
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.mcp_gateway.aws_service_discovery_private_dns_namespace.mcp
+    cloudformation: ServiceDiscoveryNamespace
+    cfn_file: compute-stack.yaml
+
+  # ECR Repositories
+  - terraform: aws_ecr_repository.registry
+    cloudformation: RegistryEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.auth_server
+    cloudformation: AuthServerEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.keycloak
+    cloudformation: KeycloakEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.currenttime
+    cloudformation: CurrentTimeEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.mcpgw
+    cloudformation: McpgwEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.realserverfaketools
+    cloudformation: RealServerFakeToolsEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.flight_booking_agent
+    cloudformation: FlightBookingAgentEcrRepository
+    cfn_file: compute-stack.yaml
+
+  - terraform: aws_ecr_repository.travel_assistant_agent
+    cloudformation: TravelAssistantAgentEcrRepository
+    cfn_file: compute-stack.yaml
+
+  # ALBs
+  - terraform: module.mcp_gateway.module.alb.aws_lb.this[0]
+    cloudformation: MainAlb
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.keycloak_alb.aws_lb.this[0]
+    cloudformation: KeycloakAlb
+    cfn_file: compute-stack.yaml
+
+  # Target Groups
+  - terraform: module.mcp_gateway.module.alb.aws_lb_target_group.this["registry"]
+    cloudformation: RegistryTargetGroup
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.mcp_gateway.module.alb.aws_lb_target_group.this["auth"]
+    cloudformation: AuthTargetGroup
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.mcp_gateway.module.alb.aws_lb_target_group.this["gradio"]
+    cloudformation: GradioTargetGroup
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.keycloak_alb.aws_lb_target_group.this["keycloak"]
+    cloudformation: KeycloakTargetGroup
+    cfn_file: compute-stack.yaml
+
+  # IAM Roles
+  - terraform: module.ecs_cluster.aws_iam_role.task_exec[0]
+    cloudformation: EcsTaskExecutionRole
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.mcp_gateway.module.ecs_service_registry.aws_iam_role.tasks[0]
+    cloudformation: EcsTaskRole
+    cfn_file: compute-stack.yaml
+
+  - terraform: module.keycloak_ecs.aws_iam_role.task_exec[0]
+    cloudformation: KeycloakTaskExecutionRole
+    cfn_file: compute-stack.yaml
+
+  # ---------------------------------------------------------------------------
+  # ECS Services (services-stack.yaml)
+  # ---------------------------------------------------------------------------
+  - terraform: module.mcp_gateway.module.ecs_service_auth
+    cloudformation: AuthServerService
+    cfn_file: services-stack.yaml
+    properties:
+      cpu: Cpu
+      memory: Memory
+      desired_count: DesiredCount
+
+  - terraform: module.mcp_gateway.module.ecs_service_registry
+    cloudformation: RegistryService
+    cfn_file: services-stack.yaml
+    properties:
+      cpu: Cpu
+      memory: Memory
+      desired_count: DesiredCount
+
+  - terraform: module.keycloak_ecs
+    cloudformation: KeycloakService
+    cfn_file: services-stack.yaml
+    properties:
+      cpu: Cpu
+      memory: Memory
+
+  - terraform: module.mcp_gateway.module.ecs_service_currenttime
+    cloudformation: CurrentTimeService
+    cfn_file: services-stack.yaml
+
+  - terraform: module.mcp_gateway.module.ecs_service_mcpgw
+    cloudformation: McpgwService
+    cfn_file: services-stack.yaml
+
+  - terraform: module.mcp_gateway.module.ecs_service_realserverfaketools
+    cloudformation: RealServerFakeToolsService
+    cfn_file: services-stack.yaml
+
+  - terraform: module.mcp_gateway.module.ecs_service_flight_booking_agent
+    cloudformation: FlightBookingAgentService
+    cfn_file: services-stack.yaml
+
+  - terraform: module.mcp_gateway.module.ecs_service_travel_assistant_agent
+    cloudformation: TravelAssistantAgentService
+    cfn_file: services-stack.yaml
+
+# =============================================================================
+# IGNORED TERRAFORM RESOURCES
+# =============================================================================
+# Resources that exist in Terraform but are intentionally not in CloudFormation
+# (e.g., data sources, provider configs, or TF-specific resources)
+
+ignored_tf:
+  # Data sources (not resources)
+  - data.aws_region.current
+  - data.aws_partition.current
+  - data.aws_availability_zones.available
+  - data.aws_caller_identity.current
+  
+  # Terraform-specific
+  - terraform.required_providers
+  
+  # Resources managed differently in CFN
+  - aws_iam_role_policy_attachment.*  # Inline in CFN
+
+# =============================================================================
+# IGNORED CLOUDFORMATION RESOURCES
+# =============================================================================
+# Resources that exist in CloudFormation but are intentionally not in Terraform
+# (e.g., workshop-specific resources, CFN helpers)
+
+ignored_cfn:
+  # Custom resources for CFN
+  - SsmSecureStringLambda
+  - SsmSecureStringLambdaRole
+  - SsmKeycloakDatabaseUrl
+  - SsmKeycloakDatabaseUsername
+  - SsmKeycloakDatabasePassword
+  - SsmKeycloakAdmin
+  - SsmKeycloakAdminPassword
+  
+  # CodeBuild for workshop (TF uses pre-built images)
+  - ContainerBuildProject
+  - CodeBuildServiceRole
+  - TriggerBuildLambda
+  - TriggerBuildLambdaRole
+  - TriggerContainerBuild
+  
+  # CloudFront for workshop HTTPS (TF uses ACM certs)
+  - KeycloakCloudFrontDistribution
+
+# =============================================================================
+# PROPERTY COMPARISON RULES
+# =============================================================================
+# Define which properties should be compared for drift detection
+
+property_rules:
+  # ECS Services - compare scaling and resource allocation
+  AWS::ECS::Service:
+    compare:
+      - DesiredCount
+      - LaunchType
+      - NetworkConfiguration
+    ignore:
+      - ServiceArn  # Generated
+
+  # ECS Task Definitions - compare container config
+  AWS::ECS::TaskDefinition:
+    compare:
+      - Cpu
+      - Memory
+      - ContainerDefinitions.*.Image
+      - ContainerDefinitions.*.Environment
+      - ContainerDefinitions.*.Secrets
+    ignore:
+      - TaskDefinitionArn
+      - Revision
+
+  # RDS - compare engine and scaling
+  AWS::RDS::DBCluster:
+    compare:
+      - Engine
+      - EngineVersion
+      - ServerlessV2ScalingConfiguration
+    ignore:
+      - DBClusterArn
+      - Endpoint
+
+  # Security Groups - compare rules
+  AWS::EC2::SecurityGroup:
+    compare:
+      - SecurityGroupIngress
+      - SecurityGroupEgress
+    ignore:
+      - GroupId

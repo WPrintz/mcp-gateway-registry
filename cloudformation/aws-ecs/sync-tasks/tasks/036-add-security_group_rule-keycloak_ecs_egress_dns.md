@@ -1,0 +1,39 @@
+# Task 036: ADD Resource
+
+**Action**: ADD
+**Priority**: MEDIUM
+
+## Terraform Source
+
+- **File**: `terraform/aws-ecs/keycloak-security-groups.tf`
+- **Line**: 31
+- **Address**: `aws_security_group_rule.keycloak_ecs_egress_dns`
+- **Type**: `aws_security_group_rule` → `UNKNOWN:aws_security_group_rule`
+
+### TF Resource Block
+```hcl
+resource "aws_security_group_rule" "keycloak_ecs_egress_dns" {
+  description       = "Egress from Keycloak ECS task for DNS"
+  type              = "egress"
+  from_port         = 53
+  to_port           = 53
+  protocol          = "udp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.keycloak_ecs.id
+}
+```
+
+## ⚠️ Unknown CFN Type
+
+The Terraform type `aws_security_group_rule` is not in the type mapping.
+
+**Action required**:
+1. Find the equivalent AWS::* CloudFormation type for `aws_security_group_rule`
+2. Add it to `TF_TO_CFN` mapping in `scripts/tf-cfn-sync.py`
+3. Re-run the sync tool
+
+## Instructions
+
+1. Add the resource `KeycloakEcsEgressDns` to the appropriate CFN template
+2. Update any !Ref placeholders with actual resource references
+3. Add to Outputs if needed by other stacks

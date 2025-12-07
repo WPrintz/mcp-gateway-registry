@@ -47,12 +47,14 @@ Parameters:
 
   KeycloakDatabasePassword:
     Type: String
+    Default: McpGateway2025!
     Description: Keycloak database password (min 8 characters)
     NoEcho: true
     MinLength: 8
 
   KeycloakAdminPassword:
     Type: String
+    Default: AdminPassword2025!
     Description: Keycloak admin password (min 12 characters)
     NoEcho: true
     MinLength: 12
@@ -215,6 +217,7 @@ Parameters:
   # Template S3 Location (for nested stacks)
   TemplateS3Bucket:
     Type: String
+    Default: mcp-gateway-cfn-templates-704390743772
     Description: S3 bucket containing nested stack templates
 
   TemplateS3Prefix:
@@ -232,6 +235,7 @@ Resources:
 
   #============================================================================
   # Network Stack
+  # Approx. 160 sec to deploy
   #============================================================================
   NetworkStack:
     Type: AWS::CloudFormation::Stack
@@ -247,6 +251,7 @@ Resources:
 
   #============================================================================
   # Data Stack
+  # Approx. 1200 sec to deploy
   #============================================================================
   DataStack:
     Type: AWS::CloudFormation::Stack
@@ -273,6 +278,7 @@ Resources:
 
   #============================================================================
   # Compute Stack
+  # Approx. 700 sec to deploy
   #============================================================================
   ComputeStack:
     Type: AWS::CloudFormation::Stack
@@ -281,27 +287,18 @@ Resources:
       TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/compute-stack.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
-        VpcId: !GetAtt NetworkStack.Outputs.VpcId
-        PublicSubnets: !GetAtt NetworkStack.Outputs.PublicSubnets
-        PrivateSubnets: !GetAtt NetworkStack.Outputs.PrivateSubnets
-        MainAlbSecurityGroupId: !GetAtt NetworkStack.Outputs.MainAlbSecurityGroupId
-        KeycloakAlbSecurityGroupId: !GetAtt NetworkStack.Outputs.KeycloakAlbSecurityGroupId
-        EcsTasksSecurityGroupId: !GetAtt NetworkStack.Outputs.EcsTasksSecurityGroupId
-        KeycloakEcsSecurityGroupId: !GetAtt NetworkStack.Outputs.KeycloakEcsSecurityGroupId
         BaseDomain: !Ref BaseDomain
         HostedZoneId: !Ref HostedZoneId
         UseRegionalDomains: !Ref UseRegionalDomains
-        SecretKeySecretArn: !GetAtt DataStack.Outputs.SecretKeySecretArn
-        AdminPasswordSecretArn: !GetAtt DataStack.Outputs.AdminPasswordSecretArn
-        KeycloakClientSecretArn: !GetAtt DataStack.Outputs.KeycloakClientSecretArn
-        KeycloakM2MClientSecretArn: !GetAtt DataStack.Outputs.KeycloakM2MClientSecretArn
-        KeycloakDbSecretArn: !GetAtt DataStack.Outputs.KeycloakDbSecretArn
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-compute
 
   #============================================================================
   # Services Stack
+  # Approx. 1500 sec to deploy
+  # Note: Services stack uses ImportValue for cross-stack references
+  # Only passing parameters that are defined in services-stack.yaml
   #============================================================================
   ServicesStack:
     Type: AWS::CloudFormation::Stack
@@ -310,49 +307,6 @@ Resources:
       TemplateURL: !Sub https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}/services-stack.yaml
       Parameters:
         EnvironmentName: !Ref EnvironmentName
-        MainEcsClusterArn: !GetAtt ComputeStack.Outputs.MainEcsClusterArn
-        KeycloakEcsClusterArn: !GetAtt ComputeStack.Outputs.KeycloakEcsClusterArn
-        ServiceDiscoveryNamespaceArn: !GetAtt ComputeStack.Outputs.ServiceDiscoveryNamespaceArn
-        PrivateSubnet1: !GetAtt NetworkStack.Outputs.PrivateSubnet1
-        PrivateSubnet2: !GetAtt NetworkStack.Outputs.PrivateSubnet2
-        PrivateSubnet3: !GetAtt NetworkStack.Outputs.PrivateSubnet3
-        EcsTasksSecurityGroupId: !GetAtt NetworkStack.Outputs.EcsTasksSecurityGroupId
-        KeycloakEcsSecurityGroupId: !GetAtt NetworkStack.Outputs.KeycloakEcsSecurityGroupId
-        McpServersSecurityGroupId: !GetAtt NetworkStack.Outputs.McpServersSecurityGroupId
-        RegistryTargetGroupArn: !GetAtt ComputeStack.Outputs.RegistryTargetGroupArn
-        AuthTargetGroupArn: !GetAtt ComputeStack.Outputs.AuthTargetGroupArn
-        GradioTargetGroupArn: !GetAtt ComputeStack.Outputs.GradioTargetGroupArn
-        KeycloakTargetGroupArn: !GetAtt ComputeStack.Outputs.KeycloakTargetGroupArn
-        EcsTaskExecutionRoleArn: !GetAtt ComputeStack.Outputs.EcsTaskExecutionRoleArn
-        EcsTaskRoleArn: !GetAtt ComputeStack.Outputs.EcsTaskRoleArn
-        KeycloakTaskExecutionRoleArn: !GetAtt ComputeStack.Outputs.KeycloakTaskExecutionRoleArn
-        EfsFileSystemId: !GetAtt DataStack.Outputs.EfsFileSystemId
-        EfsAccessPointServersId: !GetAtt DataStack.Outputs.EfsAccessPointServersId
-        EfsAccessPointModelsId: !GetAtt DataStack.Outputs.EfsAccessPointModelsId
-        EfsAccessPointLogsId: !GetAtt DataStack.Outputs.EfsAccessPointLogsId
-        EfsAccessPointAgentsId: !GetAtt DataStack.Outputs.EfsAccessPointAgentsId
-        EfsAccessPointAuthConfigId: !GetAtt DataStack.Outputs.EfsAccessPointAuthConfigId
-        EfsAccessPointMcpgwDataId: !GetAtt DataStack.Outputs.EfsAccessPointMcpgwDataId
-        SecretKeySecretArn: !GetAtt DataStack.Outputs.SecretKeySecretArn
-        AdminPasswordSecretArn: !GetAtt DataStack.Outputs.AdminPasswordSecretArn
-        KeycloakClientSecretArn: !GetAtt DataStack.Outputs.KeycloakClientSecretArn
-        KeycloakM2MClientSecretArn: !GetAtt DataStack.Outputs.KeycloakM2MClientSecretArn
-        KeycloakDbSecretArn: !GetAtt DataStack.Outputs.KeycloakDbSecretArn
-        DomainName: !If
-          - HasDnsConfig
-          - !If
-            - UseRegionalDomainsCondition
-            - !Sub registry.${AWS::Region}.${BaseDomain}
-            - !Sub registry.${BaseDomain}
-          - !GetAtt ComputeStack.Outputs.MainAlbDnsName
-        KeycloakDomainName: !If
-          - HasDnsConfig
-          - !If
-            - UseRegionalDomainsCondition
-            - !Sub kc.${AWS::Region}.${BaseDomain}
-            - !Sub kc.${BaseDomain}
-          - !GetAtt ComputeStack.Outputs.KeycloakAlbDnsName
-        RdsProxyEndpoint: !GetAtt DataStack.Outputs.RdsProxyEndpoint
         RegistryImageRepo: !Ref RegistryImageRepo
         RegistryImageTag: !Ref RegistryImageTag
         AuthServerImageRepo: !Ref AuthServerImageRepo

@@ -1,0 +1,287 @@
+# TF-CFN Manual Mappings
+# =======================
+# This file maps Terraform resource addresses to CloudFormation logical IDs.
+# Used by tf-cfn-sync.py to reduce false positives in gap analysis.
+#
+# AI ASSISTANT INSTRUCTIONS:
+# --------------------------
+# When adding new resources to either Terraform or CloudFormation:
+# 1. If adding to TF: Add a mapping entry pointing to the equivalent CFN resource
+# 2. If adding to CFN: Add a mapping entry for any TF resources it replaces
+# 3. If the resource is TF-only (no CFN equivalent): Add to 'skip_tf_patterns'
+# 4. If the resource is CFN-only (no TF equivalent): Add to 'skip_cfn_patterns'
+# 5. Run the sync tool to verify mappings: uv run python scripts/tf-cfn-sync.py --tf-plan tf-plan.json
+#
+# Pattern syntax:
+# - Use '*' as wildcard for any characters
+# - Patterns are matched against full TF addresses (e.g., module.mcp_gateway.aws_ecs_service.auth)
+#
+# Last updated: 2025-12-07
+
+# =============================================================================
+# EXPLICIT MAPPINGS
+# =============================================================================
+# Format: "tf_address_pattern": "CFN_LogicalId"
+# Use patterns with '*' to match multiple TF resources to one CFN resource
+
+mappings:
+  # ---------------------------------------------------------------------------
+  # ECS Services (TF modules → CFN flat resources)
+  # Both path formats: module.x/y and module.x.module.y
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway/ecs_service_auth.aws_ecs_service.this": "AuthServerService"
+  "module.mcp_gateway.module.ecs_service_auth.aws_ecs_service.this*": "AuthServerService"
+  "module.mcp_gateway/ecs_service_registry.aws_ecs_service.this": "RegistryService"
+  "module.mcp_gateway.module.ecs_service_registry.aws_ecs_service.this*": "RegistryService"
+  "module.mcp_gateway/ecs_service_currenttime.aws_ecs_service.this": "CurrentTimeService"
+  "module.mcp_gateway.module.ecs_service_currenttime.aws_ecs_service.this*": "CurrentTimeService"
+  "module.mcp_gateway/ecs_service_mcpgw.aws_ecs_service.this": "McpgwService"
+  "module.mcp_gateway.module.ecs_service_mcpgw.aws_ecs_service.this*": "McpgwService"
+  "module.mcp_gateway/ecs_service_realserverfaketools.aws_ecs_service.this": "RealServerFakeToolsService"
+  "module.mcp_gateway.module.ecs_service_realserverfaketools.aws_ecs_service.this*": "RealServerFakeToolsService"
+  "module.mcp_gateway/ecs_service_flight_booking_agent.aws_ecs_service.this": "FlightBookingAgentService"
+  "module.mcp_gateway.module.ecs_service_flight_booking_agent.aws_ecs_service.this*": "FlightBookingAgentService"
+  "module.mcp_gateway/ecs_service_travel_assistant_agent.aws_ecs_service.this": "TravelAssistantAgentService"
+  "module.mcp_gateway.module.ecs_service_travel_assistant_agent.aws_ecs_service.this*": "TravelAssistantAgentService"
+  "aws_ecs_service.keycloak": "KeycloakService"
+
+  # ---------------------------------------------------------------------------
+  # ECS Task Definitions
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway/ecs_service_auth.aws_ecs_task_definition.this": "AuthServerTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_auth.aws_ecs_task_definition.this*": "AuthServerTaskDefinition"
+  "module.mcp_gateway/ecs_service_registry.aws_ecs_task_definition.this": "RegistryTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_registry.aws_ecs_task_definition.this*": "RegistryTaskDefinition"
+  "module.mcp_gateway/ecs_service_currenttime.aws_ecs_task_definition.this": "CurrentTimeTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_currenttime.aws_ecs_task_definition.this*": "CurrentTimeTaskDefinition"
+  "module.mcp_gateway/ecs_service_mcpgw.aws_ecs_task_definition.this": "McpgwTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_mcpgw.aws_ecs_task_definition.this*": "McpgwTaskDefinition"
+  "module.mcp_gateway/ecs_service_realserverfaketools.aws_ecs_task_definition.this": "RealServerFakeToolsTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_realserverfaketools.aws_ecs_task_definition.this*": "RealServerFakeToolsTaskDefinition"
+  "module.mcp_gateway/ecs_service_flight_booking_agent.aws_ecs_task_definition.this": "FlightBookingAgentTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_flight_booking_agent.aws_ecs_task_definition.this*": "FlightBookingAgentTaskDefinition"
+  "module.mcp_gateway/ecs_service_travel_assistant_agent.aws_ecs_task_definition.this": "TravelAssistantAgentTaskDefinition"
+  "module.mcp_gateway.module.ecs_service_travel_assistant_agent.aws_ecs_task_definition.this*": "TravelAssistantAgentTaskDefinition"
+  "aws_ecs_task_definition.keycloak": "KeycloakTaskDefinition"
+
+  # ---------------------------------------------------------------------------
+  # ECS Clusters
+  # ---------------------------------------------------------------------------
+  "module.ecs_cluster.aws_ecs_cluster.this*": "MainEcsCluster"
+  "aws_ecs_cluster.keycloak": "KeycloakEcsCluster"
+
+  # ---------------------------------------------------------------------------
+  # CloudWatch Log Groups
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway/ecs_service_auth/container_definition*.aws_cloudwatch_log_group.this": "AuthServerLogGroup"
+  "module.mcp_gateway.module.ecs_service_auth.module.container_definition*.aws_cloudwatch_log_group.this*": "AuthServerLogGroup"
+  "module.mcp_gateway/ecs_service_registry/container_definition*.aws_cloudwatch_log_group.this": "RegistryLogGroup"
+  "module.mcp_gateway.module.ecs_service_registry.module.container_definition*.aws_cloudwatch_log_group.this*": "RegistryLogGroup"
+  "module.mcp_gateway/ecs_service_currenttime/container_definition*.aws_cloudwatch_log_group.this": "CurrentTimeLogGroup"
+  "module.mcp_gateway.module.ecs_service_currenttime.module.container_definition*.aws_cloudwatch_log_group.this*": "CurrentTimeLogGroup"
+  "module.mcp_gateway/ecs_service_mcpgw/container_definition*.aws_cloudwatch_log_group.this": "McpgwLogGroup"
+  "module.mcp_gateway.module.ecs_service_mcpgw.module.container_definition*.aws_cloudwatch_log_group.this*": "McpgwLogGroup"
+  "module.mcp_gateway/ecs_service_realserverfaketools/container_definition*.aws_cloudwatch_log_group.this": "RealServerFakeToolsLogGroup"
+  "module.mcp_gateway.module.ecs_service_realserverfaketools.module.container_definition*.aws_cloudwatch_log_group.this*": "RealServerFakeToolsLogGroup"
+  "module.mcp_gateway/ecs_service_flight_booking_agent/container_definition*.aws_cloudwatch_log_group.this": "FlightBookingAgentLogGroup"
+  "module.mcp_gateway.module.ecs_service_flight_booking_agent.module.container_definition*.aws_cloudwatch_log_group.this*": "FlightBookingAgentLogGroup"
+  "module.mcp_gateway/ecs_service_travel_assistant_agent/container_definition*.aws_cloudwatch_log_group.this": "TravelAssistantAgentLogGroup"
+  "module.mcp_gateway.module.ecs_service_travel_assistant_agent.module.container_definition*.aws_cloudwatch_log_group.this*": "TravelAssistantAgentLogGroup"
+  "module.ecs_cluster.aws_cloudwatch_log_group.this*": "EcsClusterLogGroup"
+  "aws_cloudwatch_log_group.keycloak": "KeycloakLogGroup"
+
+  # ---------------------------------------------------------------------------
+  # Load Balancers and Target Groups
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway/alb.aws_lb.this": "MainAlb"
+  "module.mcp_gateway.module.alb.aws_lb.this*": "MainAlb"
+  "aws_lb.keycloak": "KeycloakAlb"
+  "module.mcp_gateway/alb.aws_lb_target_group.this[registry]": "RegistryTargetGroup"
+  "module.mcp_gateway.module.alb.aws_lb_target_group.this*registry*": "RegistryTargetGroup"
+  "module.mcp_gateway/alb.aws_lb_target_group.this[auth]": "AuthTargetGroup"
+  "module.mcp_gateway.module.alb.aws_lb_target_group.this*auth*": "AuthTargetGroup"
+  "module.mcp_gateway.module.alb.aws_lb_target_group.this*gradio*": "GradioTargetGroup"
+  "aws_lb_target_group.keycloak": "KeycloakTargetGroup"
+
+  # ---------------------------------------------------------------------------
+  # EFS Resources
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway/efs.aws_efs_file_system.this": "EfsFileSystem"
+  "module.mcp_gateway.module.efs.aws_efs_file_system.this*": "EfsFileSystem"
+  "module.mcp_gateway/efs.aws_efs_mount_target.this[0]": "EfsMountTarget1"
+  "module.mcp_gateway.module.efs.aws_efs_mount_target.this*mount-0*": "EfsMountTarget1"
+  "module.mcp_gateway/efs.aws_efs_mount_target.this[1]": "EfsMountTarget2"
+  "module.mcp_gateway.module.efs.aws_efs_mount_target.this*mount-1*": "EfsMountTarget2"
+  "module.mcp_gateway/efs.aws_efs_mount_target.this[2]": "EfsMountTarget3"
+  "module.mcp_gateway.module.efs.aws_efs_mount_target.this*mount-2*": "EfsMountTarget3"
+  "module.mcp_gateway/efs.aws_efs_access_point.this[servers]": "EfsAccessPointServers"
+  "module.mcp_gateway.module.efs.aws_efs_access_point.this*servers*": "EfsAccessPointServers"
+  "module.mcp_gateway/efs.aws_efs_access_point.this[models]": "EfsAccessPointModels"
+  "module.mcp_gateway.module.efs.aws_efs_access_point.this*models*": "EfsAccessPointModels"
+  "module.mcp_gateway/efs.aws_efs_access_point.this[logs]": "EfsAccessPointLogs"
+  "module.mcp_gateway.module.efs.aws_efs_access_point.this*logs*": "EfsAccessPointLogs"
+  "module.mcp_gateway/efs.aws_efs_access_point.this[agents]": "EfsAccessPointAgents"
+  "module.mcp_gateway.module.efs.aws_efs_access_point.this*agents*": "EfsAccessPointAgents"
+  "module.mcp_gateway/efs.aws_efs_access_point.this[auth_config]": "EfsAccessPointAuthConfig"
+  "module.mcp_gateway.module.efs.aws_efs_access_point.this*auth_config*": "EfsAccessPointAuthConfig"
+  "module.mcp_gateway.module.efs.aws_efs_access_point.this*mcpgw_data*": "EfsAccessPointMcpgwData"
+
+  # ---------------------------------------------------------------------------
+  # RDS / Aurora
+  # ---------------------------------------------------------------------------
+  "aws_rds_cluster.keycloak": "AuroraCluster"
+  "aws_rds_cluster_instance.keycloak": "AuroraInstance"
+  "aws_db_subnet_group.keycloak": "DbSubnetGroup"
+  "aws_db_proxy.keycloak": "RdsProxy"
+  "aws_db_proxy_target.keycloak": "RdsProxyTargetGroup"
+  "aws_kms_key.rds": "RdsKmsKey"
+  "aws_kms_alias.rds": "RdsKmsKeyAlias"
+
+  # ---------------------------------------------------------------------------
+  # VPC and Networking
+  # ---------------------------------------------------------------------------
+  "module.vpc.aws_vpc.this*": "VPC"
+  "module.vpc.aws_internet_gateway.this*": "InternetGateway"
+  "module.vpc.aws_subnet.public*0*": "PublicSubnet1"
+  "module.vpc.aws_subnet.public*1*": "PublicSubnet2"
+  "module.vpc.aws_subnet.public*2*": "PublicSubnet3"
+  "module.vpc.aws_subnet.private*0*": "PrivateSubnet1"
+  "module.vpc.aws_subnet.private*1*": "PrivateSubnet2"
+  "module.vpc.aws_subnet.private*2*": "PrivateSubnet3"
+  "module.vpc.aws_nat_gateway.this*0*": "NatGateway1"
+  "module.vpc.aws_nat_gateway.this*1*": "NatGateway2"
+  "module.vpc.aws_nat_gateway.this*2*": "NatGateway3"
+  "module.vpc.aws_eip.nat*0*": "NatGateway1EIP"
+  "module.vpc.aws_eip.nat*1*": "NatGateway2EIP"
+  "module.vpc.aws_eip.nat*2*": "NatGateway3EIP"
+  "module.vpc.aws_route_table.public*": "PublicRouteTable"
+  "module.vpc.aws_route_table.private*0*": "PrivateRouteTable1"
+  "module.vpc.aws_route_table.private*1*": "PrivateRouteTable2"
+  "module.vpc.aws_route_table.private*2*": "PrivateRouteTable3"
+
+  # ---------------------------------------------------------------------------
+  # Service Discovery
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway.aws_service_discovery_private_dns_namespace.mcp": "ServiceDiscoveryNamespace"
+
+  # ---------------------------------------------------------------------------
+  # Secrets Manager
+  # ---------------------------------------------------------------------------
+  "module.mcp_gateway.aws_secretsmanager_secret.admin_password": "AdminPasswordSecret"
+  "module.mcp_gateway.aws_secretsmanager_secret.secret_key": "SecretKeySecret"
+  "module.mcp_gateway.aws_secretsmanager_secret.keycloak_client_secret": "KeycloakClientSecret"
+  "module.mcp_gateway.aws_secretsmanager_secret.keycloak_m2m_client_secret": "KeycloakM2MClientSecret"
+
+  # ---------------------------------------------------------------------------
+  # IAM Roles (TF per-service → CFN shared)
+  # CFN uses shared roles, so multiple TF roles map to same CFN role
+  # ---------------------------------------------------------------------------
+  "module.ecs_cluster.aws_iam_role.task_exec": "EcsTaskExecutionRole"
+  "aws_iam_role.keycloak_task_exec_role": "KeycloakTaskExecutionRole"
+  "aws_iam_role.keycloak_task_role": "EcsTaskRole"
+
+# =============================================================================
+# SKIP PATTERNS - TF resources with no CFN equivalent (intentional)
+# =============================================================================
+# These TF resources are skipped because:
+# - They're TF-specific (random_*, validation)
+# - CFN handles them differently (inline policies vs attachments)
+# - They're VPC defaults that CFN doesn't manage
+
+skip_tf_patterns:
+  # TF-only resources
+  - "random_*"
+  - "aws_acm_certificate_validation.*"
+  
+  # VPC defaults (TF manages these, CFN doesn't need to)
+  - "module.vpc.aws_default_*"
+  
+  # IAM policy attachments (CFN embeds policies in roles)
+  - "*aws_iam_role_policy_attachment*"
+  - "*aws_iam_policy.*"  # Policies are inline in CFN roles
+  
+  # Per-service IAM roles (CFN uses shared roles)
+  - "module.mcp_gateway/ecs_service_*.aws_iam_role.*"
+  - "module.mcp_gateway.module.ecs_service_*.aws_iam_role.*"
+  
+  # Per-service security groups (CFN uses shared SG)
+  - "module.mcp_gateway/ecs_service_*.aws_security_group.*"
+  - "module.mcp_gateway/ecs_service_*.aws_vpc_security_group_*"
+  - "module.mcp_gateway.module.ecs_service_*.aws_security_group.*"
+  - "module.mcp_gateway.module.alb.aws_security_group.*"
+  - "module.mcp_gateway.module.efs.aws_security_group.*"
+  
+  # Per-service auto-scaling (CFN has simplified scaling)
+  - "module.mcp_gateway/ecs_service_*.aws_appautoscaling_*"
+  - "module.mcp_gateway.module.ecs_service_*.aws_appautoscaling_*"
+  
+  # Route table associations (handled implicitly in CFN)
+  - "module.vpc.aws_route_table_association.*"
+  
+  # EFS policies (part of EFS resource in CFN)
+  - "*aws_efs_backup_policy*"
+  - "*aws_efs_file_system_policy*"
+  
+  # Security group rules (embedded in SG in CFN)
+  - "aws_security_group_rule.*"
+  - "*aws_vpc_security_group_ingress_rule*"
+  - "*aws_vpc_security_group_egress_rule*"
+  
+  # Secrets Manager versions (CFN handles automatically)
+  - "*aws_secretsmanager_secret_version*"
+  
+  # ECS cluster capacity providers (embedded in cluster)
+  - "*aws_ecs_cluster_capacity_providers*"
+  
+  # ALB listeners (CFN has different listener structure)
+  - "module.mcp_gateway/alb.aws_lb_listener.*"
+  - "module.mcp_gateway.module.alb.aws_lb_listener.*"
+  
+  # ECR lifecycle policies (embedded in repository)
+  - "aws_ecr_lifecycle_policy.*"
+  - "aws_ecr_repository_policy.*"
+  
+  # SSM Parameters (CFN uses Secrets Manager instead)
+  - "aws_ssm_parameter.keycloak_*"
+  
+  # IAM role policies (CFN embeds in roles)
+  - "aws_iam_role_policy.*"
+  
+  # Security groups for Keycloak (CFN has different SG structure)
+  - "aws_security_group.keycloak_db"
+  - "aws_security_group.keycloak_lb"
+  
+  # RDS cluster parameter group (CFN uses defaults)
+  - "aws_rds_cluster_parameter_group.*"
+
+# =============================================================================
+# SKIP PATTERNS - CFN resources with no TF equivalent (intentional)
+# =============================================================================
+# These CFN resources exist only in CloudFormation because:
+# - They're workshop-specific (CodeBuild for container builds)
+# - They're CFN helper resources (custom resources, wait conditions)
+
+skip_cfn_patterns:
+  # CodeBuild for container builds (workshop-specific)
+  - "*CodeBuild*"
+  - "*ContainerBuild*"
+  - "*TriggerBuild*"
+  
+  # CloudFront (CFN uses CloudFront for Keycloak, TF uses direct ALB)
+  - "*CloudFront*"
+  
+  # Custom resources for deployment automation
+  - "*Custom::*"
+  - "*LambdaFunction*"  # Helper lambdas for custom resources
+
+# =============================================================================
+# KNOWN GAPS - TF resources that SHOULD be added to CFN
+# =============================================================================
+# AI ASSISTANT: When you see resources listed here, consider adding them to CFN
+
+known_gaps:
+  # CloudWatch Alarms - TF has these, CFN should add them
+  - pattern: "module.mcp_gateway.aws_cloudwatch_metric_alarm.*"
+    description: "Monitoring alarms for ALB errors, response time, CPU/memory"
+    recommendation: "Add AWS::CloudWatch::Alarm resources to services-stack.yaml"
+    priority: "medium"

@@ -11,6 +11,42 @@ Parameters:
     Default: mcp-gateway
     Description: Name prefix for all resources (must match network stack)
 
+  # Network references (passed from main-stack or use ImportValue)
+  VpcId:
+    Type: String
+    Default: ''
+    Description: VPC ID (leave empty to use ImportValue)
+
+  VpcCidr:
+    Type: String
+    Default: ''
+    Description: VPC CIDR block (leave empty to use ImportValue)
+
+  PrivateSubnet1:
+    Type: String
+    Default: ''
+    Description: Private Subnet 1 ID (leave empty to use ImportValue)
+
+  PrivateSubnet2:
+    Type: String
+    Default: ''
+    Description: Private Subnet 2 ID (leave empty to use ImportValue)
+
+  PrivateSubnet3:
+    Type: String
+    Default: ''
+    Description: Private Subnet 3 ID (leave empty to use ImportValue)
+
+  DatabaseSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Database Security Group ID (leave empty to use ImportValue)
+
+  EfsSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: EFS Security Group ID (leave empty to use ImportValue)
+
   # Database credentials (NoEcho for security)
   KeycloakDatabaseUsername:
     Type: String
@@ -42,6 +78,14 @@ Parameters:
     Type: Number
     Default: 2
     Description: Maximum Aurora Capacity Units
+
+Conditions:
+  UseVpcIdParam: !Not [!Equals [!Ref VpcId, '']]
+  UsePrivateSubnet1Param: !Not [!Equals [!Ref PrivateSubnet1, '']]
+  UsePrivateSubnet2Param: !Not [!Equals [!Ref PrivateSubnet2, '']]
+  UsePrivateSubnet3Param: !Not [!Equals [!Ref PrivateSubnet3, '']]
+  UseDatabaseSgParam: !Not [!Equals [!Ref DatabaseSecurityGroupId, '']]
+  UseEfsSgParam: !Not [!Equals [!Ref EfsSecurityGroupId, '']]
 
 Resources:
 
@@ -101,31 +145,49 @@ Resources:
     Type: AWS::EFS::MountTarget
     Properties:
       FileSystemId: !Ref EfsFileSystem
-      SubnetId: !ImportValue
-        Fn::Sub: ${EnvironmentName}-PrivateSubnet1
-      SecurityGroups:
+      SubnetId: !If
+        - UsePrivateSubnet1Param
+        - !Ref PrivateSubnet1
         - !ImportValue
-          Fn::Sub: ${EnvironmentName}-EfsSG
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+      SecurityGroups:
+        - !If
+          - UseEfsSgParam
+          - !Ref EfsSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-EfsSG
 
   EfsMountTarget2:
     Type: AWS::EFS::MountTarget
     Properties:
       FileSystemId: !Ref EfsFileSystem
-      SubnetId: !ImportValue
-        Fn::Sub: ${EnvironmentName}-PrivateSubnet2
-      SecurityGroups:
+      SubnetId: !If
+        - UsePrivateSubnet2Param
+        - !Ref PrivateSubnet2
         - !ImportValue
-          Fn::Sub: ${EnvironmentName}-EfsSG
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+      SecurityGroups:
+        - !If
+          - UseEfsSgParam
+          - !Ref EfsSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-EfsSG
 
   EfsMountTarget3:
     Type: AWS::EFS::MountTarget
     Properties:
       FileSystemId: !Ref EfsFileSystem
-      SubnetId: !ImportValue
-        Fn::Sub: ${EnvironmentName}-PrivateSubnet3
-      SecurityGroups:
+      SubnetId: !If
+        - UsePrivateSubnet3Param
+        - !Ref PrivateSubnet3
         - !ImportValue
-          Fn::Sub: ${EnvironmentName}-EfsSG
+          Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      SecurityGroups:
+        - !If
+          - UseEfsSgParam
+          - !Ref EfsSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-EfsSG
 
   #============================================================================
   # EFS Access Points (6 total)
@@ -315,12 +377,21 @@ Resources:
       DBSubnetGroupName: !Sub ${EnvironmentName}-keycloak-subnet-group
       DBSubnetGroupDescription: Subnet group for Keycloak Aurora cluster
       SubnetIds:
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet1
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet2
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+        - !If
+          - UsePrivateSubnet1Param
+          - !Ref PrivateSubnet1
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !If
+          - UsePrivateSubnet2Param
+          - !Ref PrivateSubnet2
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !If
+          - UsePrivateSubnet3Param
+          - !Ref PrivateSubnet3
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet3
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak-subnet-group
@@ -353,8 +424,11 @@ Resources:
       DBSubnetGroupName: !Ref DbSubnetGroup
       DBClusterParameterGroupName: !Ref DbClusterParameterGroup
       VpcSecurityGroupIds:
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-DatabaseSG
+        - !If
+          - UseDatabaseSgParam
+          - !Ref DatabaseSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-DatabaseSG
       BackupRetentionPeriod: 7
       PreferredBackupWindow: 02:00-04:00
       PreferredMaintenanceWindow: sun:04:00-sun:05:00
@@ -423,15 +497,27 @@ Resources:
           IAMAuth: DISABLED
       RoleArn: !GetAtt RdsProxyRole.Arn
       VpcSubnetIds:
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet1
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet2
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+        - !If
+          - UsePrivateSubnet1Param
+          - !Ref PrivateSubnet1
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !If
+          - UsePrivateSubnet2Param
+          - !Ref PrivateSubnet2
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !If
+          - UsePrivateSubnet3Param
+          - !Ref PrivateSubnet3
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet3
       VpcSecurityGroupIds:
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-DatabaseSG
+        - !If
+          - UseDatabaseSgParam
+          - !Ref DatabaseSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-DatabaseSG
       RequireTLS: false
       Tags:
         - Key: Name
@@ -479,7 +565,10 @@ Resources:
                   - ssm:PutParameter
                   - ssm:DeleteParameter
                   - ssm:GetParameter
+                  - ssm:GetParameters
                   - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                  - ssm:ListTagsForResource
                 Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
       Tags:
         - Key: Name

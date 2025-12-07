@@ -1,0 +1,2509 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Single Consolidated Stack for Workshop Deployment
+  Combines network, data, compute, and services into one template.
+  No nested stacks or S3 bucket required.
+  Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+
+  IngressCidrBlocks:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR blocks allowed to access ALBs
+
+  # Database Credentials
+  KeycloakDatabaseUsername:
+    Type: String
+    Default: keycloak
+    Description: Keycloak database username
+    NoEcho: true
+
+  KeycloakDatabasePassword:
+    Type: String
+    Default: McpGateway2025!
+    Description: Keycloak database password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  KeycloakAdminPassword:
+    Type: String
+    Default: AdminPassword2025!
+    Description: Keycloak admin password (min 12 characters)
+    NoEcho: true
+    MinLength: 12
+
+  # Aurora Serverless Scaling
+  DatabaseMinACU:
+    Type: Number
+    Default: 0.5
+    Description: Minimum Aurora Capacity Units
+
+  DatabaseMaxACU:
+    Type: Number
+    Default: 2
+    Description: Maximum Aurora Capacity Units
+
+  # Resource Configuration
+  ServiceCpu:
+    Type: String
+    Default: '1024'
+    Description: CPU units for main services
+
+  ServiceMemory:
+    Type: String
+    Default: '2048'
+    Description: Memory (MB) for main services
+
+  KeycloakCpu:
+    Type: String
+    Default: '1024'
+    Description: CPU units for Keycloak
+
+  KeycloakMemory:
+    Type: String
+    Default: '2048'
+    Description: Memory (MB) for Keycloak
+
+  KeycloakLogLevel:
+    Type: String
+    Default: 'INFO'
+    AllowedValues: ['ALL', 'DEBUG', 'ERROR', 'FATAL', 'INFO', 'OFF', 'TRACE', 'WARN']
+
+  # Auto Scaling
+  EnableAutoScaling:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+
+  MinCapacity:
+    Type: Number
+    Default: 1
+
+  MaxCapacity:
+    Type: Number
+    Default: 4
+
+  TargetCpuUtilization:
+    Type: Number
+    Default: 70
+
+  TargetMemoryUtilization:
+    Type: Number
+    Default: 80
+
+  # GitHub Source
+  GitHubRepoUrl:
+    Type: String
+    Default: https://github.com/WPrintz/mcp-gateway-registry.git
+    Description: GitHub repository URL for source code (public repo, no auth needed)
+
+Conditions:
+  EnableAutoScalingCondition: !Equals [!Ref EnableAutoScaling, 'true']
+
+Resources:
+  #============================================================================
+  # NETWORK RESOURCES
+  #============================================================================
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-vpc
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-igw
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Public Subnets
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.48.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-1
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.49.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-2
+
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: 10.0.50.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-3
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: 10.0.0.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-1
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [1, !GetAZs '']
+      CidrBlock: 10.0.16.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-2
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [2, !GetAZs '']
+      CidrBlock: 10.0.32.0/20
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-private-3
+
+  # NAT Gateways
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway3EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+
+  NatGateway3:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway3EIP.AllocationId
+      SubnetId: !Ref PublicSubnet3
+
+  # Route Tables
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-public-rt
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet3
+
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  DefaultPrivateRoute3:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway3
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      SubnetId: !Ref PrivateSubnet3
+
+  # Security Groups
+  VpcEndpointsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for VPC endpoints
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref VpcCidr
+
+  MainAlbSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for main ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: !Ref IngressCidrBlocks
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: !Ref IngressCidrBlocks
+        - IpProtocol: tcp
+          FromPort: 8888
+          ToPort: 8888
+          CidrIp: !Ref IngressCidrBlocks
+        - IpProtocol: tcp
+          FromPort: 7860
+          ToPort: 7860
+          CidrIp: !Ref IngressCidrBlocks
+
+  KeycloakAlbSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Keycloak ALB
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+
+  EcsTasksSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+
+  EcsTasksIngressFromAlb:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref MainAlbSG
+
+  EcsTasksIngressFromAlb443:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref MainAlbSG
+
+  EcsTasksIngressFromAlb7860:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 7860
+      ToPort: 7860
+      SourceSecurityGroupId: !Ref MainAlbSG
+
+  EcsTasksIngressFromAlb8888:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 8888
+      ToPort: 8888
+      SourceSecurityGroupId: !Ref MainAlbSG
+
+  KeycloakEcsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Keycloak ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref KeycloakAlbSG
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: udp
+          FromPort: 53
+          ToPort: 53
+          CidrIp: 0.0.0.0/0
+
+  DatabaseSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Aurora database
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref KeycloakEcsSG
+
+  DatabaseSGSelfIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DatabaseSG
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      SourceSecurityGroupId: !Ref DatabaseSG
+
+  KeycloakEcsEgressToDb:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref KeycloakEcsSG
+      IpProtocol: tcp
+      FromPort: 3306
+      ToPort: 3306
+      DestinationSecurityGroupId: !Ref DatabaseSG
+
+  MainAlbEgressToEcs:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref MainAlbSG
+      IpProtocol: '-1'
+      DestinationSecurityGroupId: !Ref EcsTasksSG
+
+  KeycloakAlbEgressToEcs:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref KeycloakAlbSG
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      DestinationSecurityGroupId: !Ref KeycloakEcsSG
+
+  EfsSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for EFS
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: !Ref VpcCidr
+
+  McpServersSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for MCP server tasks
+      VpcId: !Ref VPC
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+
+  McpServersIngressFromEcs:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref McpServersSG
+      IpProtocol: tcp
+      FromPort: 8000
+      ToPort: 9001
+      SourceSecurityGroupId: !Ref EcsTasksSG
+
+  # VPC Endpoints
+  STSEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.sts
+      VpcEndpointType: Interface
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      SecurityGroupIds:
+        - !Ref VpcEndpointsSG
+      PrivateDnsEnabled: true
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PrivateRouteTable1
+        - !Ref PrivateRouteTable2
+        - !Ref PrivateRouteTable3
+
+
+  #============================================================================
+  # DATA RESOURCES
+  #============================================================================
+  
+  # KMS Key for RDS
+  RdsKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for RDS encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow RDS to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+
+  # EFS File System
+  EfsFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-efs
+
+  EfsMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroups:
+        - !Ref EfsSG
+
+  EfsMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnet2
+      SecurityGroups:
+        - !Ref EfsSG
+
+  EfsMountTarget3:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      SubnetId: !Ref PrivateSubnet3
+      SecurityGroups:
+        - !Ref EfsSG
+
+  # EFS Access Points
+  EfsAccessPointServers:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /servers
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  EfsAccessPointModels:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /models
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  EfsAccessPointLogs:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /logs
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  EfsAccessPointAgents:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /agents
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  EfsAccessPointAuthConfig:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /auth_config
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  EfsAccessPointMcpgwData:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EfsFileSystem
+      PosixUser:
+        Uid: '1000'
+        Gid: '1000'
+      RootDirectory:
+        Path: /mcpgw_data
+        CreationInfo:
+          OwnerUid: '1000'
+          OwnerGid: '1000'
+          Permissions: '755'
+
+  # Secrets Manager Secrets
+  KeycloakDbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}/keycloak/database
+      SecretString: !Sub |
+        {
+          "username": "${KeycloakDatabaseUsername}",
+          "password": "${KeycloakDatabasePassword}"
+        }
+
+  SecretKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-secret-key
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: secret_key
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\'
+
+  AdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-admin-password
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: admin_password
+        PasswordLength: 32
+        RequireEachIncludedType: true
+
+  KeycloakClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-client-secret
+      SecretString: '{"client_secret": "placeholder-will-be-updated-by-init-script"}'
+
+  KeycloakM2MClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-m2m-client-secret
+      SecretString: '{"client_secret": "placeholder-will-be-updated-by-init-script"}'
+
+  # Aurora Database
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub ${EnvironmentName}-keycloak-subnet-group
+      DBSubnetGroupDescription: Subnet group for Keycloak Aurora cluster
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+
+  DbClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      DBClusterParameterGroupName: !Sub ${EnvironmentName}-keycloak-params
+      Description: Keycloak Aurora MySQL parameter group
+      Family: aurora-mysql8.0
+      Parameters:
+        character_set_server: utf8mb4
+        collation_server: utf8mb4_unicode_ci
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DependsOn: KeycloakDbSecret
+    Properties:
+      DBClusterIdentifier: !Sub ${EnvironmentName}-keycloak
+      Engine: aurora-mysql
+      EngineVersion: 8.0.mysql_aurora.3.08.2
+      DatabaseName: keycloak
+      MasterUsername: !Ref KeycloakDatabaseUsername
+      MasterUserPassword: !Ref KeycloakDatabasePassword
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      DBClusterParameterGroupName: !Ref DbClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !Ref DatabaseSG
+      BackupRetentionPeriod: 7
+      StorageEncrypted: true
+      KmsKeyId: !GetAtt RdsKmsKey.Arn
+      DeletionProtection: false
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref DatabaseMinACU
+        MaxCapacity: !Ref DatabaseMaxACU
+
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub ${EnvironmentName}-keycloak-instance
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-mysql
+
+  # RDS Proxy
+  RdsProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-rds-proxy-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RdsProxySecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref KeycloakDbSecret
+
+  RdsProxy:
+    Type: AWS::RDS::DBProxy
+    DependsOn: AuroraInstance
+    Properties:
+      DBProxyName: !Sub ${EnvironmentName}-keycloak-proxy
+      EngineFamily: MYSQL
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref KeycloakDbSecret
+          IAMAuth: DISABLED
+      RoleArn: !GetAtt RdsProxyRole.Arn
+      VpcSubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+        - !Ref PrivateSubnet3
+      VpcSecurityGroupIds:
+        - !Ref DatabaseSG
+      RequireTLS: false
+
+  RdsProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref RdsProxy
+      TargetGroupName: default
+      DBClusterIdentifiers:
+        - !Ref AuroraCluster
+
+  # SSM SecureString Lambda
+  SsmSecureStringLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-ssm-securestring-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SsmSecureStringPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                  - ssm:ListTagsForResource
+                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+
+  SsmSecureStringLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-ssm-securestring
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt SsmSecureStringLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              print(f"Event: {event}")
+              ssm = boto3.client('ssm')
+              
+              try:
+                  name = event['ResourceProperties']['Name']
+                  
+                  if event['RequestType'] == 'Delete':
+                      try:
+                          ssm.delete_parameter(Name=name)
+                      except ssm.exceptions.ParameterNotFound:
+                          pass
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  value = event['ResourceProperties']['Value']
+                  description = event['ResourceProperties'].get('Description', '')
+                  
+                  ssm.put_parameter(
+                      Name=name,
+                      Value=value,
+                      Type='SecureString',
+                      Description=description,
+                      Overwrite=True
+                  )
+                  
+                  region = context.invoked_function_arn.split(':')[3]
+                  account = context.invoked_function_arn.split(':')[4]
+                  arn = f"arn:aws:ssm:{region}:{account}:parameter{name}"
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Arn': arn})
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  SsmKeycloakDatabaseUrl:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/database/url
+      Value: !Sub jdbc:mysql://${AuroraCluster.Endpoint.Address}:3306/keycloak
+      Description: Keycloak database JDBC URL
+
+  SsmKeycloakDatabaseUsername:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/database/username
+      Value: !Ref KeycloakDatabaseUsername
+      Description: Keycloak database username
+
+  SsmKeycloakDatabasePassword:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/database/password
+      Value: !Ref KeycloakDatabasePassword
+      Description: Keycloak database password
+
+  SsmKeycloakAdmin:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/admin
+      Value: admin
+      Description: Keycloak admin username
+
+  SsmKeycloakAdminPassword:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/admin_password
+      Value: !Ref KeycloakAdminPassword
+      Description: Keycloak admin password
+
+
+  #============================================================================
+  # COMPUTE RESOURCES
+  #============================================================================
+  
+  # ECS Clusters
+  MainEcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: OVERRIDE
+          LogConfiguration:
+            CloudWatchLogGroupName: !Ref EcsClusterLogGroup
+
+  KeycloakEcsCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-keycloak-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+
+  EcsClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/${EnvironmentName}
+      RetentionInDays: 30
+
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub ${EnvironmentName}.local
+      Description: Service discovery namespace for MCP Gateway Registry
+      Vpc: !Ref VPC
+
+  # IAM Roles
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-task-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref SecretKeySecret
+                  - !Ref AdminPasswordSecret
+                  - !Ref KeycloakClientSecret
+                  - !Ref KeycloakM2MClientSecret
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+        - PolicyName: EcsExecLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EcsExec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  KeycloakTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-keycloak-task-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: KeycloakSecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref KeycloakDbSecret
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+
+  # ECR Repositories
+  KeycloakEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EnvironmentName}-keycloak
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  RegistryEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-registry
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  AuthServerEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-auth-server
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  CurrentTimeEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-currenttime
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  McpgwEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-mcpgw
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  RealServerFakeToolsEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-realserverfaketools
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  FlightBookingAgentEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-flight-booking-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  TravelAssistantAgentEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-travel-assistant-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+
+  # CodeBuild for Container Images
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-*
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/mcp-gateway-*
+
+  ContainerBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${EnvironmentName}-container-build
+      Description: Build and push MCP Gateway container images to ECR
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: ECR_REGISTRY
+            Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepoUrl
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+                - docker pull public.ecr.aws/docker/library/python:3.12-slim
+                - docker pull quay.io/keycloak/keycloak:23.0
+                - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
+                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
+            build:
+              commands:
+                - echo Building container images in parallel...
+                - |
+                  build_and_push() {
+                    local name=$1
+                    local dockerfile=$2
+                    local context=$3
+                    echo "Starting build: $name"
+                    docker build -t $ECR_REGISTRY/$name:latest -f $dockerfile $context && \
+                    docker push $ECR_REGISTRY/$name:latest && \
+                    echo "Completed: $name" || echo "FAILED: $name"
+                  }
+
+                  build_and_push mcp-gateway-registry docker/Dockerfile.registry . &
+                  build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
+                  build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
+                  build_and_push mcp-gateway-mcpgw docker/Dockerfile.mcp-server servers/mcpgw &
+                  build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
+                  build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
+                  build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
+                  build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
+
+                  FAILED=0
+                  for job in $(jobs -p); do
+                    wait $job || FAILED=$((FAILED+1))
+                  done
+
+                  if [ $FAILED -gt 0 ]; then
+                    echo "$FAILED build(s) failed"
+                    exit 1
+                  fi
+                  echo "All builds completed successfully"
+            post_build:
+              commands:
+                - echo Build completed on `date`
+      TimeoutInMinutes: 30
+
+  # Lambda to Trigger CodeBuild
+  TriggerBuildLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-trigger-build-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TriggerBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt ContainerBuildProject.Arn
+
+  TriggerBuildLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-trigger-container-build
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TriggerBuildLambdaRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import time
+
+          def handler(event, context):
+              print(f"Event: {event}")
+
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  codebuild = boto3.client('codebuild')
+                  project_name = event['ResourceProperties']['ProjectName']
+
+                  response = codebuild.start_build(projectName=project_name)
+                  build_id = response['build']['id']
+                  print(f"Started build: {build_id}")
+
+                  max_wait = 1800
+                  wait_interval = 30
+                  elapsed = 0
+
+                  while elapsed < max_wait:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+
+                      builds = codebuild.batch_get_builds(ids=[build_id])
+                      build_status = builds['builds'][0]['buildStatus']
+                      print(f"Build status: {build_status} (elapsed: {elapsed}s)")
+
+                      if build_status == 'SUCCEEDED':
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {'BuildId': build_id})
+                          return
+                      elif build_status in ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT']:
+                          cfnresponse.send(event, context, cfnresponse.FAILED, {'BuildId': build_id, 'Status': build_status})
+                          return
+
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': 'Build timed out'})
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  TriggerContainerBuild:
+    Type: Custom::TriggerBuild
+    DependsOn:
+      - RegistryEcrRepository
+      - AuthServerEcrRepository
+      - CurrentTimeEcrRepository
+      - McpgwEcrRepository
+      - RealServerFakeToolsEcrRepository
+      - FlightBookingAgentEcrRepository
+      - TravelAssistantAgentEcrRepository
+      - ContainerBuildProject
+    Properties:
+      ServiceToken: !GetAtt TriggerBuildLambda.Arn
+      ProjectName: !Ref ContainerBuildProject
+
+
+  # ALBs and Target Groups
+  MainAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref MainAlbSG
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+
+  RegistryTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-registry-tg
+      Port: 7860
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckPort: '7860'
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+
+  AuthTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-auth-tg
+      Port: 8888
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+
+  GradioTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-gradio-tg
+      Port: 7860
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+
+  MainAlbHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref RegistryTargetGroup
+
+  MainAlbAuthListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 8888
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthTargetGroup
+
+  MainAlbGradioListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 7860
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GradioTargetGroup
+
+  KeycloakAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref KeycloakAlbSG
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+        - !Ref PublicSubnet3
+
+  KeycloakTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-tg
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !Ref VPC
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: 200-399
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '86400'
+
+  KeycloakHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref KeycloakAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref KeycloakTargetGroup
+
+  # CloudFront for Keycloak HTTPS
+  KeycloakCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub ${EnvironmentName} Keycloak HTTPS Distribution
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: KeycloakAlbOrigin
+            DomainName: !GetAtt KeycloakAlb.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+        DefaultCacheBehavior:
+          TargetOriginId: KeycloakAlbOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+          Compress: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+
+
+  #============================================================================
+  # SERVICES - Log Groups
+  #============================================================================
+  RegistryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-registry
+      RetentionInDays: 30
+
+  AuthServerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-auth-server
+      RetentionInDays: 30
+
+  KeycloakLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-keycloak
+      RetentionInDays: 7
+
+  CurrentTimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-currenttime
+      RetentionInDays: 30
+
+  McpgwLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-mcpgw
+      RetentionInDays: 30
+
+  RealServerFakeToolsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-realserverfaketools
+      RetentionInDays: 30
+
+  FlightBookingAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-flight-booking-agent
+      RetentionInDays: 30
+
+  TravelAssistantAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-travel-assistant-agent
+      RetentionInDays: 30
+
+  #============================================================================
+  # SERVICES - Task Definitions
+  #============================================================================
+  AuthServerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-auth-server
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref ServiceCpu
+      Memory: !Ref ServiceMemory
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      Volumes:
+        - Name: mcp-logs
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointLogs
+        - Name: auth-config
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointAuthConfig
+      ContainerDefinitions:
+        - Name: auth-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-auth-server:latest'
+          Essential: true
+          PortMappings:
+            - Name: auth-server
+              ContainerPort: 8888
+              Protocol: tcp
+          Environment:
+            - Name: REGISTRY_URL
+              Value: !Sub http://${MainAlb.DNSName}
+            - Name: AUTH_SERVER_URL
+              Value: http://auth-server:8888
+            - Name: AUTH_SERVER_EXTERNAL_URL
+              Value: !Sub http://${MainAlb.DNSName}
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AUTH_PROVIDER
+              Value: keycloak
+            - Name: KEYCLOAK_URL
+              Value: !Sub https://${KeycloakCloudFrontDistribution.DomainName}
+            - Name: KEYCLOAK_EXTERNAL_URL
+              Value: !Sub https://${KeycloakCloudFrontDistribution.DomainName}
+            - Name: KEYCLOAK_REALM
+              Value: mcp-gateway
+            - Name: KEYCLOAK_CLIENT_ID
+              Value: mcp-gateway-web
+            - Name: SCOPES_CONFIG_PATH
+              Value: /efs/auth_config/auth_config/scopes.yml
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Ref SecretKeySecret
+            - Name: KEYCLOAK_CLIENT_SECRET
+              ValueFrom: !Sub '${KeycloakClientSecret}:client_secret::'
+          MountPoints:
+            - SourceVolume: mcp-logs
+              ContainerPath: /app/logs
+              ReadOnly: false
+            - SourceVolume: auth-config
+              ContainerPath: /efs/auth_config
+              ReadOnly: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AuthServerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:8888/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  RegistryTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-registry
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref ServiceCpu
+      Memory: !Ref ServiceMemory
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      Volumes:
+        - Name: mcp-servers
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointServers
+        - Name: mcp-agents
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointAgents
+        - Name: mcp-models
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointModels
+        - Name: mcp-logs
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointLogs
+        - Name: auth-config
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointAuthConfig
+      ContainerDefinitions:
+        - Name: registry
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-registry:latest'
+          Essential: true
+          PortMappings:
+            - Name: http
+              ContainerPort: 80
+              Protocol: tcp
+            - Name: https
+              ContainerPort: 443
+              Protocol: tcp
+            - Name: registry
+              ContainerPort: 7860
+              Protocol: tcp
+          Environment:
+            - Name: GATEWAY_ADDITIONAL_SERVER_NAMES
+              Value: !GetAtt MainAlb.DNSName
+            - Name: EC2_PUBLIC_DNS
+              Value: !GetAtt MainAlb.DNSName
+            - Name: AUTH_SERVER_URL
+              Value: http://auth-server:8888
+            - Name: AUTH_SERVER_EXTERNAL_URL
+              Value: !Sub http://${MainAlb.DNSName}:8888
+            - Name: KEYCLOAK_URL
+              Value: !Sub https://${KeycloakCloudFrontDistribution.DomainName}
+            - Name: KEYCLOAK_ENABLED
+              Value: 'true'
+            - Name: KEYCLOAK_REALM
+              Value: mcp-gateway
+            - Name: KEYCLOAK_CLIENT_ID
+              Value: mcp-gateway-web
+            - Name: AUTH_PROVIDER
+              Value: keycloak
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: SCOPES_CONFIG_PATH
+              Value: /app/auth_server/scopes.yml
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Ref SecretKeySecret
+            - Name: ADMIN_PASSWORD
+              ValueFrom: !Ref AdminPasswordSecret
+            - Name: KEYCLOAK_CLIENT_SECRET
+              ValueFrom: !Sub '${KeycloakClientSecret}:client_secret::'
+            - Name: KEYCLOAK_M2M_CLIENT_SECRET
+              ValueFrom: !Sub '${KeycloakM2MClientSecret}:client_secret::'
+          MountPoints:
+            - SourceVolume: mcp-servers
+              ContainerPath: /app/registry/servers
+              ReadOnly: false
+            - SourceVolume: mcp-agents
+              ContainerPath: /app/registry/agents
+              ReadOnly: false
+            - SourceVolume: mcp-models
+              ContainerPath: /app/registry/models
+              ReadOnly: false
+            - SourceVolume: mcp-logs
+              ContainerPath: /app/logs
+              ReadOnly: false
+            - SourceVolume: auth-config
+              ContainerPath: /app/auth_server
+              ReadOnly: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RegistryLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:7860/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  KeycloakTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-keycloak
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref KeycloakCpu
+      Memory: !Ref KeycloakMemory
+      ExecutionRoleArn: !GetAtt KeycloakTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: keycloak
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-keycloak:latest'
+          Essential: true
+          ReadonlyRootFilesystem: false
+          PortMappings:
+            - Name: keycloak
+              ContainerPort: 8080
+              HostPort: 8080
+              Protocol: tcp
+            - Name: keycloak-management
+              ContainerPort: 9000
+              HostPort: 9000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: KC_PROXY
+              Value: edge
+            - Name: KC_PROXY_ADDRESS_FORWARDING
+              Value: 'true'
+            - Name: KC_HOSTNAME
+              Value: !GetAtt KeycloakCloudFrontDistribution.DomainName
+            - Name: KC_HOSTNAME_STRICT
+              Value: 'false'
+            - Name: KC_HOSTNAME_STRICT_HTTPS
+              Value: 'true'
+            - Name: KC_HEALTH_ENABLED
+              Value: 'true'
+            - Name: KC_METRICS_ENABLED
+              Value: 'true'
+            - Name: KEYCLOAK_LOGLEVEL
+              Value: !Ref KeycloakLogLevel
+          Secrets:
+            - Name: KEYCLOAK_ADMIN
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/admin
+            - Name: KEYCLOAK_ADMIN_PASSWORD
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/admin_password
+            - Name: KC_DB_URL
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/url
+            - Name: KC_DB_USERNAME
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/username
+            - Name: KC_DB_PASSWORD
+              ValueFrom: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/password
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref KeycloakLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - exit 0
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  CurrentTimeTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-currenttime
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: currenttime-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-currenttime:latest'
+          Essential: true
+          PortMappings:
+            - Name: currenttime
+              ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '8000'
+            - Name: MCP_TRANSPORT
+              Value: streamable-http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CurrentTimeLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - nc -z localhost 8000 || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+
+  McpgwTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-mcpgw
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      Volumes:
+        - Name: mcpgw-data
+          EFSVolumeConfiguration:
+            FilesystemId: !Ref EfsFileSystem
+            TransitEncryption: ENABLED
+            AuthorizationConfig:
+              AccessPointId: !Ref EfsAccessPointMcpgwData
+      ContainerDefinitions:
+        - Name: mcpgw-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-mcpgw:latest'
+          Essential: true
+          PortMappings:
+            - Name: mcpgw
+              ContainerPort: 8003
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '8003'
+            - Name: REGISTRY_BASE_URL
+              Value: http://registry:7860
+            - Name: REGISTRY_USERNAME
+              Value: admin
+          Secrets:
+            - Name: REGISTRY_PASSWORD
+              ValueFrom: !Ref AdminPasswordSecret
+          MountPoints:
+            - SourceVolume: mcpgw-data
+              ContainerPath: /app/data
+              ReadOnly: false
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref McpgwLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - nc -z localhost 8003 || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+
+  RealServerFakeToolsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-realserverfaketools
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: realserverfaketools-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-realserverfaketools:latest'
+          Essential: true
+          PortMappings:
+            - Name: realserverfaketools
+              ContainerPort: 8002
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '8002'
+            - Name: MCP_TRANSPORT
+              Value: streamable-http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RealServerFakeToolsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - nc -z localhost 8002 || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+
+  FlightBookingAgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-flight-booking-agent
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: flight-booking-agent
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-flight-booking-agent:latest'
+          Essential: true
+          PortMappings:
+            - Name: flight-booking
+              ContainerPort: 9000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref FlightBookingAgentLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:9000/ping || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  TravelAssistantAgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    DependsOn: TriggerContainerBuild
+    Properties:
+      Family: !Sub ${EnvironmentName}-travel-assistant-agent
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: travel-assistant-agent
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/mcp-gateway-travel-assistant-agent:latest'
+          Essential: true
+          PortMappings:
+            - Name: travel-assistant
+              ContainerPort: 9000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref TravelAssistantAgentLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:9000/ping || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+
+  #============================================================================
+  # SERVICES - ECS Services
+  #============================================================================
+  AuthServerService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - MainAlbHttpListener
+      - EfsMountTarget1
+      - EfsMountTarget2
+      - EfsMountTarget3
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-auth-server
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref AuthServerTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref EcsTasksSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      LoadBalancers:
+        - ContainerName: auth-server
+          ContainerPort: 8888
+          TargetGroupArn: !Ref AuthTargetGroup
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: auth-server
+            ClientAliases:
+              - Port: 8888
+                DnsName: auth-server
+            DiscoveryName: auth-server
+
+  RegistryService:
+    Type: AWS::ECS::Service
+    DependsOn: AuthServerService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-registry
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref RegistryTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref EcsTasksSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      LoadBalancers:
+        - ContainerName: registry
+          ContainerPort: 7860
+          TargetGroupArn: !Ref RegistryTargetGroup
+        - ContainerName: registry
+          ContainerPort: 7860
+          TargetGroupArn: !Ref GradioTargetGroup
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: registry
+            ClientAliases:
+              - Port: 7860
+                DnsName: registry
+            DiscoveryName: registry
+
+  KeycloakService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - KeycloakHttpListener
+      - SsmKeycloakDatabaseUrl
+      - SsmKeycloakDatabaseUsername
+      - SsmKeycloakDatabasePassword
+      - SsmKeycloakAdmin
+      - SsmKeycloakAdminPassword
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-keycloak
+      Cluster: !Ref KeycloakEcsCluster
+      TaskDefinition: !Ref KeycloakTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref KeycloakEcsSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      LoadBalancers:
+        - ContainerName: keycloak
+          ContainerPort: 8080
+          TargetGroupArn: !Ref KeycloakTargetGroup
+
+  CurrentTimeService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-currenttime
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref CurrentTimeTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref McpServersSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: currenttime
+            ClientAliases:
+              - Port: 8000
+                DnsName: currenttime-server
+            DiscoveryName: currenttime-server
+
+  McpgwService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-mcpgw
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref McpgwTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref McpServersSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: mcpgw
+            ClientAliases:
+              - Port: 8003
+                DnsName: mcpgw-server
+            DiscoveryName: mcpgw-server
+
+  RealServerFakeToolsService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-realserverfaketools
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref RealServerFakeToolsTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref McpServersSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: realserverfaketools
+            ClientAliases:
+              - Port: 8002
+                DnsName: realserverfaketools-server
+            DiscoveryName: realserverfaketools-server
+
+  FlightBookingAgentService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-flight-booking-agent
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref FlightBookingAgentTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref McpServersSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: flight-booking
+            ClientAliases:
+              - Port: 9000
+                DnsName: flight-booking-agent
+            DiscoveryName: flight-booking-agent
+
+  TravelAssistantAgentService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-travel-assistant-agent
+      Cluster: !Ref MainEcsCluster
+      TaskDefinition: !Ref TravelAssistantAgentTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !Ref McpServersSG
+          Subnets:
+            - !Ref PrivateSubnet1
+            - !Ref PrivateSubnet2
+            - !Ref PrivateSubnet3
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !GetAtt ServiceDiscoveryNamespace.Arn
+        Services:
+          - PortName: travel-assistant
+            ClientAliases:
+              - Port: 9000
+                DnsName: travel-assistant-agent
+            DiscoveryName: travel-assistant-agent
+
+  #============================================================================
+  # Auto Scaling
+  #============================================================================
+  AuthServerScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    DependsOn: AuthServerService
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${MainEcsCluster}/${EnvironmentName}-auth-server
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  AuthServerCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-auth-server-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AuthServerScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  RegistryScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    DependsOn: RegistryService
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${MainEcsCluster}/${EnvironmentName}-registry
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  RegistryCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-registry-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref RegistryScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  KeycloakScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    DependsOn: KeycloakService
+    Properties:
+      MaxCapacity: 4
+      MinCapacity: 1
+      ResourceId: !Sub service/${KeycloakEcsCluster}/${EnvironmentName}-keycloak
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+
+  KeycloakCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-keycloak-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref KeycloakScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref VPC
+
+  MainAlbDnsName:
+    Description: Main ALB DNS Name
+    Value: !GetAtt MainAlb.DNSName
+
+  KeycloakAlbDnsName:
+    Description: Keycloak ALB DNS Name
+    Value: !GetAtt KeycloakAlb.DNSName
+
+  KeycloakCloudFrontUrl:
+    Description: Keycloak HTTPS URL via CloudFront
+    Value: !Sub https://${KeycloakCloudFrontDistribution.DomainName}
+
+  RegistryUrl:
+    Description: Registry URL
+    Value: !Sub http://${MainAlb.DNSName}
+
+  AuroraClusterEndpoint:
+    Description: Aurora cluster endpoint
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+
+  RdsProxyEndpoint:
+    Description: RDS Proxy endpoint
+    Value: !GetAtt RdsProxy.Endpoint
+
+  MainEcsClusterName:
+    Description: Main ECS Cluster Name
+    Value: !Ref MainEcsCluster
+
+  KeycloakEcsClusterName:
+    Description: Keycloak ECS Cluster Name
+    Value: !Ref KeycloakEcsCluster
+
+  ContainerBuildProjectName:
+    Description: CodeBuild project name for container builds
+    Value: !Ref ContainerBuildProject

@@ -212,6 +212,9 @@ logs/
 token_refresher.pid
 token_refresher.log
 
+# MCP Gateway data directory (contains models, logs, secrets, etc.)
+mcp-gateway/
+
 # Secrets and API keys - never commit these!
 .keys.yml
 .keys.yml.encrypted
@@ -325,3 +328,4 @@ image-manifest.json# Admin password files
 *.admin_password
 terraform/.admin_password
 image-manifest.json
+cloudformation/aws-ecs/tf-plan.json

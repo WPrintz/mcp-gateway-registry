@@ -169,14 +169,23 @@ aws cloudformation create-stack \
 
 **Target Region: us-west-2**
 
-### Stack Status
+### Stack Status (Nested Deployment)
 
 | Stack Name | Status | Description |
 |------------|--------|-------------|
-| mcp-gateway-network | ✅ DEPLOYED | VPC, Subnets, Security Groups |
-| mcp-gateway-data | ✅ DEPLOYED | EFS, Aurora, RDS Proxy, Secrets |
-| mcp-gateway-compute | ⏳ NOT DEPLOYED | Requires Route53 hosted zone |
-| mcp-gateway-services | ⏳ NOT DEPLOYED | Requires compute stack |
+| mcp-gateway | ✅ DEPLOYED | Parent orchestration stack |
+| mcp-gateway-NetworkStack-* | ✅ DEPLOYED | VPC, Subnets, Security Groups |
+| mcp-gateway-DataStack-* | ✅ DEPLOYED | EFS, Aurora, RDS Proxy, Secrets, SSM |
+| mcp-gateway-ComputeStack-* | ✅ DEPLOYED | ECS Clusters, ALBs, CloudFront, ECR |
+| mcp-gateway-ServicesStack-* | ✅ DEPLOYED | All 8 ECS services running |
+
+### Service Endpoints
+
+| Service | URL |
+|---------|-----|
+| Keycloak (HTTPS) | `https://d39ub8zyvrsszv.cloudfront.net` |
+| Main ALB | `http://mcp-gateway-alb-*.us-west-2.elb.amazonaws.com` |
+| Keycloak ALB | `http://mcp-gateway-keycloak-alb-*.us-west-2.elb.amazonaws.com` |
 
 ### Network Stack Resources (mcp-gateway-network)
 
@@ -252,6 +261,42 @@ aws logs tail /ecs/mcp-gateway-registry --follow --region us-west-2
 ### Database Connection Issues
 
 Verify security group rules allow traffic from ECS tasks to RDS Proxy on port 3306.
+
+## Known Issues
+
+### Keycloak ALB HTTP Listener Deletion (AWS Internal Security)
+
+**Issue**: The Keycloak ALB HTTP listener (port 80) may be automatically deleted by AWS internal security automation (`EpoxyAccess+epoxy-mitigations-prod+ELBListenerDelete`).
+
+**Cause**: AWS internal security mitigations may flag HTTP-only listeners on public ALBs as non-compliant in certain account types (e.g., workshop accounts, accounts with specific SCPs).
+
+**Impact**: CloudFront cannot reach the Keycloak ALB origin, causing 502 errors.
+
+**Workaround**: Manually recreate the listener after deployment:
+
+```bash
+# Get the ALB ARN
+ALB_ARN=$(aws elbv2 describe-load-balancers \
+  --names mcp-gateway-keycloak-alb \
+  --query 'LoadBalancers[0].LoadBalancerArn' \
+  --output text --region us-west-2)
+
+# Get the target group ARN
+TG_ARN=$(aws elbv2 describe-target-groups \
+  --names mcp-gateway-keycloak-tg \
+  --query 'TargetGroups[0].TargetGroupArn' \
+  --output text --region us-west-2)
+
+# Create the HTTP listener
+aws elbv2 create-listener \
+  --load-balancer-arn "$ALB_ARN" \
+  --protocol HTTP \
+  --port 80 \
+  --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
+  --region us-west-2
+```
+
+**Long-term Solution**: Consider using an internal ALB with HTTPS (self-signed cert) or investigate account-level security policies.
 
 ## Cleanup
 
