@@ -90,7 +90,7 @@
     - Configure proper DependsOn relationships between stacks
     - Pass parameters and cross-stack references between nested stacks
     - Define comprehensive outputs (URLs, ARNs, IDs)
-    - **UPDATED - added KeycloakLogLevel parameter, fixed KeycloakImage params**
+    - **UPDATED - aligned S3 path convention with Workshop Studio (trailing slash in prefix)**
     - _Requirements: 13.1-13.5_
 
 - [x] 7. Update documentation
@@ -141,7 +141,14 @@
     - Test https://d1856vgnusszma.cloudfront.net/realms/master returns 200 ✅
     - OpenID configuration returns HTTPS URLs ✅
 
-- [ ] 10. Test main-stack nested deployment
+- [x] 10. TF-CFN Sync Tooling and Gap Analysis
+  - [x] 10.1 Create tf-cfn-sync.py tool with --tf-plan mode for accurate comparison
+  - [x] 10.2 Create tf-cfn-mappings.yaml with 109+ explicit TF→CFN mappings
+  - [x] 10.3 Add CloudWatch monitoring alarms to services-stack.yaml (7 alarms matching TF)
+    - **UNTESTED** - alarms added but not deployed to verify functionality
+  - [x] 10.4 Update TF-CFN-GAP-ANALYSIS.md - all gaps now resolved
+
+- [ ] 11. Test main-stack nested deployment
   - [ ] 10.1 Tear down existing individual stacks (reverse order)
     - Delete mcp-gateway-services stack
     - Delete mcp-gateway-compute stack
@@ -158,7 +165,7 @@
     - All target groups healthy
     - Both ALBs responding
 
-- [ ] 11. Write property-based tests
+- [ ] 12. Write property-based tests
   - [ ] 11.1 Property 1: Task Definition Fargate Configuration
   - [ ] 11.2 Property 2: Task Definition Logging Configuration
   - [ ] 11.3 Property 3: Task Definition Health Check Configuration
@@ -171,11 +178,11 @@
   - [ ] 11.10 Property 10: ECS Security Group Ingress Restriction
   - [ ] 11.11 Property 11: Parameter Defaults Match Terraform
 
-- [ ] 12. Create test infrastructure
+- [ ] 13. Create test infrastructure
   - [ ] 12.1 Set up pytest test framework with AWS fixtures
   - [ ] 12.2 Create cfn-lint configuration
 
-- [ ] 13. Final Checkpoint - Complete validation
+- [ ] 14. Final Checkpoint - Complete validation
   - Ensure all tests pass, ask the user if questions arise.
 
 ---
