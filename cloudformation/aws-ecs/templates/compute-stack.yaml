@@ -115,8 +115,74 @@ Conditions:
   UseKeycloakEcsSgParam: !Not [!Equals [!Ref KeycloakEcsSecurityGroupId, '']]
 
 Resources:
+  #============================================================================
+  # ECS Service-Linked Role (Custom Resource)
+  # Required for fresh AWS accounts that have never used ECS
+  # Uses a Lambda to create the role and gracefully handle "already exists"
+  #============================================================================
+  EcsServiceLinkedRoleLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-ecs-slr-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CreateServiceLinkedRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                  - iam:GetRole
+                Resource: '*'
+
+  EcsServiceLinkedRoleLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-ensure-ecs-slr
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt EcsServiceLinkedRoleLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+              try:
+                  iam = boto3.client('iam')
+                  try:
+                      iam.create_service_linked_role(AWSServiceName='ecs.amazonaws.com')
+                      print('Created ECS service-linked role')
+                  except iam.exceptions.InvalidInputException as e:
+                      if 'has been taken' in str(e):
+                          print('ECS service-linked role already exists')
+                      else:
+                          raise
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Status': 'Role ensured'})
+              except Exception as e:
+                  print(f'Error: {e}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  EnsureEcsServiceLinkedRole:
+    Type: Custom::EnsureEcsServiceLinkedRole
+    Properties:
+      ServiceToken: !GetAtt EcsServiceLinkedRoleLambda.Arn
+
   MainEcsCluster:
     Type: AWS::ECS::Cluster
+    DependsOn: EnsureEcsServiceLinkedRole
     Properties:
       ClusterName: !Sub ${EnvironmentName}-ecs-cluster
       ClusterSettings:
@@ -140,6 +206,9 @@ Resources:
 
   KeycloakEcsCluster:
     Type: AWS::ECS::Cluster
+    # DependsOn ensures MainEcsCluster creates first, which triggers the ECS service-linked role creation
+    # Without this, both clusters may try to create simultaneously and one fails in fresh accounts
+    DependsOn: MainEcsCluster
     Properties:
       ClusterName: !Sub ${EnvironmentName}-keycloak-cluster
       ClusterSettings:
@@ -945,6 +1014,53 @@ Resources:
         EvaluateTargetHealth: true
 
   #============================================================================
+  # CloudFront Distribution for Main ALB HTTPS (Registry/Auth)
+  # Provides HTTPS via *.cloudfront.net certificate when Route53 is not available
+  #============================================================================
+  MainCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub ${EnvironmentName} Main ALB HTTPS Distribution (Registry)
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: MainAlbOrigin
+            DomainName: !GetAtt MainAlb.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+        DefaultCacheBehavior:
+          TargetOriginId: MainAlbOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+          Compress: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-main-cloudfront
+
+  #============================================================================
   # CloudFront Distribution for Keycloak HTTPS (no custom domain required)
   # Provides HTTPS via *.cloudfront.net certificate when Route53 is not available
   #============================================================================
@@ -1101,16 +1217,28 @@ Outputs:
       Name: !Sub ${EnvironmentName}-KeycloakEcrRepositoryUri
 
   RegistryUrl:
-    Description: Registry URL (DNS name if configured, otherwise ALB DNS)
+    Description: Registry URL (DNS name if configured, otherwise CloudFront HTTPS)
     Value: !If
       - HasDnsConfig
       - !If
         - UseRegionalDomainsCondition
         - !Sub https://registry.${AWS::Region}.${BaseDomain}
         - !Sub https://registry.${BaseDomain}
-      - !Sub http://${MainAlb.DNSName}
+      - !Sub https://${MainCloudFrontDistribution.DomainName}
     Export:
       Name: !Sub ${EnvironmentName}-RegistryUrl
+
+  MainCloudFrontUrl:
+    Description: Main ALB HTTPS URL via CloudFront (always HTTPS)
+    Value: !Sub https://${MainCloudFrontDistribution.DomainName}
+    Export:
+      Name: !Sub ${EnvironmentName}-MainCloudFrontUrl
+
+  MainCloudFrontDomain:
+    Description: CloudFront domain name for Main ALB HTTPS access
+    Value: !GetAtt MainCloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub ${EnvironmentName}-MainCloudFrontDomain
 
   KeycloakUrl:
     Description: Keycloak URL (DNS name if configured, otherwise ALB DNS - use KeycloakCloudFrontUrl for HTTPS)

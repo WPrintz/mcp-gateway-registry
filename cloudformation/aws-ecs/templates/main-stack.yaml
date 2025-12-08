@@ -219,12 +219,12 @@ Parameters:
   # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
   TemplateS3Bucket:
     Type: String
-    Default: mcp-gateway-cfn-templates-704390743772
+    Default: 'your_template_bucket_here'
     Description: S3 bucket containing nested stack templates
 
   TemplateS3Prefix:
     Type: String
-    Default: cloudformation/templates/
+    Default: 'your_template_prefix_here/'
     Description: S3 prefix for nested stack templates (must include trailing slash)
 
 Conditions:
@@ -343,48 +343,37 @@ Resources:
 # Outputs
 #============================================================================
 Outputs:
-  # VPC Outputs
-  VpcId:
-    Description: VPC ID
-    Value: !GetAtt NetworkStack.Outputs.VpcId
-
-  # URL Outputs
+  # URL Outputs (CloudFront HTTPS)
   RegistryUrl:
-    Description: Registry URL
-    Value: !GetAtt ComputeStack.Outputs.RegistryUrl
+    Description: Registry URL (HTTPS via CloudFront)
+    Value: !GetAtt ComputeStack.Outputs.MainCloudFrontUrl
 
   KeycloakUrl:
-    Description: Keycloak URL
-    Value: !GetAtt ComputeStack.Outputs.KeycloakUrl
+    Description: Keycloak URL (HTTPS via CloudFront)
+    Value: !GetAtt ComputeStack.Outputs.KeycloakCloudFrontUrl
 
-  # ALB Outputs
-  MainAlbDnsName:
-    Description: Main ALB DNS Name
-    Value: !GetAtt ComputeStack.Outputs.MainAlbDnsName
-
-  KeycloakAlbDnsName:
-    Description: Keycloak ALB DNS Name
-    Value: !GetAtt ComputeStack.Outputs.KeycloakAlbDnsName
-
-  # Database Outputs
-  AuroraClusterEndpoint:
-    Description: Aurora cluster endpoint
-    Value: !GetAtt DataStack.Outputs.AuroraClusterEndpoint
-
-  RdsProxyEndpoint:
-    Description: RDS Proxy endpoint
-    Value: !GetAtt DataStack.Outputs.RdsProxyEndpoint
-
-  # ECS Cluster Outputs
+  # ECS Cluster Output
   MainEcsClusterArn:
     Description: Main ECS Cluster ARN
     Value: !GetAtt ComputeStack.Outputs.MainEcsClusterArn
 
-  KeycloakEcsClusterArn:
-    Description: Keycloak ECS Cluster ARN
-    Value: !GetAtt ComputeStack.Outputs.KeycloakEcsClusterArn
+  # Secrets Manager Console URLs
+  AdminPasswordSecretUrl:
+    Description: Secrets Manager console URL for Admin Password
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-admin-password&region=${AWS::Region}'
 
-  # ECR Output
-  KeycloakEcrRepositoryUri:
-    Description: Keycloak ECR Repository URI
-    Value: !GetAtt ComputeStack.Outputs.KeycloakEcrRepositoryUri
+  SecretKeySecretUrl:
+    Description: Secrets Manager console URL for Application Secret Key
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-secret-key&region=${AWS::Region}'
+
+  KeycloakDbSecretUrl:
+    Description: Secrets Manager console URL for Keycloak Database Credentials
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}/keycloak/database&region=${AWS::Region}'
+
+  KeycloakClientSecretUrl:
+    Description: Secrets Manager console URL for Keycloak Web Client Secret
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-keycloak-client-secret&region=${AWS::Region}'
+
+  KeycloakM2MClientSecretUrl:
+    Description: Secrets Manager console URL for Keycloak M2M Client Secret
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-keycloak-m2m-client-secret&region=${AWS::Region}'

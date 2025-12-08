@@ -403,17 +403,15 @@ Resources:
           Environment:
             - Name: GATEWAY_ADDITIONAL_SERVER_NAMES
               Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-MainAlbDnsName
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontDomain
             - Name: EC2_PUBLIC_DNS
               Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-MainAlbDnsName
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontDomain
             - Name: AUTH_SERVER_URL
               Value: http://auth-server:8888
             - Name: AUTH_SERVER_EXTERNAL_URL
-              Value: !Sub
-                - '${RegistryUrl}:8888'
-                - RegistryUrl: !ImportValue
-                    Fn::Sub: ${EnvironmentName}-RegistryUrl
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontUrl
             - Name: KEYCLOAK_URL
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
@@ -431,11 +429,15 @@ Resources:
               Value: /app/auth_server/scopes.yml
           Secrets:
             - Name: SECRET_KEY
-              ValueFrom: !ImportValue
-                Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+              ValueFrom: !Sub
+                - '${SecretArn}:secret_key::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
             - Name: ADMIN_PASSWORD
-              ValueFrom: !ImportValue
-                Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+              ValueFrom: !Sub
+                - '${SecretArn}:admin_password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
             - Name: KEYCLOAK_CLIENT_SECRET
               ValueFrom: !Sub
                 - '${SecretArn}:client_secret::'
@@ -519,9 +521,16 @@ Resources:
               Value: edge
             - Name: KC_PROXY_ADDRESS_FORWARDING
               Value: 'true'
-            - Name: KC_HOSTNAME
-              Value: !ImportValue
-                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontDomain
+            - Name: KC_HOSTNAME_URL
+              Value: !Sub
+                - 'https://${Domain}'
+                - Domain: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontDomain
+            - Name: KC_HOSTNAME_ADMIN_URL
+              Value: !Sub
+                - 'https://${Domain}'
+                - Domain: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontDomain
             - Name: KC_HOSTNAME_STRICT
               Value: 'false'
             - Name: KC_HOSTNAME_STRICT_HTTPS
@@ -657,8 +666,10 @@ Resources:
               Value: admin
           Secrets:
             - Name: REGISTRY_PASSWORD
-              ValueFrom: !ImportValue
-                Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+              ValueFrom: !Sub
+                - '${SecretArn}:admin_password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
           MountPoints:
             - SourceVolume: mcpgw-data
               ContainerPath: /app/data
