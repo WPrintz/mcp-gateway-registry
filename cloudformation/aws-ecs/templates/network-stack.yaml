@@ -424,6 +424,16 @@ Resources:
       SourceSecurityGroupId: !Ref MainAlbSG
       Description: Auth server from ALB
 
+  # Self-referencing rule: Allow all ECS tasks to communicate with each other
+  # Required for inter-service communication (Registry <-> Auth, MCP servers, etc.)
+  EcsTasksIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: '-1'
+      SourceSecurityGroupId: !Ref EcsTasksSG
+      Description: Allow all traffic between ECS tasks in same security group
+
   # Keycloak ECS Security Group
   KeycloakEcsSG:
     Type: AWS::EC2::SecurityGroup

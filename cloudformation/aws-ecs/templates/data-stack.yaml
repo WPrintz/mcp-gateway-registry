@@ -957,6 +957,175 @@ Resources:
       # Add a version to force update when scopes.yml changes
       Version: '1.0.0'
 
+  #============================================================================
+  # MCP Server Registration Lambda
+  # Writes MCP server definition JSON files to EFS servers directory
+  # This registers the default MCP servers (currenttime, mcpgw, realserverfaketools)
+  #============================================================================
+  McpServerInitLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-mcp-server-init-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: EfsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: !GetAtt EfsFileSystem.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcp-server-init-role
+
+  McpServerInitLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - EfsMountTarget1
+      - EfsMountTarget2
+      - EfsMountTarget3
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-mcp-server-init
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt McpServerInitLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      VpcConfig:
+        SecurityGroupIds:
+          - !If
+            - UseEfsSgParam
+            - !Ref EfsSecurityGroupId
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-EfsSG
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+          - !Ref PrivateSubnet3
+      FileSystemConfigs:
+        - Arn: !GetAtt EfsAccessPointServers.Arn
+          LocalMountPath: /mnt/efs
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import cfnresponse
+          
+          # MCP Server definitions for the workshop
+          MCP_SERVERS = [
+              {
+                  "server_name": "currenttime-server",
+                  "path": "/mcp/currenttime",
+                  "description": "MCP server that provides current time information",
+                  "tags": ["time", "utility", "demo"],
+                  "proxy_pass_url": "http://currenttime-server:8000",
+                  "is_python": True,
+                  "num_tools": 1,
+                  "tool_list": [
+                      {
+                          "name": "get_current_time",
+                          "description": "Get the current time in various formats"
+                      }
+                  ]
+              },
+              {
+                  "server_name": "mcpgw-server",
+                  "path": "/mcp/mcpgw",
+                  "description": "MCP Gateway server for federated tool access",
+                  "tags": ["gateway", "federation", "tools"],
+                  "proxy_pass_url": "http://mcpgw-server:8003",
+                  "is_python": True,
+                  "num_tools": 5,
+                  "tool_list": []
+              },
+              {
+                  "server_name": "realserverfaketools-server",
+                  "path": "/mcp/realserverfaketools",
+                  "description": "Demo MCP server with simulated tools for testing",
+                  "tags": ["demo", "testing", "simulation"],
+                  "proxy_pass_url": "http://realserverfaketools-server:8002",
+                  "is_python": True,
+                  "num_tools": 3,
+                  "tool_list": [
+                      {
+                          "name": "fake_weather",
+                          "description": "Get simulated weather data"
+                      },
+                      {
+                          "name": "fake_stock",
+                          "description": "Get simulated stock prices"
+                      },
+                      {
+                          "name": "fake_news",
+                          "description": "Get simulated news headlines"
+                      }
+                  ]
+              }
+          ]
+          
+          def handler(event, context):
+              print(f"Event: {json.dumps(event)}")
+              
+              try:
+                  if event['RequestType'] == 'Delete':
+                      # On delete, optionally remove the files
+                      for server in MCP_SERVERS:
+                          server_file = f"/mnt/efs/{server['server_name']}.json"
+                          if os.path.exists(server_file):
+                              os.remove(server_file)
+                              print(f"Removed {server_file}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  # Create or Update - write server definition files to EFS
+                  os.makedirs('/mnt/efs', exist_ok=True)
+                  
+                  created_servers = []
+                  for server in MCP_SERVERS:
+                      server_file = f"/mnt/efs/{server['server_name']}.json"
+                      with open(server_file, 'w') as f:
+                          json.dump(server, f, indent=2)
+                      print(f"Created {server_file}")
+                      created_servers.append(server['server_name'])
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'ServersCreated': ','.join(created_servers)
+                  })
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcp-server-init
+
+  McpServerInitTrigger:
+    Type: Custom::McpServerInit
+    DependsOn:
+      - McpServerInitLambda
+      - EfsMountTarget1
+      - EfsMountTarget2
+      - EfsMountTarget3
+    Properties:
+      ServiceToken: !GetAtt McpServerInitLambda.Arn
+      # Add a version to force update when server definitions change
+      Version: '1.0.0'
+
 #============================================================================
 # Outputs
 #============================================================================
@@ -1098,3 +1267,10 @@ Outputs:
     Value: 'Initialized'
     Export:
       Name: !Sub ${EnvironmentName}-EfsInitStatus
+
+  # MCP Server Init Status
+  McpServerInitStatus:
+    Description: MCP Server initialization status (server definitions written to EFS)
+    Value: 'Initialized'
+    Export:
+      Name: !Sub ${EnvironmentName}-McpServerInitStatus

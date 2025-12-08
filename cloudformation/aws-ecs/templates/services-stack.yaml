@@ -293,7 +293,7 @@ Resources:
             - Name: KEYCLOAK_CLIENT_ID
               Value: mcp-gateway-web
             - Name: SCOPES_CONFIG_PATH
-              Value: /efs/auth_config/auth_config/scopes.yml
+              Value: /efs/auth_config/scopes.yml
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !ImportValue

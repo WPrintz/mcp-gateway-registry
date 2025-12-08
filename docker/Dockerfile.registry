@@ -62,6 +62,13 @@ RUN pip install uv && \
     "hf_xet>=0.1.0" && \
     uv pip install -e .
 
+# Download the sentence-transformers embeddings model during build
+# This adds ~90MB to the image but eliminates runtime download requirement
+# Comment out these lines if you prefer to mount the model from EFS instead
+RUN mkdir -p /app/registry/models && \
+    . .venv/bin/activate && \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').save('/app/registry/models/all-MiniLM-L6-v2')"
+
 # Create logs directory
 RUN mkdir -p /app/logs
 

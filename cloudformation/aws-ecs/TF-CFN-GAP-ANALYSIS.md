@@ -1,6 +1,6 @@
 # Terraform to CloudFormation Gap Analysis
 
-Generated: 2025-12-07 (Updated with mappings file)
+Generated: 2025-12-08 (Updated with EFS init and Keycloak HTTPS fixes)
 
 ## Executive Summary
 
@@ -32,14 +32,42 @@ The `tf-cfn-mappings.yaml` file handles:
 |----------|-------------|--------------|----------|
 | ECS Services | 8 services via modules | AuthServerService, RegistryService, etc. | services-stack.yaml |
 | EFS | aws_efs_file_system + 6 access points | EfsFileSystem + 6 access points | data-stack.yaml |
+| EFS Init | run-scopes-init-task.sh script | EfsInitLambda + EfsInitTrigger | data-stack.yaml |
 | RDS Proxy | aws_db_proxy.keycloak | RdsProxy | data-stack.yaml |
 | Service Discovery | aws_service_discovery_private_dns_namespace | ServiceDiscoveryNamespace | compute-stack.yaml |
 | VPC/Networking | module.vpc resources | VPC, Subnets, NAT Gateways | network-stack.yaml |
 | IAM Roles | Per-service roles | Shared EcsTaskExecutionRole, EcsTaskRole | compute-stack.yaml |
+| CloudFront | N/A (uses ACM certs) | MainCloudFrontDistribution, KeycloakCloudFrontDistribution | compute-stack.yaml |
 
 ## Actual Gaps (Action Required)
 
-### 1. CloudWatch Alarms ✅ RESOLVED
+### 1. EFS Initialization (scopes.yml) ✅ RESOLVED
+
+TF uses `run-scopes-init-task.sh` script to copy scopes.yml to EFS after deployment.
+CFN now uses a Lambda-backed Custom Resource that runs during stack deployment.
+
+**CFN Resources**:
+- `EfsInitLambdaRole` - IAM role with EFS mount permissions
+- `EfsInitLambda` - Lambda function that mounts EFS and writes scopes.yml
+- `EfsInitTrigger` - Custom Resource that invokes the Lambda
+
+**Added to**: `data-stack.yaml`
+
+### 2. Keycloak HTTPS Configuration ✅ RESOLVED
+
+Keycloak requires proper hostname configuration for CloudFront HTTPS:
+- `KC_HOSTNAME_URL` - Full CloudFront URL for Keycloak
+- `KC_HOSTNAME_ADMIN_URL` - Admin console URL (same as above)
+
+**Added to**: `services-stack.yaml` (KeycloakTaskDefinition)
+
+### 3. Secrets Manager JSON Key Extraction ✅ RESOLVED
+
+ECS secrets need proper JSON key extraction syntax: `${SecretArn}:key_name::`
+
+**Fixed in**: `services-stack.yaml` (ADMIN_PASSWORD, SECRET_KEY, REGISTRY_PASSWORD)
+
+### 4. CloudWatch Alarms ✅ RESOLVED
 
 TF defines 7 monitoring alarms in `module.mcp_gateway` - **now added to CFN**:
 - `alb_5xx_errors` → `Alb5xxErrorsAlarm`
@@ -49,6 +77,28 @@ TF defines 7 monitoring alarms in `module.mcp_gateway` - **now added to CFN**:
 - `auth_memory_high` → `AuthMemoryHighAlarm`
 - `registry_cpu_high` → `RegistryCpuHighAlarm`
 - `registry_memory_high` → `RegistryMemoryHighAlarm`
+
+### 5. Embeddings Model (sentence-transformers) ✅ RESOLVED
+
+The Registry service requires the `sentence-transformers/all-MiniLM-L6-v2` model for semantic search features.
+
+| Aspect | Terraform | CloudFormation |
+|--------|-----------|----------------|
+| Model Location | Manual download to EFS `/models` | Baked into container image |
+| Image Size | Smaller (~800MB) | Larger (~890MB) |
+| Startup | Requires model on EFS | Self-contained |
+
+**CFN Approach**: The model is downloaded during Docker build in `docker/Dockerfile.registry`:
+```dockerfile
+# Download the sentence-transformers embeddings model during build
+RUN mkdir -p /app/registry/models && \
+    . .venv/bin/activate && \
+    python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2').save('/app/registry/models/all-MiniLM-L6-v2')"
+```
+
+**Rationale**: Baking the model into the image simplifies workshop deployment by eliminating the need for a separate model download step. The ~90MB size increase is acceptable for the convenience gained.
+
+**To revert to EFS-based model**: Comment out the model download lines in `docker/Dockerfile.registry` and ensure the model is available on the EFS models access point.
 
 **Added to**: `services-stack.yaml` (CloudWatch Monitoring section)
 

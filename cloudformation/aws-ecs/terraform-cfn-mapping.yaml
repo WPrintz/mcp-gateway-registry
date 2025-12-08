@@ -12,8 +12,8 @@
 #   ignored_cfn: CFN resources intentionally not in TF (e.g., workshop-specific)
 #   property_mappings: Key property comparisons for drift detection
 
-version: "1.0"
-last_updated: "2025-12-07"
+version: "1.1"
+last_updated: "2025-12-08"
 
 # =============================================================================
 # EXPLICIT RESOURCE MAPPINGS
@@ -386,6 +386,11 @@ ignored_cfn:
   - SsmKeycloakAdmin
   - SsmKeycloakAdminPassword
   
+  # EFS Initialization (TF uses run-scopes-init-task.sh script)
+  - EfsInitLambda
+  - EfsInitLambdaRole
+  - EfsInitTrigger
+  
   # CodeBuild for workshop (TF uses pre-built images)
   - ContainerBuildProject
   - CodeBuildServiceRole
@@ -394,6 +399,7 @@ ignored_cfn:
   - TriggerContainerBuild
   
   # CloudFront for workshop HTTPS (TF uses ACM certs)
+  - MainCloudFrontDistribution
   - KeycloakCloudFrontDistribution
 
 # =============================================================================
