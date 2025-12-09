@@ -93,6 +93,11 @@ Parameters:
     Default: https://github.com/WPrintz/mcp-gateway-registry.git
     Description: GitHub repository URL for source code (public repo, no auth needed)
 
+  GitHubBranch:
+    Type: String
+    Default: feature/cloudformation-deployment
+    Description: GitHub branch to build from (e.g., main, feature/cloudformation-deployment)
+
 Conditions:
   UseRegionalDomainsCondition: !Equals
     - !Ref UseRegionalDomains
@@ -156,20 +161,27 @@ Resources:
         ZipFile: |
           import boto3
           import cfnresponse
+          import time
           def handler(event, context):
               if event['RequestType'] == 'Delete':
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                   return
               try:
                   iam = boto3.client('iam')
+                  role_created = False
                   try:
                       iam.create_service_linked_role(AWSServiceName='ecs.amazonaws.com')
                       print('Created ECS service-linked role')
+                      role_created = True
                   except iam.exceptions.InvalidInputException as e:
                       if 'has been taken' in str(e):
                           print('ECS service-linked role already exists')
                       else:
                           raise
+                  # Wait for IAM propagation if role was just created
+                  if role_created:
+                      print('Waiting 15 seconds for IAM role propagation...')
+                      time.sleep(15)
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Status': 'Role ensured'})
               except Exception as e:
                   print(f'Error: {e}')
@@ -564,6 +576,7 @@ Resources:
             Value: !Ref AWS::Region
           - Name: ECR_REGISTRY
             Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+      SourceVersion: !Ref GitHubBranch
       Source:
         Type: GITHUB
         Location: !Ref GitHubRepoUrl
