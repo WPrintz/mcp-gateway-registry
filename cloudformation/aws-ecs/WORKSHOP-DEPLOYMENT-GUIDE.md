@@ -200,6 +200,12 @@ curl -s "${KEYCLOAK_URL}/realms/master/.well-known/openid-configuration" | \
 
 ## Known Issues
 
+### Docker Hub Rate Limiting
+
+The container images use `public.ecr.aws/docker/library/python:3.12-slim` as the base image instead of Docker Hub's `python:3.12-slim`. This avoids Docker Hub's unauthenticated pull rate limits (429 Too Many Requests) which can cause CodeBuild failures in workshop environments.
+
+If you see rate limit errors during CodeBuild, the Dockerfiles have already been updated to use ECR Public Gallery mirrors.
+
 ### Keycloak ALB Listener Deletion
 
 In some AWS accounts, the Keycloak ALB HTTP listener may be automatically deleted by AWS internal security automation. If you see 502 errors from CloudFront:

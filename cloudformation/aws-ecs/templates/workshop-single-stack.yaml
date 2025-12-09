@@ -1417,13 +1417,13 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub ${EnvironmentName}-registry-tg
-      Port: 7860
+      Port: 80
       Protocol: HTTP
       TargetType: ip
       VpcId: !Ref VPC
       HealthCheckEnabled: true
       HealthCheckPath: /health
-      HealthCheckPort: '7860'
+      HealthCheckPort: '80'
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
       HealthCheckIntervalSeconds: 30
@@ -2199,7 +2199,7 @@ Resources:
             - !Ref PrivateSubnet3
       LoadBalancers:
         - ContainerName: registry
-          ContainerPort: 7860
+          ContainerPort: 80
           TargetGroupArn: !Ref RegistryTargetGroup
         - ContainerName: registry
           ContainerPort: 7860

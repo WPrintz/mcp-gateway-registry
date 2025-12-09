@@ -902,7 +902,7 @@ Resources:
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
       LoadBalancers:
         - ContainerName: registry
-          ContainerPort: 7860
+          ContainerPort: 80
           TargetGroupArn: !ImportValue
             Fn::Sub: ${EnvironmentName}-RegistryTargetGroupArn
         - ContainerName: registry

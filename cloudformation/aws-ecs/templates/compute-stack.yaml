@@ -795,14 +795,14 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub ${EnvironmentName}-registry-tg
-      Port: 7860
+      Port: 80
       Protocol: HTTP
       TargetType: ip
       VpcId: !ImportValue
         Fn::Sub: ${EnvironmentName}-VpcId
       HealthCheckEnabled: true
       HealthCheckPath: /health
-      HealthCheckPort: '7860'
+      HealthCheckPort: '80'
       HealthCheckProtocol: HTTP
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
