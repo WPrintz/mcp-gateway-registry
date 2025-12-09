@@ -296,8 +296,10 @@ Resources:
               Value: /efs/auth_config/scopes.yml
           Secrets:
             - Name: SECRET_KEY
-              ValueFrom: !ImportValue
-                Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+              ValueFrom: !Sub
+                - '${SecretArn}:secret_key::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
             - Name: KEYCLOAK_CLIENT_SECRET
               ValueFrom: !Sub
                 - '${SecretArn}:client_secret::'

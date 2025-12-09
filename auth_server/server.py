@@ -1793,6 +1793,11 @@ async def oauth2_callback(
         redirect_url = temp_session_data.get("redirect_uri", OAUTH2_CONFIG.get("registry", {}).get("success_redirect", "/"))
         response = RedirectResponse(url=redirect_url, status_code=302)
         
+        # Determine if we should use secure cookies
+        # Check if redirect URL is HTTPS or if config specifies secure
+        is_https = redirect_url.startswith("https://")
+        use_secure = is_https or OAUTH2_CONFIG.get("session", {}).get("secure", False)
+        
         # Set registry-compatible session cookie
         response.set_cookie(
             key="mcp_gateway_session",  # Same as registry SESSION_COOKIE_NAME
@@ -1800,8 +1805,11 @@ async def oauth2_callback(
             max_age=OAUTH2_CONFIG.get("session", {}).get("max_age_seconds", 28800),
             httponly=OAUTH2_CONFIG.get("session", {}).get("httponly", True),
             samesite=OAUTH2_CONFIG.get("session", {}).get("samesite", "lax"),
-            secure=OAUTH2_CONFIG.get("session", {}).get("secure", False)
+            secure=use_secure,
+            path="/"  # Ensure cookie is available for all paths
         )
+        
+        logger.info(f"Set session cookie with secure={use_secure}, redirect_url={redirect_url}")
         
         # Clear temporary OAuth2 session
         response.delete_cookie("oauth2_temp_session")
