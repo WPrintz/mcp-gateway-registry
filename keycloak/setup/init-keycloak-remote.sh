@@ -87,6 +87,31 @@ curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
     }' > /dev/null 2>&1
 echo -e "${GREEN}Web client created!${NC}"
 
+# Add group mapper to client for including groups in token
+echo "Adding group mapper to client..."
+WEB_CLIENT_UUID=$(curl -s -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=mcp-gateway-web" | jq -r '.[0].id')
+
+if [ ! -z "$WEB_CLIENT_UUID" ] && [ "$WEB_CLIENT_UUID" != "null" ]; then
+    curl -s -X POST "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${WEB_CLIENT_UUID}/protocol-mappers/models" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "name": "groups",
+            "protocol": "openid-connect",
+            "protocolMapper": "oidc-group-membership-mapper",
+            "consentRequired": false,
+            "config": {
+                "full.path": "false",
+                "id.token.claim": "true",
+                "access.token.claim": "true",
+                "claim.name": "groups",
+                "userinfo.token.claim": "true"
+            }
+        }' > /dev/null 2>&1
+    echo -e "${GREEN}Group mapper added!${NC}"
+fi
+
 # Create groups
 echo "Creating groups..."
 for group in "mcp-registry-admin" "mcp-registry-user" "mcp-servers-unrestricted"; do

@@ -1617,6 +1617,11 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                Resource:
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-auth-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak-init-lambda-role
@@ -1799,6 +1804,33 @@ Resources:
                       }
                   )
                   
+                  # Add group mapper to client for including groups in token
+                  print("Adding group mapper to client...")
+                  clients = keycloak_request(
+                      f"{keycloak_url}/admin/realms/{realm}/clients?clientId=mcp-gateway-web",
+                      token
+                  )
+                  if clients and len(clients) > 0:
+                      client_uuid = clients[0].get('id')
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/protocol-mappers/models",
+                          token,
+                          method='POST',
+                          data={
+                              'name': 'groups',
+                              'protocol': 'openid-connect',
+                              'protocolMapper': 'oidc-group-membership-mapper',
+                              'consentRequired': False,
+                              'config': {
+                                  'full.path': 'false',
+                                  'id.token.claim': 'true',
+                                  'access.token.claim': 'true',
+                                  'claim.name': 'groups',
+                                  'userinfo.token.claim': 'true'
+                              }
+                          }
+                      )
+                  
                   # Create groups
                   print("Creating groups...")
                   for group in ['mcp-registry-admin', 'mcp-registry-user', 'mcp-servers-unrestricted']:
@@ -1877,6 +1909,19 @@ Resources:
                               SecretString=json.dumps({'client_secret': client_secret})
                           )
                           print("Client secret stored")
+                          
+                          # Restart auth-server to pick up new secret
+                          print("Restarting auth-server service...")
+                          ecs_cluster = properties.get('EcsClusterName')
+                          auth_service = properties.get('AuthServiceName')
+                          if ecs_cluster and auth_service:
+                              ecs = boto3.client('ecs')
+                              ecs.update_service(
+                                  cluster=ecs_cluster,
+                                  service=auth_service,
+                                  forceNewDeployment=True
+                              )
+                              print(f"Auth-server restart triggered")
                   
                   print("Keycloak initialization complete!")
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
@@ -1909,8 +1954,11 @@ Resources:
         Fn::Sub: ${EnvironmentName}-RegistryUrl
       ClientSecretArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+      # ECS cluster and service names for restarting auth-server after secret update
+      EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      AuthServiceName: !Sub ${EnvironmentName}-auth-server
       # Force re-run on stack updates by including a timestamp or version
-      Version: '1.0'
+      Version: '1.1'
 
 #============================================================================
 # Outputs
