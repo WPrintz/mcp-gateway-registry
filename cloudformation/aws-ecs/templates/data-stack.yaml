@@ -1202,7 +1202,8 @@ Resources:
                   "version": "1.0.0",
                   "url": "http://flight-booking-agent.mcp-gateway.local:9000",
                   "provider": {
-                      "organization": "MCP Gateway Workshop"
+                      "organization": "MCP Gateway Workshop",
+                      "url": "https://github.com/aws-samples/mcp-gateway"
                   },
                   "capabilities": {
                       "streaming": True,
@@ -1215,17 +1216,20 @@ Resources:
                       {
                           "id": "search_flights",
                           "name": "Search Flights",
-                          "description": "Search for available flights between cities"
+                          "description": "Search for available flights between cities",
+                          "tags": ["search", "flights"]
                       },
                       {
                           "id": "book_flight",
                           "name": "Book Flight",
-                          "description": "Book a selected flight"
+                          "description": "Book a selected flight",
+                          "tags": ["booking", "reservation"]
                       },
                       {
                           "id": "manage_booking",
                           "name": "Manage Booking",
-                          "description": "View or cancel existing bookings"
+                          "description": "View or cancel existing bookings",
+                          "tags": ["booking", "management"]
                       }
                   ],
                   "tags": ["travel", "booking", "flights", "a2a"]
@@ -1237,7 +1241,8 @@ Resources:
                   "version": "1.0.0",
                   "url": "http://travel-assistant-agent.mcp-gateway.local:9000",
                   "provider": {
-                      "organization": "MCP Gateway Workshop"
+                      "organization": "MCP Gateway Workshop",
+                      "url": "https://github.com/aws-samples/mcp-gateway"
                   },
                   "capabilities": {
                       "streaming": True,
@@ -1250,12 +1255,14 @@ Resources:
                       {
                           "id": "plan_trip",
                           "name": "Plan Trip",
-                          "description": "Help plan a complete trip including flights"
+                          "description": "Help plan a complete trip including flights",
+                          "tags": ["planning", "trip"]
                       },
                       {
                           "id": "travel_recommendations",
                           "name": "Travel Recommendations",
-                          "description": "Provide destination and travel recommendations"
+                          "description": "Provide destination and travel recommendations",
+                          "tags": ["recommendations", "destinations"]
                       }
                   ],
                   "tags": ["travel", "assistant", "planning", "a2a"]

@@ -352,34 +352,14 @@ Outputs:
     Description: Keycloak URL (HTTPS via CloudFront)
     Value: !GetAtt ComputeStack.Outputs.KeycloakCloudFrontUrl
 
-  # ECS Cluster Output
-  MCPGatewayEcsClusterArn:
-    Description: MCP Gateway ECS Cluster ARN
-    Value: !GetAtt ComputeStack.Outputs.MainEcsClusterArn
-
-  # Secrets Manager Console URLs
+  # Admin Credentials (SSM/Secrets Manager Console URLs)
   MCPGatewayAdminPassword:
     Description: Secrets Manager console URL for MCP Gateway Admin Password
     Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-admin-password&region=${AWS::Region}'
 
-  MCPGatewaySecretKey:
-    Description: Secrets Manager console URL for MCP Gateway Secret Key
-    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-secret-key&region=${AWS::Region}'
-
-  # SSM Parameter Store Console URLs
   KeycloakAdminPassword:
     Description: SSM Parameter Store console URL for Keycloak Admin Password
     Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/systems-manager/parameters/keycloak/admin_password/description?region=${AWS::Region}'
 
-  # Keycloak Secrets (Secrets Manager)
-  KeycloakDatabaseCredentials:
-    Description: Secrets Manager console URL for Keycloak Database Credentials
-    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}/keycloak/database&region=${AWS::Region}'
 
-  KeycloakClientSecret:
-    Description: Secrets Manager console URL for Keycloak Web Client Secret
-    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-keycloak-client-secret&region=${AWS::Region}'
 
-  KeycloakM2MClientSecret:
-    Description: Secrets Manager console URL for Keycloak M2M Client Secret
-    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-keycloak-m2m-client-secret&region=${AWS::Region}'
