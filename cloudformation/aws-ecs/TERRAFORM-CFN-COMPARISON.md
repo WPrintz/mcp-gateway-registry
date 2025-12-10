@@ -531,6 +531,64 @@ Username: EpoxyAccess+epoxy-mitigations-prod+ELBListenerDelete+7a993163-31
 
 ---
 
+## CloudFormation-Specific Additions (Not in Terraform)
+
+These are features added to CloudFormation that don't exist in Terraform, typically to handle automation that Terraform does manually or differently.
+
+### 1. ECS Service-Linked Role Lambda
+
+**File**: `compute-stack.yaml`
+
+**Why Needed**: In fresh AWS accounts, the ECS service-linked role (`AWSServiceRoleForECS`) doesn't exist. Terraform and the AWS Console create it implicitly on first use, but CloudFormation doesn't trigger this automatic creation.
+
+**Implementation**:
+- `EcsServiceLinkedRoleLambdaRole` - IAM role for the Lambda
+- `EcsServiceLinkedRoleLambda` - Creates the service-linked role if it doesn't exist
+- `EnsureEcsServiceLinkedRole` - Custom resource that triggers the Lambda
+- Added 15-second delay after role creation for IAM propagation
+
+**Terraform Equivalent**: None needed - Terraform's ECS provider handles this implicitly.
+
+### 2. GitHubBranch Parameter for CodeBuild
+
+**File**: `compute-stack.yaml`
+
+**Why Needed**: CodeBuild pulls source from GitHub. Without specifying a branch, it uses the default branch (main). For development/testing, we need to build from feature branches.
+
+**Implementation**:
+- `GitHubBranch` parameter (default: `feature/cloudformation-deployment`)
+- `SourceVersion` property on CodeBuild project
+
+**Terraform Equivalent**: Terraform typically uses local Docker builds or different CI/CD pipelines.
+
+### 3. A2A Agent Init Lambda
+
+**File**: `data-stack.yaml`
+
+**Why Needed**: A2A agents (flight-booking, travel-assistant) need to be registered in the registry. Terraform uses shell scripts run manually; CloudFormation automates this via Lambda.
+
+**Implementation**:
+- `AgentInitLambdaRole` - IAM role with EFS access
+- `AgentInitLambda` - Writes agent JSON definitions to EFS agents directory
+- `AgentInitTrigger` - Custom resource that triggers on stack create/update
+- Creates `a2a_flight-booking_agent.json` and `a2a_travel-assistant_agent.json`
+
+**Terraform Equivalent**: Manual execution of `keycloak/setup/init-keycloak-remote.sh` or API calls.
+
+### 4. Keycloak Realm User Password
+
+**File**: `lambda/keycloak-init/handler.py`
+
+**Current Behavior**: Creates realm admin user with password `changeme` (matches Terraform shell scripts).
+
+**Discussion Point**: Consider using the same password from Secrets Manager for both:
+- Keycloak master admin (used for `/admin` console)
+- MCP Gateway realm admin user (used for app login via Keycloak SSO)
+
+**Terraform Equivalent**: `keycloak/setup/init-keycloak-remote.sh` line 137 uses `changeme`.
+
+---
+
 ## Files Modified
 
 1. `cloudformation/aws-ecs/templates/data-stack.yaml`
