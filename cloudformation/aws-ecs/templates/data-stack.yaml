@@ -1126,6 +1126,199 @@ Resources:
       # Add a version to force update when server definitions change
       Version: '1.0.0'
 
+  #============================================================================
+  # A2A Agent Registration Lambda
+  # Writes A2A agent definition JSON files to EFS agents directory
+  # This registers the default agents (flight-booking, travel-assistant)
+  #============================================================================
+  AgentInitLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-agent-init-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: EfsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: !GetAtt EfsFileSystem.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-agent-init-role
+
+  AgentInitLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - EfsMountTarget1
+      - EfsMountTarget2
+      - EfsMountTarget3
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-agent-init
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt AgentInitLambdaRole.Arn
+      Timeout: 120
+      MemorySize: 256
+      VpcConfig:
+        SecurityGroupIds:
+          - !If
+            - UseEfsSgParam
+            - !Ref EfsSecurityGroupId
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-EfsSG
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+          - !Ref PrivateSubnet3
+      FileSystemConfigs:
+        - Arn: !GetAtt EfsAccessPointAgents.Arn
+          LocalMountPath: /mnt/efs
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import cfnresponse
+          
+          # A2A Agent definitions for the workshop
+          A2A_AGENTS = [
+              {
+                  "name": "Flight Booking Agent",
+                  "path": "/a2a/flight-booking",
+                  "description": "AI agent that helps users search and book flights. Supports searching for flights, managing bookings, and handling cancellations.",
+                  "version": "1.0.0",
+                  "url": "http://flight-booking-agent.mcp-gateway.local:9000",
+                  "provider": {
+                      "organization": "MCP Gateway Workshop"
+                  },
+                  "capabilities": {
+                      "streaming": True,
+                      "pushNotifications": False,
+                      "stateTransitionHistory": True
+                  },
+                  "defaultInputModes": ["text"],
+                  "defaultOutputModes": ["text"],
+                  "skills": [
+                      {
+                          "id": "search_flights",
+                          "name": "Search Flights",
+                          "description": "Search for available flights between cities"
+                      },
+                      {
+                          "id": "book_flight",
+                          "name": "Book Flight",
+                          "description": "Book a selected flight"
+                      },
+                      {
+                          "id": "manage_booking",
+                          "name": "Manage Booking",
+                          "description": "View or cancel existing bookings"
+                      }
+                  ],
+                  "tags": ["travel", "booking", "flights", "a2a"]
+              },
+              {
+                  "name": "Travel Assistant Agent",
+                  "path": "/a2a/travel-assistant",
+                  "description": "AI travel assistant that coordinates with other agents to help plan trips. Can search flights via the Flight Booking Agent and provide travel recommendations.",
+                  "version": "1.0.0",
+                  "url": "http://travel-assistant-agent.mcp-gateway.local:9000",
+                  "provider": {
+                      "organization": "MCP Gateway Workshop"
+                  },
+                  "capabilities": {
+                      "streaming": True,
+                      "pushNotifications": False,
+                      "stateTransitionHistory": True
+                  },
+                  "defaultInputModes": ["text"],
+                  "defaultOutputModes": ["text"],
+                  "skills": [
+                      {
+                          "id": "plan_trip",
+                          "name": "Plan Trip",
+                          "description": "Help plan a complete trip including flights"
+                      },
+                      {
+                          "id": "travel_recommendations",
+                          "name": "Travel Recommendations",
+                          "description": "Provide destination and travel recommendations"
+                      }
+                  ],
+                  "tags": ["travel", "assistant", "planning", "a2a"]
+              }
+          ]
+          
+          def path_to_filename(path):
+              """Convert agent path to safe filename."""
+              normalized = path.lstrip("/").replace("/", "_")
+              if not normalized.endswith("_agent.json"):
+                  normalized += "_agent.json"
+              return normalized
+          
+          def handler(event, context):
+              print(f"Event: {json.dumps(event)}")
+              
+              try:
+                  if event['RequestType'] == 'Delete':
+                      # On delete, optionally remove the files
+                      for agent in A2A_AGENTS:
+                          agent_file = f"/mnt/efs/{path_to_filename(agent['path'])}"
+                          if os.path.exists(agent_file):
+                              os.remove(agent_file)
+                              print(f"Removed {agent_file}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+                  
+                  # Create or Update - write agent definition files to EFS
+                  os.makedirs('/mnt/efs', exist_ok=True)
+                  
+                  created_agents = []
+                  for agent in A2A_AGENTS:
+                      agent_file = f"/mnt/efs/{path_to_filename(agent['path'])}"
+                      with open(agent_file, 'w') as f:
+                          json.dump(agent, f, indent=2)
+                      print(f"Created {agent_file}")
+                      created_agents.append(agent['name'])
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'AgentsCreated': ','.join(created_agents)
+                  })
+                  
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-agent-init
+
+  AgentInitTrigger:
+    Type: Custom::AgentInit
+    DependsOn:
+      - AgentInitLambda
+      - EfsMountTarget1
+      - EfsMountTarget2
+      - EfsMountTarget3
+    Properties:
+      ServiceToken: !GetAtt AgentInitLambda.Arn
+      # Add a version to force update when agent definitions change
+      Version: '1.0.0'
+
 #============================================================================
 # Outputs
 #============================================================================
@@ -1274,3 +1467,10 @@ Outputs:
     Value: 'Initialized'
     Export:
       Name: !Sub ${EnvironmentName}-McpServerInitStatus
+
+  # A2A Agent Init Status
+  AgentInitStatus:
+    Description: A2A Agent initialization status (agent definitions written to EFS)
+    Value: 'Initialized'
+    Export:
+      Name: !Sub ${EnvironmentName}-AgentInitStatus
