@@ -171,6 +171,7 @@ mappings:
   "module.mcp_gateway.aws_secretsmanager_secret.secret_key": "SecretKeySecret"
   "module.mcp_gateway.aws_secretsmanager_secret.keycloak_client_secret": "KeycloakClientSecret"
   "module.mcp_gateway.aws_secretsmanager_secret.keycloak_m2m_client_secret": "KeycloakM2MClientSecret"
+  "module.mcp_gateway.aws_secretsmanager_secret.embeddings_api_key": "EmbeddingsApiKeySecret"
 
   # ---------------------------------------------------------------------------
   # CloudWatch Alarms (matching Terraform monitoring.tf)
