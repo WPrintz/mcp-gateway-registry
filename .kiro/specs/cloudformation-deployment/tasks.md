@@ -205,13 +205,33 @@
   - **Implementation guide:** `cloudformation/aws-ecs/TODO-S3-IMAGE-IMPORT.md`
   - **Benefits:** Reduces deploy time from ~15 min to ~3 min, eliminates Docker Hub rate limits
 
-- [ ] 16. Upstream Sync Strategy
-  - [ ] 16.1 Evaluate upstream changes before merging
-    - Current upstream: v1.0.7 with cookie security, agent ratings, embeddings provider
-    - Conflicts: `docker/Dockerfile.mcp-server`, `auth_server/server.py`, `docker-compose.yml`
+- [x] 16. Upstream Sync Strategy
+  - [x] 16.1 Merged upstream v1.0.7 into feature/cloudformation-deployment
+    - Resolved conflicts in `docker/Dockerfile.mcp-server`, `auth_server/server.py`, `docker-compose.yml`
+    - Kept ECR Public base image, accepted upstream cookie security
   - [ ] 16.2 Consider contributing ECR Public Dockerfile change upstream
-  - [ ] 16.3 Pin workshop to stable release tag for reproducibility
-  - **Deferred:** No breaking changes in upstream, safe to merge later
+  - [x] 16.3 Workshop pinned to v1.0.7
+  - **Completed:** Merge done locally, not pushed to origin yet
+
+- [x] 17. Sync v1.0.7 Terraform Features to CloudFormation
+  - [x] 17.1 Add Embeddings Configuration parameters ✅
+    - Added to main-stack.yaml: `EmbeddingsProvider`, `EmbeddingsModelName`, `EmbeddingsModelDimensions`, `EmbeddingsAwsRegion`
+    - Added to services-stack.yaml parameters
+    - **Note:** `EmbeddingsApiKey` secret NOT added (only needed for litellm provider, workshop uses sentence-transformers)
+  - [x] 17.2 Add Session Cookie Security parameters ✅
+    - Added to main-stack.yaml: `SessionCookieSecure`, `SessionCookieDomain`
+    - Added to services-stack.yaml parameters
+  - [x] 17.3 Update Auth Server task definition ✅
+    - Added `SESSION_COOKIE_SECURE` environment variable
+    - Added `SESSION_COOKIE_DOMAIN` environment variable
+  - [x] 17.4 Update Registry task definition ✅
+    - Added embeddings env vars: `EMBEDDINGS_PROVIDER`, `EMBEDDINGS_MODEL_NAME`, `EMBEDDINGS_MODEL_DIMENSIONS`, `EMBEDDINGS_AWS_REGION`
+    - Added session cookie env vars: `SESSION_COOKIE_SECURE`, `SESSION_COOKIE_DOMAIN`
+    - **Note:** `EMBEDDINGS_API_KEY` secret NOT added (only needed for litellm provider)
+  - [ ] 17.5 Test deployment with new parameters (not yet tested)
+    - Fix `AUTH_SERVER_EXTERNAL_URL` (remove `:8888` port)
+  - [ ] 17.5 Test deployment with new parameters
+  - **Source:** Terraform changes in v1.0.7 (`modules/mcp-gateway/ecs-services.tf`, `variables.tf`)
 
 ---
 

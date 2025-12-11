@@ -214,6 +214,44 @@ Parameters:
       - 'TRACE'
       - 'WARN'
 
+  # Embeddings Configuration (matching Terraform v1.0.7)
+  EmbeddingsProvider:
+    Type: String
+    Default: 'sentence-transformers'
+    AllowedValues:
+      - 'sentence-transformers'
+      - 'litellm'
+    Description: Embeddings provider (sentence-transformers for local, litellm for API-based)
+
+  EmbeddingsModelName:
+    Type: String
+    Default: 'all-MiniLM-L6-v2'
+    Description: Name of the embeddings model
+
+  EmbeddingsModelDimensions:
+    Type: Number
+    Default: 384
+    Description: Dimension of the embeddings model (384 for MiniLM, 1536 for OpenAI)
+
+  EmbeddingsAwsRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: AWS region for Bedrock embeddings (only used with litellm provider)
+
+  # Session Cookie Security (matching Terraform v1.0.7)
+  SessionCookieSecure:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable secure flag on session cookies (HTTPS-only)
+
+  SessionCookieDomain:
+    Type: String
+    Default: ''
+    Description: Domain for session cookies (leave empty for single-domain deployments)
+
   # Template S3 Location (for nested stacks)
   # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
   # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
@@ -335,6 +373,12 @@ Resources:
         TargetCpuUtilization: !Ref TargetCpuUtilization
         TargetMemoryUtilization: !Ref TargetMemoryUtilization
         KeycloakLogLevel: !Ref KeycloakLogLevel
+        EmbeddingsProvider: !Ref EmbeddingsProvider
+        EmbeddingsModelName: !Ref EmbeddingsModelName
+        EmbeddingsModelDimensions: !Ref EmbeddingsModelDimensions
+        EmbeddingsAwsRegion: !Ref EmbeddingsAwsRegion
+        SessionCookieSecure: !Ref SessionCookieSecure
+        SessionCookieDomain: !Ref SessionCookieDomain
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services
