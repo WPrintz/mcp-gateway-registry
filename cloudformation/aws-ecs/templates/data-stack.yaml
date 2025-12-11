@@ -366,6 +366,18 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak-m2m-client-secret
 
+  # Embeddings API key (for litellm provider - OpenAI, Anthropic, etc.)
+  # Default is dummy key since sentence-transformers (default) doesn't need it
+  EmbeddingsApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-embeddings-api-key
+      Description: API key for embeddings provider (only used with litellm provider)
+      SecretString: 'not-configured-using-local-embeddings'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-embeddings-api-key
+
   #============================================================================
   # Aurora Serverless v2 Database
   #============================================================================
@@ -1422,6 +1434,12 @@ Outputs:
     Value: !Ref KeycloakM2MClientSecret
     Export:
       Name: !Sub ${EnvironmentName}-KeycloakM2MClientSecretArn
+
+  EmbeddingsApiKeySecretArn:
+    Description: Embeddings API key secret ARN (for litellm provider)
+    Value: !Ref EmbeddingsApiKeySecret
+    Export:
+      Name: !Sub ${EnvironmentName}-EmbeddingsApiKeySecretArn
 
   # SSM Parameter Outputs (for Keycloak - matching Terraform)
   SsmKeycloakAdminArn:

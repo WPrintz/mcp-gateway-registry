@@ -504,6 +504,9 @@ Resources:
                 - '${SecretArn}:client_secret::'
                 - SecretArn: !ImportValue
                     Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+            - Name: EMBEDDINGS_API_KEY
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
           MountPoints:
             - SourceVolume: mcp-servers
               ContainerPath: /app/registry/servers

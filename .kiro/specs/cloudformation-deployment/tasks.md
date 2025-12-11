@@ -217,7 +217,7 @@
   - [x] 17.1 Add Embeddings Configuration parameters ✅
     - Added to main-stack.yaml: `EmbeddingsProvider`, `EmbeddingsModelName`, `EmbeddingsModelDimensions`, `EmbeddingsAwsRegion`
     - Added to services-stack.yaml parameters
-    - **Note:** `EmbeddingsApiKey` secret NOT added (only needed for litellm provider, workshop uses sentence-transformers)
+    - Added `EmbeddingsApiKeySecret` to data-stack.yaml (defaults to dummy key for sentence-transformers)
   - [x] 17.2 Add Session Cookie Security parameters ✅
     - Added to main-stack.yaml: `SessionCookieSecure`, `SessionCookieDomain`
     - Added to services-stack.yaml parameters
@@ -226,8 +226,8 @@
     - Added `SESSION_COOKIE_DOMAIN` environment variable
   - [x] 17.4 Update Registry task definition ✅
     - Added embeddings env vars: `EMBEDDINGS_PROVIDER`, `EMBEDDINGS_MODEL_NAME`, `EMBEDDINGS_MODEL_DIMENSIONS`, `EMBEDDINGS_AWS_REGION`
+    - Added `EMBEDDINGS_API_KEY` secret reference
     - Added session cookie env vars: `SESSION_COOKIE_SECURE`, `SESSION_COOKIE_DOMAIN`
-    - **Note:** `EMBEDDINGS_API_KEY` secret NOT added (only needed for litellm provider)
   - [ ] 17.5 Test deployment with new parameters (not yet tested)
     - Fix `AUTH_SERVER_EXTERNAL_URL` (remove `:8888` port)
   - [ ] 17.5 Test deployment with new parameters
