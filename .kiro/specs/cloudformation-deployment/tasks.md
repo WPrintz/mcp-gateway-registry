@@ -187,6 +187,34 @@
 
 ---
 
+## Future Enhancements
+
+- [ ] 15. S3 Container Image Import (Workshop Optimization)
+  - [ ] 15.1 Add CloudFormation parameters for S3 bucket/prefix
+    - Add `ContainerImagesBucket` and `ContainerImagesPrefix` to main-stack.yaml
+    - Add same parameters to compute-stack.yaml
+    - Pass parameters from main-stack to compute-stack
+  - [ ] 15.2 Add CodeBuild environment variables
+    - Add `CONTAINER_IMAGES_BUCKET` and `CONTAINER_IMAGES_PREFIX` env vars
+  - [ ] 15.3 Update buildspec with S3 import logic
+    - Check if bucket is set, import tarballs if so, else build from source
+    - Maintain backward compatibility (empty bucket = build from source)
+  - [ ] 15.4 Add IAM permissions for S3 read access
+  - [ ] 15.5 Create pre-build script for generating tarballs
+  - [ ] 15.6 Test both modes (S3 import and source build)
+  - **Implementation guide:** `cloudformation/aws-ecs/TODO-S3-IMAGE-IMPORT.md`
+  - **Benefits:** Reduces deploy time from ~15 min to ~3 min, eliminates Docker Hub rate limits
+
+- [ ] 16. Upstream Sync Strategy
+  - [ ] 16.1 Evaluate upstream changes before merging
+    - Current upstream: v1.0.7 with cookie security, agent ratings, embeddings provider
+    - Conflicts: `docker/Dockerfile.mcp-server`, `auth_server/server.py`, `docker-compose.yml`
+  - [ ] 16.2 Consider contributing ECR Public Dockerfile change upstream
+  - [ ] 16.3 Pin workshop to stable release tag for reproducibility
+  - **Deferred:** No breaking changes in upstream, safe to merge later
+
+---
+
 ## Deployed AWS Resources (us-west-2, Account 704390743772)
 
 ### Stack: mcp-gateway-network

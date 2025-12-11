@@ -675,3 +675,11 @@ Outputs:
     Value: !Ref McpServersSG
     Export:
       Name: !Sub ${EnvironmentName}-McpServersSG
+
+  MyAssetsBucketName:
+    Description: Assets bucket name
+    Type: String
+    
+  MyAssetsBucketPrefix:
+    Description: Assets bucket prefix
+    Type: String
