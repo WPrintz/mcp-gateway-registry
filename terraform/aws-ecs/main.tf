@@ -67,4 +67,15 @@ module "mcp_gateway" {
   # Monitoring configuration
   enable_monitoring = var.enable_monitoring
   alarm_email       = var.alarm_email
+
+  # Embeddings configuration
+  embeddings_provider         = var.embeddings_provider
+  embeddings_model_name       = var.embeddings_model_name
+  embeddings_model_dimensions = var.embeddings_model_dimensions
+  embeddings_aws_region       = var.embeddings_aws_region
+  embeddings_api_key          = var.embeddings_api_key
+
+  # Session cookie security configuration
+  session_cookie_secure = var.session_cookie_secure
+  session_cookie_domain = var.session_cookie_domain
 }

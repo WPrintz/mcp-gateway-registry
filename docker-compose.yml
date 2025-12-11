@@ -40,18 +40,25 @@ services:
       - EXTERNAL_REGISTRY_TAGS=${EXTERNAL_REGISTRY_TAGS:-anthropic-registry,workday-asor}
       - ASOR_ACCESS_TOKEN=${ASOR_ACCESS_TOKEN}
       - ASOR_CLIENT_CREDENTIALS=${ASOR_CLIENT_CREDENTIALS}
+      # Embeddings Configuration
+      - EMBEDDINGS_PROVIDER=${EMBEDDINGS_PROVIDER:-sentence-transformers}
+      - EMBEDDINGS_MODEL_NAME=${EMBEDDINGS_MODEL_NAME:-all-MiniLM-L6-v2}
+      - EMBEDDINGS_MODEL_DIMENSIONS=${EMBEDDINGS_MODEL_DIMENSIONS:-384}
+      - EMBEDDINGS_API_KEY=${EMBEDDINGS_API_KEY}
+      - EMBEDDINGS_API_BASE=${EMBEDDINGS_API_BASE}
+      - EMBEDDINGS_AWS_REGION=${EMBEDDINGS_AWS_REGION:-us-east-1}
     ports:
       - "80:80"
       - "443:443"
       - "7860:7860"
     volumes:
-      - ${HOME}/mcp-gateway/servers:/app/registry/servers
-      - ${HOME}/mcp-gateway/agents:/app/registry/agents
-      - ${HOME}/mcp-gateway/models:/app/registry/models
-      - ${HOME}/mcp-gateway/logs:/app/logs
-      - ${HOME}/mcp-gateway/auth_server/scopes.yml:/app/auth_server/scopes.yml
-      - ${HOME}/mcp-gateway/federation.json:/app/config/federation.json
-      - ${HOME}/mcp-gateway/ssl:/etc/ssl:ro
+      - ./mcp-gateway/servers:/app/registry/servers
+      - ./mcp-gateway/agents:/app/registry/agents
+      - ./mcp-gateway/models:/app/registry/models
+      - ./mcp-gateway/logs:/app/logs
+      - ./mcp-gateway/auth_server/scopes.yml:/app/auth_server/scopes.yml
+      - ./mcp-gateway/federation.json:/app/config/federation.json
+      - ./mcp-gateway/ssl:/etc/ssl:ro
     depends_on:
       - auth-server
       - metrics-service
@@ -60,8 +67,8 @@ services:
   # Metrics Collection Service
   metrics-service:
     build:
-      context: .
-      dockerfile: metrics-service/Dockerfile
+      context: metrics-service
+      dockerfile: Dockerfile
     environment:
       - METRICS_SERVICE_PORT=8890
       - METRICS_SERVICE_HOST=0.0.0.0
@@ -79,7 +86,7 @@ services:
       - "9465:9465"  # Prometheus metrics endpoint
     volumes:
       - metrics-db-data:/var/lib/sqlite
-      - ${HOME}/mcp-gateway/logs:/app/logs
+      - ./mcp-gateway/logs:/app/logs
     depends_on:
       - metrics-db
     restart: unless-stopped
@@ -129,8 +136,8 @@ services:
     ports:
       - "8888:8888"
     volumes:
-      - ${HOME}/mcp-gateway/logs:/app/logs
-      - ${HOME}/mcp-gateway/auth_server/scopes.yml:/app/scopes.yml
+      - ./mcp-gateway/logs:/app/logs
+      - ./mcp-gateway/auth_server/scopes.yml:/app/scopes.yml
     restart: unless-stopped
 
   # Current Time MCP Server
@@ -153,8 +160,9 @@ services:
     environment:
       - PORT=8001
       - SECRET_KEY=${SECRET_KEY}
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
     volumes:
-      - ${HOME}/mcp-gateway/secrets/fininfo/:/app/fininfo/
+      - ./mcp-gateway/secrets/fininfo/:/app/fininfo/
     ports:
       - "8001:8001"
     restart: unless-stopped
@@ -162,17 +170,19 @@ services:
   # MCP Gateway Server
   mcpgw-server:
     build:
-      context: servers/mcpgw
-      dockerfile: ../../docker/Dockerfile.mcp-server
+      context: .
+      dockerfile: docker/Dockerfile.mcp-server
+      args:
+        SERVER_DIR: servers/mcpgw
     environment:
       - PORT=8003
       - REGISTRY_BASE_URL=http://registry:7860
       - REGISTRY_USERNAME=${ADMIN_USER:-admin}
       - REGISTRY_PASSWORD=${ADMIN_PASSWORD}
     volumes:
-      - ${HOME}/mcp-gateway/servers:/app/registry/servers
-      - ${HOME}/mcp-gateway/models:/app/registry/models
-      - ${HOME}/mcp-gateway/auth_server/scopes.yml:/app/auth_server/scopes.yml
+      - ./mcp-gateway/servers:/app/registry/servers
+      - ./mcp-gateway/models:/app/registry/models
+      - ./mcp-gateway/auth_server/scopes.yml:/app/auth_server/scopes.yml
     ports:
       - "8003:8003"
     depends_on:

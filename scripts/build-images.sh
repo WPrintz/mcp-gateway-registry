@@ -2,8 +2,12 @@
 # Build and push Docker images from build-config.yaml to AWS ECR
 # Usage: ./scripts/build-images.sh [build|push|build-push] [IMAGE=name]
 # Example: ./scripts/build-images.sh build IMAGE=registry
+# Example: ./scripts/build-images.sh build-push
 
 set -e
+
+# Disable AWS CLI pager to prevent interactive prompts
+export AWS_PAGER=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -27,6 +31,20 @@ if [[ -z "${AWS_REGION:-}" ]]; then
     echo "  export AWS_REGION=us-east-1"
     echo ""
     echo "This prevents accidentally pushing to the wrong region."
+    echo ""
+    exit 1
+fi
+
+# CRITICAL: Check if running in a Python virtual environment
+if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+    echo -e "${RED}${BOLD}============================================${NC}"
+    echo -e "${RED}${BOLD}ERROR: Not running in a Python virtual environment!${NC}"
+    echo -e "${RED}${BOLD}============================================${NC}"
+    echo ""
+    echo "Please activate a virtual environment before running build commands:"
+    echo "  source .venv/bin/activate"
+    echo ""
+    echo "This ensures consistent Python dependencies for the build process."
     echo ""
     exit 1
 fi
@@ -82,12 +100,14 @@ log_info "Build Action: $ACTION"
 
 # Parse images from YAML and build array
 declare -A IMAGES
+declare -A BUILD_ARGS
 declare -a IMAGE_NAMES
 
 # Single pass to parse config and collect image information
-while IFS='|' read -r name repo_name dockerfile context; do
+while IFS='|' read -r name repo_name dockerfile context build_args; do
     if [ -n "$name" ]; then
         IMAGES["$name"]="$repo_name|$dockerfile|$context"
+        BUILD_ARGS["$name"]="$build_args"
         IMAGE_NAMES+=("$name")
     fi
 done <<< "$(python3 << PYEOF
@@ -103,12 +123,16 @@ try:
         repo_name = image_config.get('repo_name')
         dockerfile = image_config.get('dockerfile')
         context = image_config.get('context', '.')
+        build_args = image_config.get('build_args', {})
 
         if not repo_name or not dockerfile:
             print(f"ERROR: Image '{name}' missing repo_name or dockerfile", file=sys.stderr)
             sys.exit(1)
 
-        print(f"{name}|{repo_name}|{dockerfile}|{context}")
+        # Format build_args as key=value pairs separated by spaces
+        build_args_str = ' '.join([f"{k}={v}" for k, v in build_args.items()])
+
+        print(f"{name}|{repo_name}|{dockerfile}|{context}|{build_args_str}")
 
 except Exception as e:
     print(f"ERROR: Failed to parse config: {e}", file=sys.stderr)
@@ -197,6 +221,7 @@ build_image() {
     local repo_name="$2"
     local dockerfile="$3"
     local context="$4"
+    local build_args="${BUILD_ARGS[$image_name]:-}"
 
     log_info "Building $image_name..."
 
@@ -211,30 +236,26 @@ build_image() {
         return 1
     fi
 
-    # Determine if we need buildx for this image
-    if [[ "$image_name" == *"_agent" ]] && [ -f "$REPO_ROOT/$dockerfile" ]; then
-        # A2A agents need buildx for ARM64 support
-        log_info "Building A2A agent with buildx for multi-platform support..."
-        docker buildx build \
-            --load \
-            -f "$REPO_ROOT/$dockerfile" \
-            -t "$repo_name:latest" \
-            "$REPO_ROOT/$context" || {
-            log_error "Failed to build $image_name"
-            cleanup_a2a_agent "$image_name" "$context"
-            return 1
-        }
-    else
-        # Standard docker build for other images
-        docker build \
-            -f "$REPO_ROOT/$dockerfile" \
-            -t "$repo_name:latest" \
-            "$REPO_ROOT/$context" || {
-            log_error "Failed to build $image_name"
-            cleanup_a2a_agent "$image_name" "$context"
-            return 1
-        }
+    # Construct build args for docker command
+    local build_arg_flags=""
+    if [ -n "$build_args" ]; then
+        log_info "Build args: $build_args"
+        for arg in $build_args; do
+            build_arg_flags="$build_arg_flags --build-arg $arg"
+        done
     fi
+
+    # Build the Docker image using buildx (faster, better caching, future-proof)
+    docker buildx build \
+        --load \
+        -f "$REPO_ROOT/$dockerfile" \
+        -t "$repo_name:latest" \
+        $build_arg_flags \
+        "$REPO_ROOT/$context" || {
+        log_error "Failed to build $image_name"
+        cleanup_a2a_agent "$image_name" "$context"
+        return 1
+    }
 
     log_success "Built $repo_name:latest"
 
