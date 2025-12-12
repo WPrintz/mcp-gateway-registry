@@ -226,13 +226,60 @@ aws cloudformation create-stack \
 aws cloudformation describe-stacks --stack-name main-stack --query 'Stacks[0].StackStatus' --region us-west-2
 ```
 
+### Nginx DNS Resolver Fix
+
+In addition to Cloud Map DNS, nginx requires special configuration to handle dynamic DNS resolution.
+
+**Problem:** Nginx resolves hostnames at config load time and caches them forever. If auth-server DNS isn't available when nginx starts (because the auth-server task hasn't registered with Cloud Map yet), nginx caches the failure and never retries.
+
+**Solution:** Use the AWS VPC DNS resolver with variable-based upstreams:
+
+```nginx
+location ^~ /oauth2/login/keycloak {
+    # Use VPC DNS resolver with short TTL for dynamic service discovery
+    resolver 169.254.169.253 valid=10s;
+    set $auth_server_upstream http://auth-server.mcp-gateway.local:8888;
+    proxy_pass $auth_server_upstream/oauth2/login/keycloak;
+    ...
+}
+```
+
+**Key Points:**
+- `resolver 169.254.169.253` - AWS VPC DNS resolver (available in all VPCs)
+- `valid=10s` - Re-resolve DNS every 10 seconds
+- `set $variable` - Using a variable forces nginx to resolve at request time, not config load time
+
+**Files Modified:**
+- `docker/nginx_rev_proxy_http_only.conf`
+- `docker/nginx_rev_proxy_http_and_https.conf`
+
+**Locations Updated:**
+- `/validate` - Auth validation endpoint
+- `/oauth2/login/keycloak` - Keycloak login
+- `/oauth2/callback/keycloak` - Keycloak callback
+- `/oauth2/login/cognito` - Cognito login
+- `/oauth2/callback/cognito` - Cognito callback
+- `/oauth2/logout/` - Logout endpoint
+
 ### How It Works After Deployment
-1. Compute-stack creates Cloud Map services with DNS configuration
-2. Services-stack creates ECS services with ServiceRegistries
-3. ECS automatically registers task IPs with Cloud Map when tasks start
-4. Route53 A records are created for each service (e.g., `currenttime-server.mcp-gateway.local`)
-5. DNS resolution works from any container in the VPC
-6. Health checks can resolve service names and verify connectivity
+
+**Fresh deployment flow (no manual intervention required):**
+
+1. CloudFormation deploys stacks in order (network → data → compute → services)
+2. CodeBuild builds and pushes images to ECR (triggered by compute-stack)
+3. ECS services start (may start in any order due to parallel deployment)
+4. Each service registers with Cloud Map → Route53 A records created automatically
+5. Registry nginx handles DNS resolution dynamically at request time
+
+**Startup race condition handling:**
+- If registry starts before auth-server, nginx doesn't cache the DNS failure
+- On each request, nginx re-resolves DNS (every 10s max due to `valid=10s`)
+- Once auth-server registers with Cloud Map, the next request succeeds
+
+**Expected behavior:**
+- First few health check requests may fail while services are starting (normal ECS behavior)
+- Registry UI will show services as "healthy" once DNS resolves and health checks pass
+- No manual container restarts or CodeBuild re-runs required
 
 ## Related Issues
 

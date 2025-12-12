@@ -645,6 +645,32 @@ host not found in upstream "auth-server"
    
    These files are baked into the Docker image and define how the registry's health monitoring reaches MCP servers.
 
+### Nginx DNS Resolver Configuration
+
+**Critical Issue**: Nginx resolves hostnames at config load time and caches them forever. If a service DNS isn't available when nginx starts, it caches the failure and never retries.
+
+**Solution**: Use the AWS VPC DNS resolver with variable-based upstreams to force runtime DNS resolution:
+
+```nginx
+location ^~ /oauth2/login/keycloak {
+    # Use VPC DNS resolver with short TTL for dynamic service discovery
+    resolver 169.254.169.253 valid=10s;
+    set $auth_server_upstream http://auth-server.mcp-gateway.local:8888;
+    proxy_pass $auth_server_upstream/oauth2/login/keycloak;
+    ...
+}
+```
+
+**Key Points**:
+- `resolver 169.254.169.253` - AWS VPC DNS resolver (available in all VPCs)
+- `valid=10s` - Re-resolve DNS every 10 seconds
+- `set $variable` - Using a variable forces nginx to resolve at request time, not config load time
+- Applied to all auth-server proxy locations: `/validate`, `/oauth2/login/*`, `/oauth2/callback/*`, `/oauth2/logout/`
+
+**Files Modified**:
+- `docker/nginx_rev_proxy_http_only.conf` - HTTP-only nginx config
+- `docker/nginx_rev_proxy_http_and_https.conf` - HTTPS nginx config (if used)
+
 ### Documentation
 
 See `docs/service-connect-dns-issue.md` for full details on the root cause and fix.
