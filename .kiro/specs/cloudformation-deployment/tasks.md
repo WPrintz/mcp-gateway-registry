@@ -235,6 +235,35 @@
 
 ---
 
+## Session Notes (December 12, 2025)
+
+### Completed This Session
+
+1. **Verified Keycloak Login Working** - The nginx DNS resolver fix (`resolver 169.254.169.253 valid=10s`) is working. OAuth2 login via Keycloak returns proper 302 redirects.
+
+2. **Created Upstream Issue #284** - [Sidebar Statistics only count MCP Servers, not A2A Agents](https://github.com/agentic-community/mcp-gateway-registry/issues/284)
+
+3. **Fixed M2M Client Creation** (commit `408e54a`)
+   - Updated `lambda/keycloak-init/handler.py` to create `mcp-gateway-m2m` client
+   - Added M2M client secret storage in Secrets Manager
+   - Updated IAM policy to allow Lambda access to M2M secret
+   - Documented in TF-CFN comparison docs
+
+4. **Added Comment to Upstream Issue #259** - Detailed root cause analysis of JWT token generation UX issue with file/line references
+
+### Pending Testing
+
+- **M2M Client Fix** - Requires stack redeployment to test. The Keycloak init Lambda needs to run to create the M2M client.
+
+### New Account Deployment Info
+
+- Main CloudFront: `https://dpcfmuobpua9u.cloudfront.net`
+- Keycloak CloudFront: `https://d2xbdipyshd7mh.cloudfront.net`
+- Main ALB: `mcp-gateway-alb-1620479137.us-west-2.elb.amazonaws.com`
+- Account: `873411264302`
+
+---
+
 ## Deployed AWS Resources (us-west-2, Account 704390743772)
 
 ### Stack: mcp-gateway-network
