@@ -1628,6 +1628,8 @@ Resources:
                 Resource:
                   - !ImportValue
                     Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -1971,6 +1973,8 @@ Resources:
         Fn::Sub: ${EnvironmentName}-RegistryUrl
       ClientSecretArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+      M2MClientSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
       # ECS cluster and service names for restarting auth-server after secret update
       EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
       AuthServiceName: !Sub ${EnvironmentName}-auth-server

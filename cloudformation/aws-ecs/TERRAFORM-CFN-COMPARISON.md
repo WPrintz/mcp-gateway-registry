@@ -589,6 +589,43 @@ These are features added to CloudFormation that don't exist in Terraform, typica
 
 ---
 
+## Keycloak M2M Client (CloudFormation Enhancement)
+
+**Difference from Terraform**
+
+| Aspect | Terraform | CloudFormation |
+|--------|-----------|----------------|
+| M2M Client Creation | Manual via `init-keycloak.sh` script | Automated via Lambda |
+| M2M Secret Storage | Manual update to `.env` or Secrets Manager | Automatic via Lambda |
+
+### Background
+
+The MCP Gateway Registry UI has two JWT token generation methods:
+
+1. **`/api/tokens/generate`** (Generate Token page) - Creates self-signed JWT using `SECRET_KEY`. Works for all authenticated users.
+
+2. **`/api/admin/tokens`** (Sidebar "Get JWT Token" button) - Calls Keycloak M2M client credentials flow. Requires:
+   - `mcp-gateway-m2m` client exists in Keycloak
+   - `KEYCLOAK_M2M_CLIENT_SECRET` environment variable set
+   - User must be admin
+
+In Terraform deployments, the `init-keycloak.sh` script must be run manually to create the M2M client. This is often missed, causing the sidebar button to fail with "HTTP 401".
+
+### CloudFormation Implementation
+
+The Keycloak Init Lambda (`lambda/keycloak-init/handler.py`) automatically creates both clients:
+
+1. **mcp-gateway-web** - Standard OAuth2 client for user login
+2. **mcp-gateway-m2m** - Service account client for M2M authentication
+
+Both client secrets are stored in Secrets Manager and injected into the registry container.
+
+### Known Upstream Issue
+
+See [GitHub Issue #259](https://github.com/agentic-community/mcp-gateway-registry/issues/259) - The two token generation methods have confusing UX. The sidebar button only works for admins with M2M configured, while the Generate Token page works for everyone.
+
+---
+
 ## Service Discovery: DNS vs Service Connect
 
 **Critical Difference from Terraform**

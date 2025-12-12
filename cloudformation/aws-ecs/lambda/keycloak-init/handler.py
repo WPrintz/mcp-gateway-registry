@@ -73,6 +73,7 @@ def handler(event, context):
     registry_url = properties.get('RegistryUrl')
     admin_secret_arn = properties.get('AdminSecretArn')
     client_secret_arn = properties.get('ClientSecretArn')
+    m2m_client_secret_arn = properties.get('M2MClientSecretArn')
     
     # For Delete, just return success
     if request_type == 'Delete':
@@ -143,6 +144,26 @@ def handler(event, context):
             }
         )
         
+        # Create M2M client for machine-to-machine authentication
+        print("Creating M2M client...")
+        keycloak_request(
+            f"{keycloak_url}/admin/realms/{realm}/clients",
+            token,
+            method='POST',
+            data={
+                'clientId': 'mcp-gateway-m2m',
+                'name': 'MCP Gateway M2M Client',
+                'enabled': True,
+                'clientAuthenticatorType': 'client-secret',
+                'protocol': 'openid-connect',
+                'standardFlowEnabled': False,
+                'implicitFlowEnabled': False,
+                'directAccessGrantsEnabled': False,
+                'serviceAccountsEnabled': True,
+                'publicClient': False
+            }
+        )
+        
         # Create groups
         print("Creating groups...")
         for group in ['mcp-registry-admin', 'mcp-registry-user', 'mcp-servers-unrestricted']:
@@ -189,8 +210,8 @@ def handler(event, context):
                         method='PUT'
                     )
         
-        # Generate and store client secret
-        print("Generating client secret...")
+        # Generate and store web client secret
+        print("Generating web client secret...")
         clients = keycloak_request(
             f"{keycloak_url}/admin/realms/{realm}/clients?clientId=mcp-gateway-web",
             token
@@ -214,12 +235,44 @@ def handler(event, context):
             
             if client_secret:
                 # Store in Secrets Manager
-                print("Storing client secret in Secrets Manager...")
+                print("Storing web client secret in Secrets Manager...")
                 secrets.update_secret(
                     SecretId=client_secret_arn,
                     SecretString=json.dumps({'client_secret': client_secret})
                 )
-                print("Client secret stored")
+                print("Web client secret stored")
+        
+        # Generate and store M2M client secret
+        print("Generating M2M client secret...")
+        m2m_clients = keycloak_request(
+            f"{keycloak_url}/admin/realms/{realm}/clients?clientId=mcp-gateway-m2m",
+            token
+        )
+        if m2m_clients and len(m2m_clients) > 0:
+            m2m_client_uuid = m2m_clients[0].get('id')
+            
+            # Generate new secret
+            keycloak_request(
+                f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_client_uuid}/client-secret",
+                token,
+                method='POST'
+            )
+            
+            # Get the secret
+            m2m_secret_response = keycloak_request(
+                f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_client_uuid}/client-secret",
+                token
+            )
+            m2m_client_secret = m2m_secret_response.get('value')
+            
+            if m2m_client_secret and m2m_client_secret_arn:
+                # Store in Secrets Manager
+                print("Storing M2M client secret in Secrets Manager...")
+                secrets.update_secret(
+                    SecretId=m2m_client_secret_arn,
+                    SecretString=json.dumps({'client_secret': m2m_client_secret})
+                )
+                print("M2M client secret stored")
         
         print("Keycloak initialization complete!")
         cfnresponse.send(event, context, cfnresponse.SUCCESS, {
