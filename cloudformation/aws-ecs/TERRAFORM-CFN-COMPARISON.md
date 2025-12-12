@@ -638,6 +638,13 @@ host not found in upstream "auth-server"
    - `AUTH_SERVER_URL`: `http://auth-server.mcp-gateway.local:8888`
    - `REGISTRY_BASE_URL`: `http://registry.mcp-gateway.local:7860`
 
+5. **MCP Server JSON definitions** use FQDNs in `proxy_pass_url`:
+   - `registry/servers/currenttime.json`: `http://currenttime-server.mcp-gateway.local:8000/`
+   - `registry/servers/mcpgw.json`: `http://mcpgw-server.mcp-gateway.local:8003/`
+   - `registry/servers/realserverfaketools.json`: `http://realserverfaketools-server.mcp-gateway.local:8002/`
+   
+   These files are baked into the Docker image and define how the registry's health monitoring reaches MCP servers.
+
 ### Documentation
 
 See `docs/service-connect-dns-issue.md` for full details on the root cause and fix.
