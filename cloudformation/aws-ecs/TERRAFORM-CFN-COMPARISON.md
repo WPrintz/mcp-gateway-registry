@@ -589,6 +589,61 @@ These are features added to CloudFormation that don't exist in Terraform, typica
 
 ---
 
+## Service Discovery: DNS vs Service Connect
+
+**Critical Difference from Terraform**
+
+| Aspect | Terraform | CloudFormation |
+|--------|-----------|----------------|
+| Service Discovery | ECS Service Connect | DNS-based (Cloud Map A records) |
+| Cloud Map Service Type | HTTP (created by Service Connect) | DNS_HTTP (created explicitly) |
+| DNS Resolution | Envoy proxy intercepts by port | Route53 A records |
+| Service Names | `auth-server`, `registry` | `auth-server.mcp-gateway.local`, `registry.mcp-gateway.local` |
+
+### Why CloudFormation Uses DNS Instead of Service Connect
+
+Service Connect creates HTTP-type Cloud Map services that don't create Route53 A records. The Envoy proxy intercepts connections by port, but DNS resolution happens before the connection attempt. This causes nginx to fail with:
+
+```
+host not found in upstream "auth-server"
+```
+
+### CloudFormation Implementation
+
+1. **compute-stack.yaml** creates Cloud Map services with DNS configuration:
+   ```yaml
+   AuthServerDiscoveryService:
+     Type: AWS::ServiceDiscovery::Service
+     Properties:
+       Name: auth-server
+       DnsConfig:
+         DnsRecords:
+           - Type: A
+             TTL: 10
+   ```
+
+2. **services-stack.yaml** uses `ServiceRegistries` instead of `ServiceConnectConfiguration`:
+   ```yaml
+   ServiceRegistries:
+     - RegistryArn: !ImportValue AuthServerDiscoveryServiceArn
+       ContainerName: auth-server
+   ```
+
+3. **nginx templates** use FQDNs:
+   - `docker/nginx_rev_proxy_http_only.conf`
+   - `docker/nginx_rev_proxy_http_and_https.conf`
+   - Changed `http://auth-server:8888` → `http://auth-server.mcp-gateway.local:8888`
+
+4. **Environment variables** use FQDNs:
+   - `AUTH_SERVER_URL`: `http://auth-server.mcp-gateway.local:8888`
+   - `REGISTRY_BASE_URL`: `http://registry.mcp-gateway.local:7860`
+
+### Documentation
+
+See `docs/service-connect-dns-issue.md` for full details on the root cause and fix.
+
+---
+
 ## Files Modified
 
 1. `cloudformation/aws-ecs/templates/data-stack.yaml`
