@@ -287,6 +287,8 @@ Resources:
                     Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
                   - !ImportValue
                     Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
               - Effect: Allow
                 Action:
                   - ssm:GetParameters
