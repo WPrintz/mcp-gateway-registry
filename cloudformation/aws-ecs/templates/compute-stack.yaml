@@ -616,7 +616,7 @@ Resources:
                   build_and_push mcp-gateway-registry docker/Dockerfile.registry . &
                   build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
                   build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
-                  build_and_push mcp-gateway-mcpgw docker/Dockerfile.mcp-server servers/mcpgw &
+                  docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:latest --build-arg SERVER_DIR=servers/mcpgw -f docker/Dockerfile.mcp-server . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest && echo "Completed: mcp-gateway-mcpgw" &
                   build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
                   build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
                   build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
