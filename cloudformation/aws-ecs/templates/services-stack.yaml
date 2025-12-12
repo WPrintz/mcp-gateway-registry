@@ -312,7 +312,7 @@ Resources:
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-RegistryUrl
             - Name: AUTH_SERVER_URL
-              Value: http://auth-server:8888
+              Value: !Sub http://auth-server.${EnvironmentName}.local:8888
             - Name: AUTH_SERVER_EXTERNAL_URL
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-RegistryUrl
@@ -452,7 +452,7 @@ Resources:
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-MainCloudFrontDomain
             - Name: AUTH_SERVER_URL
-              Value: http://auth-server:8888
+              Value: !Sub http://auth-server.${EnvironmentName}.local:8888
             - Name: AUTH_SERVER_EXTERNAL_URL
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-MainCloudFrontUrl
@@ -720,7 +720,7 @@ Resources:
             - Name: PORT
               Value: '8003'
             - Name: REGISTRY_BASE_URL
-              Value: http://registry:7860
+              Value: !Sub http://registry.${EnvironmentName}.local:7860
             - Name: REGISTRY_USERNAME
               Value: admin
           Secrets:
@@ -923,16 +923,12 @@ Resources:
           ContainerPort: 8888
           TargetGroupArn: !ImportValue
             Fn::Sub: ${EnvironmentName}-AuthTargetGroupArn
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: auth-server
-            ClientAliases:
-              - Port: 8888
-                DnsName: auth-server
-            DiscoveryName: auth-server
+      # Using DNS-based service discovery instead of Service Connect
+      # (Service Connect creates HTTP-type Cloud Map services that conflict with our DNS-type services)
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-AuthServerDiscoveryServiceArn
+          ContainerName: auth-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-auth-server
@@ -968,16 +964,10 @@ Resources:
           ContainerPort: 7860
           TargetGroupArn: !ImportValue
             Fn::Sub: ${EnvironmentName}-GradioTargetGroupArn
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: registry
-            ClientAliases:
-              - Port: 7860
-                DnsName: registry
-            DiscoveryName: registry
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-RegistryDiscoveryServiceArn
+          ContainerName: registry
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-registry
@@ -1034,16 +1024,10 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: currenttime
-            ClientAliases:
-              - Port: 8000
-                DnsName: currenttime-server
-            DiscoveryName: currenttime-server
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-CurrentTimeDiscoveryServiceArn
+          ContainerName: currenttime-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-currenttime
@@ -1070,16 +1054,10 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: mcpgw
-            ClientAliases:
-              - Port: 8003
-                DnsName: mcpgw-server
-            DiscoveryName: mcpgw-server
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-McpgwDiscoveryServiceArn
+          ContainerName: mcpgw-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-mcpgw
@@ -1106,16 +1084,10 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: realserverfaketools
-            ClientAliases:
-              - Port: 8002
-                DnsName: realserverfaketools-server
-            DiscoveryName: realserverfaketools-server
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-RealServerFakeToolsDiscoveryServiceArn
+          ContainerName: realserverfaketools-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-realserverfaketools
@@ -1142,16 +1114,10 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: flight-booking
-            ClientAliases:
-              - Port: 9000
-                DnsName: flight-booking-agent
-            DiscoveryName: flight-booking-agent
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-FlightBookingAgentDiscoveryServiceArn
+          ContainerName: flight-booking-agent
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-flight-booking-agent
@@ -1178,16 +1144,10 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceConnectConfiguration:
-        Enabled: true
-        Namespace: !ImportValue
-          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
-        Services:
-          - PortName: travel-assistant
-            ClientAliases:
-              - Port: 9000
-                DnsName: travel-assistant-agent
-            DiscoveryName: travel-assistant-agent
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-TravelAssistantAgentDiscoveryServiceArn
+          ContainerName: travel-assistant-agent
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-travel-assistant-agent

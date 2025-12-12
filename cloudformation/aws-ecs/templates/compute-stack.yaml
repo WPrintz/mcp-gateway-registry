@@ -257,6 +257,132 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-namespace
 
+  #============================================================================
+  # Cloud Map Services with DNS Configuration
+  # These create A records in Route53 for service discovery
+  # Required because Service Connect HTTP-type services don't create DNS records
+  #============================================================================
+  
+  CurrentTimeDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: currenttime-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for CurrentTime MCP server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-currenttime-discovery
+
+  McpgwDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: mcpgw-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for MCPGW MCP server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw-discovery
+
+  RealServerFakeToolsDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: realserverfaketools-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for RealServerFakeTools MCP server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-realserverfaketools-discovery
+
+  FlightBookingAgentDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: flight-booking-agent
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Flight Booking Agent
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-flight-booking-discovery
+
+  TravelAssistantAgentDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: travel-assistant-agent
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Travel Assistant Agent
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-travel-assistant-discovery
+
+  # Auth Server and Registry also need DNS discovery for inter-service communication
+  AuthServerDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: auth-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Auth Server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-server-discovery
+
+  RegistryDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: registry
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Registry
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-discovery
+
   EcsTaskExecutionRole:
     Type: AWS::IAM::Role
     Properties:
@@ -1330,3 +1456,46 @@ Outputs:
     Value: !GetAtt TravelAssistantAgentEcrRepository.RepositoryUri
     Export:
       Name: !Sub ${EnvironmentName}-TravelAssistantAgentEcrRepositoryUri
+
+  # Cloud Map Discovery Service ARNs for ECS Service Registries
+  CurrentTimeDiscoveryServiceArn:
+    Description: CurrentTime Cloud Map Discovery Service ARN
+    Value: !GetAtt CurrentTimeDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-CurrentTimeDiscoveryServiceArn
+
+  McpgwDiscoveryServiceArn:
+    Description: MCPGW Cloud Map Discovery Service ARN
+    Value: !GetAtt McpgwDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-McpgwDiscoveryServiceArn
+
+  RealServerFakeToolsDiscoveryServiceArn:
+    Description: RealServerFakeTools Cloud Map Discovery Service ARN
+    Value: !GetAtt RealServerFakeToolsDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-RealServerFakeToolsDiscoveryServiceArn
+
+  FlightBookingAgentDiscoveryServiceArn:
+    Description: Flight Booking Agent Cloud Map Discovery Service ARN
+    Value: !GetAtt FlightBookingAgentDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-FlightBookingAgentDiscoveryServiceArn
+
+  TravelAssistantAgentDiscoveryServiceArn:
+    Description: Travel Assistant Agent Cloud Map Discovery Service ARN
+    Value: !GetAtt TravelAssistantAgentDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-TravelAssistantAgentDiscoveryServiceArn
+
+  AuthServerDiscoveryServiceArn:
+    Description: Auth Server Cloud Map Discovery Service ARN
+    Value: !GetAtt AuthServerDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthServerDiscoveryServiceArn
+
+  RegistryDiscoveryServiceArn:
+    Description: Registry Cloud Map Discovery Service ARN
+    Value: !GetAtt RegistryDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryDiscoveryServiceArn
