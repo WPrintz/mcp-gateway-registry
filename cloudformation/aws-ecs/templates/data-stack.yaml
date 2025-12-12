@@ -1043,7 +1043,7 @@ Resources:
                   "path": "/mcp/currenttime",
                   "description": "MCP server that provides current time information",
                   "tags": ["time", "utility", "demo"],
-                  "proxy_pass_url": "http://currenttime-server:8000",
+                  "proxy_pass_url": "http://currenttime-server.mcp-gateway.local:8000",
                   "is_python": True,
                   "num_tools": 1,
                   "tool_list": [
@@ -1058,7 +1058,7 @@ Resources:
                   "path": "/mcp/mcpgw",
                   "description": "MCP Gateway server for federated tool access",
                   "tags": ["gateway", "federation", "tools"],
-                  "proxy_pass_url": "http://mcpgw-server:8003",
+                  "proxy_pass_url": "http://mcpgw-server.mcp-gateway.local:8003",
                   "is_python": True,
                   "num_tools": 5,
                   "tool_list": []
@@ -1068,7 +1068,7 @@ Resources:
                   "path": "/mcp/realserverfaketools",
                   "description": "Demo MCP server with simulated tools for testing",
                   "tags": ["demo", "testing", "simulation"],
-                  "proxy_pass_url": "http://realserverfaketools-server:8002",
+                  "proxy_pass_url": "http://realserverfaketools-server.mcp-gateway.local:8002",
                   "is_python": True,
                   "num_tools": 3,
                   "tool_list": [
@@ -1136,7 +1136,7 @@ Resources:
     Properties:
       ServiceToken: !GetAtt McpServerInitLambda.Arn
       # Add a version to force update when server definitions change
-      Version: '1.0.0'
+      Version: '1.1.0'  # Updated to use FQDNs for DNS-based service discovery
 
   #============================================================================
   # A2A Agent Registration Lambda
