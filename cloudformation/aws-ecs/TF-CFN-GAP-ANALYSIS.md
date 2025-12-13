@@ -78,7 +78,23 @@ TF defines 7 monitoring alarms in `module.mcp_gateway` - **now added to CFN**:
 - `registry_cpu_high` → `RegistryCpuHighAlarm`
 - `registry_memory_high` → `RegistryMemoryHighAlarm`
 
-### 5. Embeddings Model (sentence-transformers) ✅ RESOLVED
+### 5. OAuth2 Authentication Fixes ✅ RESOLVED
+
+Two bugs were discovered during CloudFormation deployment testing that affected OAuth2/Keycloak login:
+
+| Issue | Root Cause | Fix |
+|-------|------------|-----|
+| Missing OAuth2 query params | nginx `proxy_pass` with URI path strips query strings | Added `$is_args$args` to preserve `code` and `state` params |
+| Cookie not sent on callback | `oauth2_temp_session` cookie missing `secure` flag | Added dynamic `secure=is_https` for HTTPS/CloudFront |
+
+**Files Modified**:
+- `docker/nginx_rev_proxy_http_only.conf` - Added `$is_args$args` to OAuth2 callback proxy_pass
+- `docker/nginx_rev_proxy_http_and_https.conf` - Same fix for HTTPS config
+- `auth_server/server.py` - Added `secure` flag to OAuth2 temp session cookie
+
+**Note**: These bugs existed in the codebase since the OAuth2 routes were added, but may not have manifested in earlier deployments due to cached container images or different nginx configurations.
+
+### 6. Embeddings Model (sentence-transformers) ✅ RESOLVED
 
 The Registry service requires the `sentence-transformers/all-MiniLM-L6-v2` model for semantic search features.
 
