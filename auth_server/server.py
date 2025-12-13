@@ -1639,6 +1639,8 @@ async def oauth2_callback(
         # Debug logging for OAuth2 callback
         logger.info(f"OAuth2 callback received: provider={provider}, code={'present' if code else 'missing'}, state={'present' if state else 'missing'}, oauth2_temp_session={'present' if oauth2_temp_session else 'missing'}")
         logger.info(f"Request cookies: {list(request.cookies.keys())}")
+        logger.info(f"Full callback URL: {request.url}")
+        logger.info(f"Query params: {dict(request.query_params)}")
         
         if error:
             logger.warning(f"OAuth2 error from {provider}: {error}")
