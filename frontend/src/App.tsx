@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import { ThemeProvider } from './contexts/ThemeContext';
+import { ServerStatsProvider } from './contexts/ServerStatsContext';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import TokenGeneration from './pages/TokenGeneration';
@@ -13,7 +14,8 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <Router>
+        <ServerStatsProvider>
+          <Router>
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/auth/callback" element={<OAuthCallback />} />
@@ -32,7 +34,8 @@ function App() {
               </ProtectedRoute>
             } />
           </Routes>
-        </Router>
+          </Router>
+        </ServerStatsProvider>
       </AuthProvider>
     </ThemeProvider>
   );
