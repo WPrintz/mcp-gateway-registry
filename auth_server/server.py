@@ -1636,12 +1636,17 @@ async def oauth2_callback(
 ):
     """Handle OAuth2 callback and create user session"""
     try:
+        # Debug logging for OAuth2 callback
+        logger.info(f"OAuth2 callback received: provider={provider}, code={'present' if code else 'missing'}, state={'present' if state else 'missing'}, oauth2_temp_session={'present' if oauth2_temp_session else 'missing'}")
+        logger.info(f"Request cookies: {list(request.cookies.keys())}")
+        
         if error:
             logger.warning(f"OAuth2 error from {provider}: {error}")
             error_url = OAUTH2_CONFIG.get("registry", {}).get("error_redirect", "/login")
             return RedirectResponse(url=f"{error_url}?error=oauth2_error&details={error}", status_code=302)
         
         if not code or not state or not oauth2_temp_session:
+            logger.warning(f"Missing OAuth2 params - code: {bool(code)}, state: {bool(state)}, cookie: {bool(oauth2_temp_session)}")
             raise HTTPException(status_code=400, detail="Missing required OAuth2 parameters")
         
         # Validate temporary session
