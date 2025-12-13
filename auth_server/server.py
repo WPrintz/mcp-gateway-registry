@@ -1601,13 +1601,18 @@ async def oauth2_login(provider: str, request: Request, redirect_uri: str = None
         auth_url = f"{provider_config['auth_url']}?{urllib.parse.urlencode(auth_params)}"
         
         # Create response with temporary session cookie
+        # Determine if we're behind HTTPS (CloudFront/ALB)
+        x_forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        is_https = x_forwarded_proto == "https" or request.url.scheme == "https"
+        
         response = RedirectResponse(url=auth_url, status_code=302)
         response.set_cookie(
             key="oauth2_temp_session",
             value=temp_session,
             max_age=600,  # 10 minutes for OAuth2 flow
             httponly=True,
-            samesite="lax"
+            samesite="lax",
+            secure=is_https  # Must be secure for HTTPS to work with SameSite=Lax
         )
         
         logger.info(f"Initiated OAuth2 login for provider {provider}")
