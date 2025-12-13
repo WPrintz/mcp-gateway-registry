@@ -331,3 +331,6 @@ image-manifest.json# Admin password files
 terraform/.admin_password
 image-manifest.json
 cloudformation/aws-ecs/tf-plan.json
+
+# Workshop content (synced separately to workshop repo)
+cloudformation/aws-ecs/content/
