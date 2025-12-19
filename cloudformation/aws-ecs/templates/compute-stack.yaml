@@ -737,12 +737,13 @@ Resources:
                   echo "Using image tag: $IMAGE_TAG"
                   
                   # Build function that builds and pushes an image
+                  # Passes BUILD_VERSION as build arg for version display in UI
                   build_and_push() {
                     local name=$1
                     local dockerfile=$2
                     local context=$3
                     echo "Starting build: $name"
-                    docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG -f $dockerfile $context && \
+                    docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
                     docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
                     echo "Completed: $name" || echo "FAILED: $name"
                   }
@@ -752,7 +753,7 @@ Resources:
                   build_and_push mcp-gateway-registry docker/Dockerfile.registry-cpu . &
                   build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
                   build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
-                  docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw -f docker/Dockerfile.mcp-server-cpu . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && echo "Completed: mcp-gateway-mcpgw" &
+                  docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && echo "Completed: mcp-gateway-mcpgw" &
                   build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
                   build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
                   build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
