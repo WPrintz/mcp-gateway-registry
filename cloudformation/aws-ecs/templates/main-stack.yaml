@@ -393,6 +393,7 @@ Resources:
         BaseDomain: !Ref BaseDomain
         HostedZoneId: !Ref HostedZoneId
         UseRegionalDomains: !Ref UseRegionalDomains
+        UpstreamVersion: !Ref UpstreamVersion
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-compute
