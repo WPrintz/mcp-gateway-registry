@@ -263,6 +263,49 @@ Parameters:
     Default: ''
     Description: Domain for session cookies (leave empty for single-domain deployments)
 
+  # Security Scanning Configuration (v1.0.8)
+  SecurityScanEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable security scanning for MCP servers during registration
+
+  SecurityScanOnRegistration:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Automatically scan servers when they are registered
+
+  SecurityBlockUnsafeServers:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Block (disable) servers that fail security scans
+
+  SecurityAnalyzers:
+    Type: String
+    Default: 'yara'
+    Description: Comma-separated analyzers for security scanning (yara, llm, api). YARA requires no API key.
+
+  SecurityScanTimeout:
+    Type: Number
+    Default: 60
+    Description: Security scan timeout in seconds
+
+  SecurityAddPendingTag:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Add security-pending tag to servers that fail security scan
+
   # Template S3 Location (for nested stacks)
   # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
   # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
@@ -399,6 +442,12 @@ Resources:
         EmbeddingsAwsRegion: !Ref EmbeddingsAwsRegion
         SessionCookieSecure: !Ref SessionCookieSecure
         SessionCookieDomain: !Ref SessionCookieDomain
+        SecurityScanEnabled: !Ref SecurityScanEnabled
+        SecurityScanOnRegistration: !Ref SecurityScanOnRegistration
+        SecurityBlockUnsafeServers: !Ref SecurityBlockUnsafeServers
+        SecurityAnalyzers: !Ref SecurityAnalyzers
+        SecurityScanTimeout: !Ref SecurityScanTimeout
+        SecurityAddPendingTag: !Ref SecurityAddPendingTag
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services
