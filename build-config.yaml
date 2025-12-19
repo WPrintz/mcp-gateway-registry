@@ -23,11 +23,12 @@ images:
   # ========================================
 
   # Main MCP Gateway Registry with nginx reverse proxy, FAISS, models
+  # Using CPU-only PyTorch variant for smaller image size (no GPU required)
   registry:
     repo_name: "mcp-gateway-registry"
-    dockerfile: "docker/Dockerfile.registry"
+    dockerfile: "docker/Dockerfile.registry-cpu"
     context: "."
-    description: "MCP Gateway Registry with nginx, FAISS, models"
+    description: "MCP Gateway Registry with nginx, FAISS, models (CPU-only)"
     tags:
       - latest
     build_args: {}
@@ -98,11 +99,12 @@ images:
     build_args: {}
 
   # MCPGW MCP Server
+  # Using CPU-only PyTorch variant for smaller image size (no GPU required)
   mcpgw:
     repo_name: "mcp-gateway-mcpgw"
-    dockerfile: "docker/Dockerfile.mcp-server"
+    dockerfile: "docker/Dockerfile.mcp-server-cpu"
     context: "."
-    description: "MCPGW MCP server with embeddings support"
+    description: "MCPGW MCP server with embeddings support (CPU-only)"
     tags:
       - latest
     build_args:
