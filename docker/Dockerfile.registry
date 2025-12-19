@@ -23,6 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Build argument for version (will be set at build time from git)
+ARG BUILD_VERSION="1.0.0"
+ENV BUILD_VERSION=$BUILD_VERSION
+
 RUN pip install uv && \
     uv venv .venv --python 3.12 && \
     . .venv/bin/activate && \
@@ -42,7 +46,8 @@ RUN pip install uv && \
     "scikit-learn>=1.3.0" \
     "torch>=1.6.0" \
     "huggingface-hub[cli,hf_xet]>=0.31.1" \
-    "hf_xet>=0.1.0"
+    "hf_xet>=0.1.0" \
+    "cisco-ai-mcp-scanner==3.2.3"
 
 # Copy the application code
 COPY . /app/
@@ -61,7 +66,7 @@ RUN npm run build
 # Return to app directory
 WORKDIR /app
 
-# Install uv and setup Python environment
+# Install the registry package
 RUN . .venv/bin/activate && uv pip install -e .
 
 # Download the sentence-transformers embeddings model during build

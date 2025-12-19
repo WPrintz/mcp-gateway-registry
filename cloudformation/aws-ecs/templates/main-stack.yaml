@@ -5,6 +5,17 @@ Description: >
   Target Region: us-west-2
 
 Parameters:
+  # Upstream Version Tracking
+  UpstreamVersion:
+    Type: String
+    Default: 'v1.0.8'
+    Description: >
+      Upstream mcp-gateway-registry version this deployment is based on.
+      Used as default image tag for all services. Override individual *ImageTag 
+      parameters if services need different versions.
+    AllowedPattern: '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$|^latest$'
+    ConstraintDescription: Must be a semantic version (e.g., v1.0.8, 1.0.8) or 'latest'
+
   EnvironmentName:
     Type: String
     Default: mcp-gateway
@@ -78,8 +89,8 @@ Parameters:
 
   RegistryImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for Registry service
+    Default: ''
+    Description: Image tag for Registry service (defaults to UpstreamVersion if empty)
 
   AuthServerImageRepo:
     Type: String
@@ -88,8 +99,8 @@ Parameters:
 
   AuthServerImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for Auth Server
+    Default: ''
+    Description: Image tag for Auth Server (defaults to UpstreamVersion if empty)
 
   KeycloakImageRepo:
     Type: String
@@ -98,8 +109,8 @@ Parameters:
 
   KeycloakImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for Keycloak
+    Default: ''
+    Description: Image tag for Keycloak (defaults to UpstreamVersion if empty)
 
   CurrentTimeImageRepo:
     Type: String
@@ -108,8 +119,8 @@ Parameters:
 
   CurrentTimeImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for CurrentTime MCP server
+    Default: ''
+    Description: Image tag for CurrentTime MCP server (defaults to UpstreamVersion if empty)
 
   McpgwImageRepo:
     Type: String
@@ -118,8 +129,8 @@ Parameters:
 
   McpgwImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for MCPGW MCP server
+    Default: ''
+    Description: Image tag for MCPGW MCP server (defaults to UpstreamVersion if empty)
 
   RealServerFakeToolsImageRepo:
     Type: String
@@ -128,8 +139,8 @@ Parameters:
 
   RealServerFakeToolsImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for RealServerFakeTools MCP server
+    Default: ''
+    Description: Image tag for RealServerFakeTools MCP server (defaults to UpstreamVersion if empty)
 
   FlightBookingAgentImageRepo:
     Type: String
@@ -138,8 +149,8 @@ Parameters:
 
   FlightBookingAgentImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for Flight Booking Agent
+    Default: ''
+    Description: Image tag for Flight Booking Agent (defaults to UpstreamVersion if empty)
 
   TravelAssistantAgentImageRepo:
     Type: String
@@ -148,8 +159,8 @@ Parameters:
 
   TravelAssistantAgentImageTag:
     Type: String
-    Default: 'latest'
-    Description: Image tag for Travel Assistant Agent
+    Default: ''
+    Description: Image tag for Travel Assistant Agent (defaults to UpstreamVersion if empty)
 
   # Resource Configuration
   ServiceCpu:
@@ -270,6 +281,15 @@ Conditions:
   HasDnsConfig: !And
     - !Not [!Equals [!Ref BaseDomain, '']]
     - !Not [!Equals [!Ref HostedZoneId, '']]
+  # Image tag conditions - use UpstreamVersion as default when individual tags are empty
+  UseDefaultRegistryTag: !Equals [!Ref RegistryImageTag, '']
+  UseDefaultAuthServerTag: !Equals [!Ref AuthServerImageTag, '']
+  UseDefaultKeycloakTag: !Equals [!Ref KeycloakImageTag, '']
+  UseDefaultCurrentTimeTag: !Equals [!Ref CurrentTimeImageTag, '']
+  UseDefaultMcpgwTag: !Equals [!Ref McpgwImageTag, '']
+  UseDefaultRealServerFakeToolsTag: !Equals [!Ref RealServerFakeToolsImageTag, '']
+  UseDefaultFlightBookingAgentTag: !Equals [!Ref FlightBookingAgentImageTag, '']
+  UseDefaultTravelAssistantAgentTag: !Equals [!Ref TravelAssistantAgentImageTag, '']
 
 Resources:
 
@@ -348,21 +368,21 @@ Resources:
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         RegistryImageRepo: !Ref RegistryImageRepo
-        RegistryImageTag: !Ref RegistryImageTag
+        RegistryImageTag: !If [UseDefaultRegistryTag, !Ref UpstreamVersion, !Ref RegistryImageTag]
         AuthServerImageRepo: !Ref AuthServerImageRepo
-        AuthServerImageTag: !Ref AuthServerImageTag
+        AuthServerImageTag: !If [UseDefaultAuthServerTag, !Ref UpstreamVersion, !Ref AuthServerImageTag]
         KeycloakImageRepo: !Ref KeycloakImageRepo
-        KeycloakImageTag: !Ref KeycloakImageTag
+        KeycloakImageTag: !If [UseDefaultKeycloakTag, !Ref UpstreamVersion, !Ref KeycloakImageTag]
         CurrentTimeImageRepo: !Ref CurrentTimeImageRepo
-        CurrentTimeImageTag: !Ref CurrentTimeImageTag
+        CurrentTimeImageTag: !If [UseDefaultCurrentTimeTag, !Ref UpstreamVersion, !Ref CurrentTimeImageTag]
         McpgwImageRepo: !Ref McpgwImageRepo
-        McpgwImageTag: !Ref McpgwImageTag
+        McpgwImageTag: !If [UseDefaultMcpgwTag, !Ref UpstreamVersion, !Ref McpgwImageTag]
         RealServerFakeToolsImageRepo: !Ref RealServerFakeToolsImageRepo
-        RealServerFakeToolsImageTag: !Ref RealServerFakeToolsImageTag
+        RealServerFakeToolsImageTag: !If [UseDefaultRealServerFakeToolsTag, !Ref UpstreamVersion, !Ref RealServerFakeToolsImageTag]
         FlightBookingAgentImageRepo: !Ref FlightBookingAgentImageRepo
-        FlightBookingAgentImageTag: !Ref FlightBookingAgentImageTag
+        FlightBookingAgentImageTag: !If [UseDefaultFlightBookingAgentTag, !Ref UpstreamVersion, !Ref FlightBookingAgentImageTag]
         TravelAssistantAgentImageRepo: !Ref TravelAssistantAgentImageRepo
-        TravelAssistantAgentImageTag: !Ref TravelAssistantAgentImageTag
+        TravelAssistantAgentImageTag: !If [UseDefaultTravelAssistantAgentTag, !Ref UpstreamVersion, !Ref TravelAssistantAgentImageTag]
         ServiceCpu: !Ref ServiceCpu
         ServiceMemory: !Ref ServiceMemory
         KeycloakCpu: !Ref KeycloakCpu
@@ -404,6 +424,13 @@ Outputs:
   KeycloakAdminPassword:
     Description: SSM Parameter Store console URL for Keycloak Admin Password
     Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/systems-manager/parameters/keycloak/admin_password/description?region=${AWS::Region}'
+
+  # Version Tracking
+  UpstreamVersion:
+    Description: Upstream mcp-gateway-registry version this deployment is based on
+    Value: !Ref UpstreamVersion
+    Export:
+      Name: !Sub ${EnvironmentName}-upstream-version
 
 
 
