@@ -733,8 +733,9 @@ Resources:
             build:
               commands:
                 - echo Building container images in parallel...
-                - echo "Using image tag: $IMAGE_TAG"
                 - |
+                  echo "Using image tag: $IMAGE_TAG"
+                  
                   # Build function that builds and pushes an image
                   build_and_push() {
                     local name=$1
