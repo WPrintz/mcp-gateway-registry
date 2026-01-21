@@ -19,11 +19,22 @@ app:
   sessionCookieDomain: ""  # Auto-inferred from Host header if empty
   sessionCookieSecure: true
 
-# Keycloak integration
+# Authentication Provider Configuration
+# Choose ONE provider: keycloak or entra
+authProvider:
+  # Provider type: "keycloak" or "entra"
+  type: keycloak
+
+# Keycloak integration (used when authProvider.type = "keycloak")
 keycloak:
-  enabled: true
   externalUrl: http://localhost:8080
   realm: mcp-gateway
+
+# Entra ID integration (used when authProvider.type = "entra")
+entra:
+  clientId: ""
+  clientSecret: ""
+  tenantId: ""
 
 # Service configuration
 service:

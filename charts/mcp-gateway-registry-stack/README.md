@@ -52,6 +52,71 @@ The `values.yaml` file needs to be updated for your setup, specifically:
   `subdomain.example.com`, `DOMAIN` should be replaced with `subdomain.example.com`
 - `secretKey`: the registry and auth-server both have a placeholder for `secretKey`, this should be updated to the same
   random, secure key that is used in both locations
+- `global.authProvider.type`: Choose your authentication provider - either `keycloak` (default) or `entra`
+
+### Authentication Provider Selection
+
+This chart supports two authentication providers:
+
+#### Option 1: Keycloak (Default)
+
+**Deploy Keycloak in the stack:**
+
+```yaml
+global:
+  authProvider:
+    type: keycloak
+
+keycloak:
+  create: true  # Deploy Keycloak as part of this stack
+
+keycloak-configure:
+  enabled: true  # Run Keycloak configuration job
+```
+
+**Use an external Keycloak instance:**
+
+```yaml
+global:
+  authProvider:
+    type: keycloak
+
+keycloak:
+  create: false  # Don't deploy Keycloak
+  externalUrl: https://your-keycloak.example.com
+  realm: mcp-gateway
+
+keycloak-configure:
+  enabled: true  # Still configure the external Keycloak
+```
+
+#### Option 2: Microsoft Entra ID
+
+Configure the following in your values file:
+
+```yaml
+global:
+  authProvider:
+    type: entra
+
+# Disable Keycloak components
+keycloak:
+  create: false
+
+keycloak-configure:
+  enabled: false
+
+# Configure Entra ID
+auth-server:
+  authProvider:
+    type: entra
+  entra:
+    clientId: "your-entra-client-id"
+    clientSecret: "your-entra-client-secret"
+    tenantId: "your-entra-tenant-id"
+```
+
+See the [Entra ID documentation](../../docs/entra.md) for details on setting up your Entra ID app registration.
 
 ## Install
 
@@ -67,6 +132,8 @@ This will deploy the necessary resources for a Kubernetes deployment of the MCP 
 
 ## Deploy Process
 
+### With Keycloak:
+
 - postgres, keycloak, registry, and auth-server will be deployed as the core components
 - A `keycloak-configure` job will also be created
 - Postgres will need to be running first before Keycloak will run
@@ -75,7 +142,16 @@ This will deploy the necessary resources for a Kubernetes deployment of the MCP 
   the auth-server.
 - The registry will start as soon as the image is pulled
 
+### With Entra ID:
+
+- MongoDB, registry, and auth-server will be deployed as the core components
+- Keycloak and keycloak-configure are skipped
+- auth-server will use the Entra ID credentials from your values file
+- The registry will start as soon as the image is pulled
+
 ## Use
+
+### With Keycloak:
 
 Navigate to https://mcpregistry.DOMAIN to log in. The username/password are displayed in the output of the
 `keycloak-configure job`
@@ -99,3 +175,13 @@ kubectl logs -n MYNAMESPACE setup-keycloak-d6g2r --tail 20
 ```
 
 You will see the credentials in the output
+
+### With Entra ID:
+
+Navigate to https://mcpregistry.DOMAIN to log in. Users will authenticate using their Microsoft Entra ID credentials. Ensure that:
+
+1. Your Entra ID app registration has the correct redirect URIs configured
+2. Users are assigned to the appropriate Entra ID groups
+3. Group mappings are configured in your scopes.yml or MongoDB
+
+See the [Entra ID documentation](../../docs/entra.md) for complete setup instructions.
