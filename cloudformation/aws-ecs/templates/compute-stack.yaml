@@ -1,0 +1,1512 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  MCP Gateway Registry - Compute Stack (Consolidated) Creates ECS clusters, ALBs, target groups, listeners, ACM certificates (optional), Route53 records (optional), ECR, and IAM roles. Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources (must match network/data stacks)
+
+  # Network references (passed from main-stack or use ImportValue)
+  VpcId:
+    Type: String
+    Default: ''
+    Description: VPC ID (leave empty to use ImportValue)
+
+  PublicSubnets:
+    Type: String
+    Default: ''
+    Description: Comma-separated public subnet IDs (leave empty to use ImportValue)
+
+  PrivateSubnets:
+    Type: String
+    Default: ''
+    Description: Comma-separated private subnet IDs (leave empty to use ImportValue)
+
+  MainAlbSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Main ALB Security Group ID (leave empty to use ImportValue)
+
+  KeycloakAlbSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Keycloak ALB Security Group ID (leave empty to use ImportValue)
+
+  EcsTasksSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: ECS Tasks Security Group ID (leave empty to use ImportValue)
+
+  KeycloakEcsSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Keycloak ECS Security Group ID (leave empty to use ImportValue)
+
+  # Secrets references (passed from main-stack or use ImportValue)
+  KeycloakDbSecretArn:
+    Type: String
+    Default: ''
+    Description: Keycloak DB Secret ARN (leave empty to use ImportValue)
+
+  KeycloakClientSecretArn:
+    Type: String
+    Default: ''
+    Description: Keycloak Client Secret ARN (leave empty to use ImportValue)
+
+  KeycloakM2MClientSecretArn:
+    Type: String
+    Default: ''
+    Description: Keycloak M2M Client Secret ARN (leave empty to use ImportValue)
+
+  AdminPasswordSecretArn:
+    Type: String
+    Default: ''
+    Description: Admin Password Secret ARN (leave empty to use ImportValue)
+
+  SecretKeySecretArn:
+    Type: String
+    Default: ''
+    Description: Secret Key Secret ARN (leave empty to use ImportValue)
+
+  BaseDomain:
+    Type: String
+    Default: ''
+    Description: Base domain for regional URLs (leave empty to skip DNS/certs)
+
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 Hosted Zone ID (leave empty to skip DNS/certs)
+
+  UseRegionalDomains:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Use region-based domain names
+
+  GitHubRepoUrl:
+    Type: String
+    Default: https://github.com/WPrintz/mcp-gateway-registry.git
+    Description: GitHub repository URL for source code (public repo, no auth needed)
+
+  GitHubBranch:
+    Type: String
+    Default: feature/cloudformation-v1.0.12
+    Description: GitHub branch to build from (e.g., main, feature/cloudformation-v1.0.12)
+
+  UpstreamVersion:
+    Type: String
+    Default: 'v1.0.12'
+    Description: Version tag for container images (e.g., v1.0.12, latest)
+
+Conditions:
+  UseRegionalDomainsCondition: !Equals
+    - !Ref UseRegionalDomains
+    - 'true'
+  HasDnsConfig: !And
+    - !Not
+      - !Equals
+        - !Ref BaseDomain
+        - ''
+    - !Not
+      - !Equals
+        - !Ref HostedZoneId
+        - ''
+  UseVpcIdParam: !Not [!Equals [!Ref VpcId, '']]
+  UsePublicSubnetsParam: !Not [!Equals [!Ref PublicSubnets, '']]
+  UsePrivateSubnetsParam: !Not [!Equals [!Ref PrivateSubnets, '']]
+  UseMainAlbSgParam: !Not [!Equals [!Ref MainAlbSecurityGroupId, '']]
+  UseKeycloakAlbSgParam: !Not [!Equals [!Ref KeycloakAlbSecurityGroupId, '']]
+  UseEcsTasksSgParam: !Not [!Equals [!Ref EcsTasksSecurityGroupId, '']]
+  UseKeycloakEcsSgParam: !Not [!Equals [!Ref KeycloakEcsSecurityGroupId, '']]
+
+Resources:
+  #============================================================================
+  # ECS Service-Linked Role (Custom Resource)
+  # Required for fresh AWS accounts that have never used ECS
+  # Uses a Lambda to create the role and gracefully handle "already exists"
+  #============================================================================
+  EcsServiceLinkedRoleLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-ecs-slr-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CreateServiceLinkedRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateServiceLinkedRole
+                  - iam:GetRole
+                Resource: '*'
+
+  EcsServiceLinkedRoleLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-ensure-ecs-slr
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 30
+      Role: !GetAtt EcsServiceLinkedRoleLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import time
+          def handler(event, context):
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+              try:
+                  iam = boto3.client('iam')
+                  role_created = False
+                  try:
+                      iam.create_service_linked_role(AWSServiceName='ecs.amazonaws.com')
+                      print('Created ECS service-linked role')
+                      role_created = True
+                  except iam.exceptions.InvalidInputException as e:
+                      if 'has been taken' in str(e):
+                          print('ECS service-linked role already exists')
+                      else:
+                          raise
+                  # Wait for IAM propagation if role was just created
+                  if role_created:
+                      print('Waiting 15 seconds for IAM role propagation...')
+                      time.sleep(15)
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Status': 'Role ensured'})
+              except Exception as e:
+                  print(f'Error: {e}')
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  EnsureEcsServiceLinkedRole:
+    Type: Custom::EnsureEcsServiceLinkedRole
+    Properties:
+      ServiceToken: !GetAtt EcsServiceLinkedRoleLambda.Arn
+
+  MainEcsCluster:
+    Type: AWS::ECS::Cluster
+    DependsOn: EnsureEcsServiceLinkedRole
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: OVERRIDE
+          LogConfiguration:
+            CloudWatchLogGroupName: !Ref EcsClusterLogGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+
+  KeycloakEcsCluster:
+    Type: AWS::ECS::Cluster
+    # DependsOn ensures MainEcsCluster creates first, which triggers the ECS service-linked role creation
+    # Without this, both clusters may try to create simultaneously and one fails in fresh accounts
+    DependsOn: MainEcsCluster
+    Properties:
+      ClusterName: !Sub ${EnvironmentName}-keycloak-cluster
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+          Base: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cluster
+
+  EcsClusterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/ecs/${EnvironmentName}
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ecs-logs
+
+  ServiceDiscoveryNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Sub ${EnvironmentName}.local
+      Description: Service discovery namespace for MCP Gateway Registry
+      Vpc: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-namespace
+
+  #============================================================================
+  # Cloud Map Services with DNS Configuration
+  # These create A records in Route53 for service discovery
+  # Required because Service Connect HTTP-type services don't create DNS records
+  #============================================================================
+  
+  CurrentTimeDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: currenttime-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for CurrentTime MCP server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-currenttime-discovery
+
+  McpgwDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: mcpgw-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for MCPGW MCP server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw-discovery
+
+  RealServerFakeToolsDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: realserverfaketools-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for RealServerFakeTools MCP server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-realserverfaketools-discovery
+
+  FlightBookingAgentDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: flight-booking-agent
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Flight Booking Agent
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-flight-booking-discovery
+
+  TravelAssistantAgentDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: travel-assistant-agent
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Travel Assistant Agent
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-travel-assistant-discovery
+
+  # Auth Server and Registry also need DNS discovery for inter-service communication
+  AuthServerDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: auth-server
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Auth Server
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-server-discovery
+
+  RegistryDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: registry
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Registry
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-discovery
+
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-task-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+        - PolicyName: EcsExecLogging
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogGroups
+                  - logs:DescribeLogStreams
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-task-execution
+
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EcsExec
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-task-role
+
+  KeycloakTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-keycloak-task-execution
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: KeycloakSecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakDbSecretArn
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-task-execution
+
+  KeycloakEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EnvironmentName}-keycloak
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 10,
+                "description": "Keep last 10 git SHA tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["sha-"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 20,
+                "description": "Expire untagged images older than 7 days",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 7
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowECSPull
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+          - Sid: AllowPush
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action:
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchGetImage
+              - ecr:BatchCheckLayerAvailability
+              - ecr:PutImage
+              - ecr:InitiateLayerUpload
+              - ecr:UploadLayerPart
+              - ecr:CompleteLayerUpload
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak
+
+  #============================================================================
+  # ECR Repositories for All Services
+  #============================================================================
+  RegistryEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-registry
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-ecr
+
+  AuthServerEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-auth-server
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-server-ecr
+
+  CurrentTimeEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-currenttime
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-currenttime-ecr
+
+  McpgwEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-mcpgw
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw-ecr
+
+  RealServerFakeToolsEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-realserverfaketools
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-realserverfaketools-ecr
+
+  FlightBookingAgentEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-flight-booking-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-flight-booking-agent-ecr
+
+  TravelAssistantAgentEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-travel-assistant-agent
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-travel-assistant-agent-ecr
+
+  #============================================================================
+  # CodeBuild Project for Building Container Images
+  #============================================================================
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-codebuild-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodeBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/${EnvironmentName}-*
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:PutImage
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/mcp-gateway-*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-codebuild-role
+
+  ContainerBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${EnvironmentName}-container-build
+      Description: Build and push MCP Gateway container images to ECR
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:5.0
+        PrivilegedMode: true
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Value: !Ref AWS::AccountId
+          - Name: AWS_REGION
+            Value: !Ref AWS::Region
+          - Name: ECR_REGISTRY
+            Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
+          - Name: IMAGE_TAG
+            Value: !Ref UpstreamVersion
+      SourceVersion: !Ref GitHubBranch
+      Source:
+        Type: GITHUB
+        Location: !Ref GitHubRepoUrl
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+                # Pre-pull base images to cache them before parallel builds
+                - echo Pre-pulling base images for layer caching...
+                - docker pull public.ecr.aws/docker/library/python:3.12-slim
+                - docker pull quay.io/keycloak/keycloak:23.0
+                # Setup A2A agent dependencies
+                - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
+                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
+            build:
+              commands:
+                - echo Building container images in parallel...
+                - |
+                  echo "Using image tag: $IMAGE_TAG"
+                  
+                  # Build function that builds and pushes an image
+                  # Passes BUILD_VERSION as build arg for version display in UI
+                  build_and_push() {
+                    local name=$1
+                    local dockerfile=$2
+                    local context=$3
+                    echo "Starting build: $name"
+                    docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
+                    docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
+                    echo "Completed: $name" || echo "FAILED: $name"
+                  }
+
+                  # Start all builds in parallel
+                  # Using CPU-only Dockerfiles for registry and mcpgw (smaller images, no GPU required)
+                  build_and_push mcp-gateway-registry docker/Dockerfile.registry-cpu . &
+                  build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
+                  build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
+                  docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && echo "Completed: mcp-gateway-mcpgw" &
+                  build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
+                  build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
+                  build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
+                  build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
+
+                  # Wait for all background jobs and capture exit codes
+                  FAILED=0
+                  for job in $(jobs -p); do
+                    wait $job || FAILED=$((FAILED+1))
+                  done
+
+                  if [ $FAILED -gt 0 ]; then
+                    echo "$FAILED build(s) failed"
+                    exit 1
+                  fi
+                  echo "All builds completed successfully"
+            post_build:
+              commands:
+                - echo Build completed on `date`
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-container-build
+
+  #============================================================================
+  # Lambda to Trigger CodeBuild on Stack Creation
+  #============================================================================
+  TriggerBuildLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-trigger-build-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: TriggerBuildPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuilds
+                Resource: !GetAtt ContainerBuildProject.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-trigger-build-lambda-role
+
+  TriggerBuildLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-trigger-container-build
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt TriggerBuildLambdaRole.Arn
+      Timeout: 900
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import time
+
+          def handler(event, context):
+              print(f"Event: {event}")
+
+              # Skip build on Delete
+              if event['RequestType'] == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  codebuild = boto3.client('codebuild')
+                  project_name = event['ResourceProperties']['ProjectName']
+
+                  # Start the build
+                  response = codebuild.start_build(projectName=project_name)
+                  build_id = response['build']['id']
+                  print(f"Started build: {build_id}")
+
+                  # Wait for build to complete (with timeout)
+                  max_wait = 1800  # 30 minutes
+                  wait_interval = 30
+                  elapsed = 0
+
+                  while elapsed < max_wait:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+
+                      builds = codebuild.batch_get_builds(ids=[build_id])
+                      build_status = builds['builds'][0]['buildStatus']
+                      print(f"Build status: {build_status} (elapsed: {elapsed}s)")
+
+                      if build_status == 'SUCCEEDED':
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, {'BuildId': build_id})
+                          return
+                      elif build_status in ['FAILED', 'FAULT', 'STOPPED', 'TIMED_OUT']:
+                          cfnresponse.send(event, context, cfnresponse.FAILED, {'BuildId': build_id, 'Status': build_status})
+                          return
+
+                  # Timeout waiting for build
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': 'Build timed out'})
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-trigger-build-lambda
+
+  TriggerContainerBuild:
+    Type: Custom::TriggerBuild
+    DependsOn:
+      - RegistryEcrRepository
+      - AuthServerEcrRepository
+      - CurrentTimeEcrRepository
+      - McpgwEcrRepository
+      - RealServerFakeToolsEcrRepository
+      - FlightBookingAgentEcrRepository
+      - TravelAssistantAgentEcrRepository
+      - ContainerBuildProject
+    Properties:
+      ServiceToken: !GetAtt TriggerBuildLambda.Arn
+      ProjectName: !Ref ContainerBuildProject
+
+  RegistryCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDnsConfig
+    Properties:
+      DomainName: !If
+        - UseRegionalDomainsCondition
+        - !Sub registry.${AWS::Region}.${BaseDomain}
+        - !Sub registry.${BaseDomain}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !If
+            - UseRegionalDomainsCondition
+            - !Sub registry.${AWS::Region}.${BaseDomain}
+            - !Sub registry.${BaseDomain}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-cert
+
+  KeycloakCertificate:
+    Type: AWS::CertificateManager::Certificate
+    Condition: HasDnsConfig
+    Properties:
+      DomainName: !If
+        - UseRegionalDomainsCondition
+        - !Sub kc.${AWS::Region}.${BaseDomain}
+        - !Sub kc.${BaseDomain}
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !If
+            - UseRegionalDomainsCondition
+            - !Sub kc.${AWS::Region}.${BaseDomain}
+            - !Sub kc.${BaseDomain}
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cert
+
+  MainAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-MainAlbSG
+      Subnets: !Split
+        - ','
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PublicSubnets
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-alb
+
+  RegistryTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-registry-tg
+      Port: 80
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckPort: '80'
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-tg
+
+  AuthTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-auth-tg
+      Port: 8888
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-tg
+
+  GradioTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-gradio-tg
+      Port: 7860
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /health
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: '200'
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '5'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-gradio-tg
+
+  MainAlbHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref RegistryTargetGroup
+
+  MainAlbHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasDnsConfig
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref RegistryCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref RegistryTargetGroup
+
+  MainAlbAuthListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 8888
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref AuthTargetGroup
+
+  MainAlbGradioListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref MainAlb
+      Port: 7860
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref GradioTargetGroup
+
+  KeycloakAlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-alb
+      Type: application
+      Scheme: internet-facing
+      SecurityGroups:
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-KeycloakAlbSG
+      Subnets: !Split
+        - ','
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-PublicSubnets
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-alb
+
+  KeycloakTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-tg
+      Port: 8080
+      Protocol: HTTP
+      TargetType: ip
+      VpcId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-VpcId
+      HealthCheckEnabled: true
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      Matcher:
+        HttpCode: 200-399
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '30'
+        - Key: stickiness.enabled
+          Value: 'true'
+        - Key: stickiness.type
+          Value: lb_cookie
+        - Key: stickiness.lb_cookie.duration_seconds
+          Value: '86400'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-tg
+
+  KeycloakHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref KeycloakAlb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref KeycloakTargetGroup
+
+  KeycloakHttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Condition: HasDnsConfig
+    Properties:
+      LoadBalancerArn: !Ref KeycloakAlb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref KeycloakCertificate
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref KeycloakTargetGroup
+
+  RegistryDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsConfig
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !If
+        - UseRegionalDomainsCondition
+        - !Sub registry.${AWS::Region}.${BaseDomain}
+        - !Sub registry.${BaseDomain}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt MainAlb.DNSName
+        HostedZoneId: !GetAtt MainAlb.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  KeycloakDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: HasDnsConfig
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !If
+        - UseRegionalDomainsCondition
+        - !Sub kc.${AWS::Region}.${BaseDomain}
+        - !Sub kc.${BaseDomain}
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt KeycloakAlb.DNSName
+        HostedZoneId: !GetAtt KeycloakAlb.CanonicalHostedZoneID
+        EvaluateTargetHealth: true
+
+  #============================================================================
+  # CloudFront Distribution for Main ALB HTTPS (Registry/Auth)
+  # Provides HTTPS via *.cloudfront.net certificate when Route53 is not available
+  #============================================================================
+  MainCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub ${EnvironmentName} Main ALB HTTPS Distribution (Registry)
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: MainAlbOrigin
+            DomainName: !GetAtt MainAlb.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+        DefaultCacheBehavior:
+          TargetOriginId: MainAlbOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+          Compress: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-main-cloudfront
+
+  #============================================================================
+  # CloudFront Distribution for Keycloak HTTPS (no custom domain required)
+  # Provides HTTPS via *.cloudfront.net certificate when Route53 is not available
+  #============================================================================
+  KeycloakCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Comment: !Sub ${EnvironmentName} Keycloak HTTPS Distribution
+        Enabled: true
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: KeycloakAlbOrigin
+            DomainName: !GetAtt KeycloakAlb.DNSName
+            CustomOriginConfig:
+              HTTPPort: 80
+              HTTPSPort: 443
+              OriginProtocolPolicy: http-only
+              OriginReadTimeout: 60
+              OriginKeepaliveTimeout: 5
+            OriginCustomHeaders:
+              - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+        DefaultCacheBehavior:
+          TargetOriginId: KeycloakAlbOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - POST
+            - PATCH
+            - DELETE
+          CachedMethods:
+            - GET
+            - HEAD
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad  # CachingDisabled
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3  # AllViewer
+          Compress: true
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cloudfront
+
+Outputs:
+  MainEcsClusterArn:
+    Description: Main ECS Cluster ARN
+    Value: !GetAtt MainEcsCluster.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-MainEcsClusterArn
+
+  MainEcsClusterName:
+    Description: Main ECS Cluster Name
+    Value: !Ref MainEcsCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-MainEcsClusterName
+
+  KeycloakEcsClusterArn:
+    Description: Keycloak ECS Cluster ARN
+    Value: !GetAtt KeycloakEcsCluster.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakEcsClusterArn
+
+  KeycloakEcsClusterName:
+    Description: Keycloak ECS Cluster Name
+    Value: !Ref KeycloakEcsCluster
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakEcsClusterName
+
+  ServiceDiscoveryNamespaceArn:
+    Description: Service Discovery Namespace ARN
+    Value: !GetAtt ServiceDiscoveryNamespace.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+
+  ServiceDiscoveryNamespaceId:
+    Description: Service Discovery Namespace ID
+    Value: !Ref ServiceDiscoveryNamespace
+    Export:
+      Name: !Sub ${EnvironmentName}-ServiceDiscoveryNamespaceId
+
+  EcsTaskExecutionRoleArn:
+    Description: ECS Task Execution Role ARN
+    Value: !GetAtt EcsTaskExecutionRole.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-EcsTaskExecutionRoleArn
+
+  EcsTaskRoleArn:
+    Description: ECS Task Role ARN
+    Value: !GetAtt EcsTaskRole.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-EcsTaskRoleArn
+
+  KeycloakTaskExecutionRoleArn:
+    Description: Keycloak Task Execution Role ARN
+    Value: !GetAtt KeycloakTaskExecutionRole.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakTaskExecutionRoleArn
+
+  MainAlbDnsName:
+    Description: Main ALB DNS Name
+    Value: !GetAtt MainAlb.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-MainAlbDnsName
+
+  MainAlbArn:
+    Description: Main ALB ARN
+    Value: !Ref MainAlb
+    Export:
+      Name: !Sub ${EnvironmentName}-MainAlbArn
+
+  KeycloakAlbDnsName:
+    Description: Keycloak ALB DNS Name
+    Value: !GetAtt KeycloakAlb.DNSName
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakAlbDnsName
+
+  KeycloakAlbArn:
+    Description: Keycloak ALB ARN
+    Value: !Ref KeycloakAlb
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakAlbArn
+
+  RegistryTargetGroupArn:
+    Description: Registry Target Group ARN
+    Value: !Ref RegistryTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryTargetGroupArn
+
+  AuthTargetGroupArn:
+    Description: Auth Target Group ARN
+    Value: !Ref AuthTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthTargetGroupArn
+
+  GradioTargetGroupArn:
+    Description: Gradio Target Group ARN
+    Value: !Ref GradioTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-GradioTargetGroupArn
+
+  KeycloakTargetGroupArn:
+    Description: Keycloak Target Group ARN
+    Value: !Ref KeycloakTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakTargetGroupArn
+
+  KeycloakEcrRepositoryUri:
+    Description: Keycloak ECR Repository URI
+    Value: !GetAtt KeycloakEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakEcrRepositoryUri
+
+  RegistryUrl:
+    Description: Registry URL (DNS name if configured, otherwise CloudFront HTTPS)
+    Value: !If
+      - HasDnsConfig
+      - !If
+        - UseRegionalDomainsCondition
+        - !Sub https://registry.${AWS::Region}.${BaseDomain}
+        - !Sub https://registry.${BaseDomain}
+      - !Sub https://${MainCloudFrontDistribution.DomainName}
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryUrl
+
+  MainCloudFrontUrl:
+    Description: Main ALB HTTPS URL via CloudFront (always HTTPS)
+    Value: !Sub https://${MainCloudFrontDistribution.DomainName}
+    Export:
+      Name: !Sub ${EnvironmentName}-MainCloudFrontUrl
+
+  MainCloudFrontDomain:
+    Description: CloudFront domain name for Main ALB HTTPS access
+    Value: !GetAtt MainCloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub ${EnvironmentName}-MainCloudFrontDomain
+
+  KeycloakUrl:
+    Description: Keycloak URL (DNS name if configured, otherwise ALB DNS - use KeycloakCloudFrontUrl for HTTPS)
+    Value: !If
+      - HasDnsConfig
+      - !If
+        - UseRegionalDomainsCondition
+        - !Sub https://kc.${AWS::Region}.${BaseDomain}
+        - !Sub https://kc.${BaseDomain}
+      - !Sub http://${KeycloakAlb.DNSName}
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakUrl
+
+  KeycloakCloudFrontUrl:
+    Description: Keycloak HTTPS URL via CloudFront (always HTTPS)
+    Value: !Sub https://${KeycloakCloudFrontDistribution.DomainName}
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakCloudFrontUrl
+
+  KeycloakCloudFrontDomain:
+    Description: CloudFront domain name for Keycloak HTTPS access
+    Value: !GetAtt KeycloakCloudFrontDistribution.DomainName
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakCloudFrontDomain
+
+  ContainerBuildProjectName:
+    Description: CodeBuild project name for container builds
+    Value: !Ref ContainerBuildProject
+    Export:
+      Name: !Sub ${EnvironmentName}-ContainerBuildProjectName
+
+  ContainerBuildStatus:
+    Description: Container build was triggered (check CodeBuild console for status)
+    Value: !GetAtt TriggerContainerBuild.BuildId
+
+  RegistryEcrRepositoryUri:
+    Description: Registry ECR Repository URI
+    Value: !GetAtt RegistryEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryEcrRepositoryUri
+
+  AuthServerEcrRepositoryUri:
+    Description: Auth Server ECR Repository URI
+    Value: !GetAtt AuthServerEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthServerEcrRepositoryUri
+
+  CurrentTimeEcrRepositoryUri:
+    Description: CurrentTime ECR Repository URI
+    Value: !GetAtt CurrentTimeEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-CurrentTimeEcrRepositoryUri
+
+  McpgwEcrRepositoryUri:
+    Description: MCPGW ECR Repository URI
+    Value: !GetAtt McpgwEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-McpgwEcrRepositoryUri
+
+  RealServerFakeToolsEcrRepositoryUri:
+    Description: RealServerFakeTools ECR Repository URI
+    Value: !GetAtt RealServerFakeToolsEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-RealServerFakeToolsEcrRepositoryUri
+
+  FlightBookingAgentEcrRepositoryUri:
+    Description: Flight Booking Agent ECR Repository URI
+    Value: !GetAtt FlightBookingAgentEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-FlightBookingAgentEcrRepositoryUri
+
+  TravelAssistantAgentEcrRepositoryUri:
+    Description: Travel Assistant Agent ECR Repository URI
+    Value: !GetAtt TravelAssistantAgentEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-TravelAssistantAgentEcrRepositoryUri
+
+  # Cloud Map Discovery Service ARNs for ECS Service Registries
+  CurrentTimeDiscoveryServiceArn:
+    Description: CurrentTime Cloud Map Discovery Service ARN
+    Value: !GetAtt CurrentTimeDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-CurrentTimeDiscoveryServiceArn
+
+  McpgwDiscoveryServiceArn:
+    Description: MCPGW Cloud Map Discovery Service ARN
+    Value: !GetAtt McpgwDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-McpgwDiscoveryServiceArn
+
+  RealServerFakeToolsDiscoveryServiceArn:
+    Description: RealServerFakeTools Cloud Map Discovery Service ARN
+    Value: !GetAtt RealServerFakeToolsDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-RealServerFakeToolsDiscoveryServiceArn
+
+  FlightBookingAgentDiscoveryServiceArn:
+    Description: Flight Booking Agent Cloud Map Discovery Service ARN
+    Value: !GetAtt FlightBookingAgentDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-FlightBookingAgentDiscoveryServiceArn
+
+  TravelAssistantAgentDiscoveryServiceArn:
+    Description: Travel Assistant Agent Cloud Map Discovery Service ARN
+    Value: !GetAtt TravelAssistantAgentDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-TravelAssistantAgentDiscoveryServiceArn
+
+  AuthServerDiscoveryServiceArn:
+    Description: Auth Server Cloud Map Discovery Service ARN
+    Value: !GetAtt AuthServerDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthServerDiscoveryServiceArn
+
+  RegistryDiscoveryServiceArn:
+    Description: Registry Cloud Map Discovery Service ARN
+    Value: !GetAtt RegistryDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryDiscoveryServiceArn

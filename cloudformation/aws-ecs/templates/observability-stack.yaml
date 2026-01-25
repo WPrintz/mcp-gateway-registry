@@ -1,0 +1,473 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Observability Stack
+  Deploys Amazon Managed Prometheus (AMP) and Amazon Managed Grafana (AMG)
+  for metrics collection and visualization. Includes ADOT configuration for ECS.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources
+
+  # SSO Configuration for Grafana
+  SSOAdminUserArn:
+    Type: String
+    Default: ''
+    Description: >
+      ARN of IAM Identity Center user to grant Grafana admin access.
+      Format: arn:aws:identitystore::ACCOUNT_ID:user/USER_ID
+      Leave empty to skip SSO configuration (Grafana will use IAM auth).
+
+  # Optional: Existing VPC for private access
+  VpcId:
+    Type: String
+    Default: ''
+    Description: VPC ID for private VPC endpoint access (optional)
+
+  PrivateSubnetIds:
+    Type: String
+    Default: ''
+    Description: Comma-separated private subnet IDs for VPC endpoints (optional)
+
+  # Retention Settings
+  PrometheusRetentionDays:
+    Type: Number
+    Default: 30
+    Description: Number of days to retain metrics in Prometheus
+    MinValue: 1
+    MaxValue: 365
+
+  # Alert Configuration
+  EnableAlerts:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable default alerting rules for MCP Gateway
+
+Conditions:
+  HasSSOUser: !Not [!Equals [!Ref SSOAdminUserArn, '']]
+  HasVpcConfig: !And
+    - !Not [!Equals [!Ref VpcId, '']]
+    - !Not [!Equals [!Ref PrivateSubnetIds, '']]
+  EnableAlerting: !Equals [!Ref EnableAlerts, 'true']
+
+Resources:
+  # ============================================================================
+  # Amazon Managed Service for Prometheus (AMP)
+  # ============================================================================
+
+  PrometheusWorkspace:
+    Type: AWS::APS::Workspace
+    Properties:
+      Alias: !Sub '${EnvironmentName}-prometheus'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-prometheus'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Alert Manager Definition (optional)
+  PrometheusAlertManagerDefinition:
+    Type: AWS::APS::AlertManagerDefinition
+    Condition: EnableAlerting
+    Properties:
+      WorkspaceId: !Ref PrometheusWorkspace
+      AlertManagerDefinition: |
+        alertmanager_config: |
+          route:
+            receiver: 'default'
+            group_wait: 30s
+            group_interval: 5m
+            repeat_interval: 4h
+          receivers:
+            - name: 'default'
+
+  # Rule Groups Namespace for MCP Gateway Alerts
+  PrometheusRuleGroup:
+    Type: AWS::APS::RuleGroupsNamespace
+    Condition: EnableAlerting
+    Properties:
+      WorkspaceId: !Ref PrometheusWorkspace
+      Name: mcp-gateway-alerts
+      Data: |
+        groups:
+          - name: mcp-gateway
+            interval: 60s
+            rules:
+              # High error rate alert
+              - alert: MCPGatewayHighErrorRate
+                expr: |
+                  sum(rate(http_requests_total{status=~"5.."}[5m])) /
+                  sum(rate(http_requests_total[5m])) > 0.05
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: High error rate in MCP Gateway
+                  description: Error rate is above 5% for 5 minutes
+
+              # Registry service down
+              - alert: MCPRegistryDown
+                expr: up{job="mcp-registry"} == 0
+                for: 2m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: MCP Registry is down
+                  description: MCP Registry service has been down for 2 minutes
+
+              # High latency alert
+              - alert: MCPGatewayHighLatency
+                expr: |
+                  histogram_quantile(0.95,
+                    sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
+                  ) > 2
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: High latency in MCP Gateway
+                  description: 95th percentile latency is above 2 seconds
+
+  # ============================================================================
+  # Amazon Managed Grafana (AMG)
+  # ============================================================================
+
+  GrafanaWorkspace:
+    Type: AWS::Grafana::Workspace
+    Properties:
+      Name: !Sub '${EnvironmentName}-grafana'
+      Description: Grafana workspace for MCP Gateway Registry monitoring
+      AccountAccessType: CURRENT_ACCOUNT
+      AuthenticationProviders:
+        - !If
+          - HasSSOUser
+          - AWS_SSO
+          - SAML
+      PermissionType: SERVICE_MANAGED
+      DataSources:
+        - PROMETHEUS
+        - CLOUDWATCH
+      NotificationDestinations:
+        - SNS
+      RoleArn: !GetAtt GrafanaWorkspaceRole.Arn
+      GrafanaVersion: '10.4'
+      PluginAdminEnabled: true
+
+  # Grafana Workspace IAM Role
+  GrafanaWorkspaceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-grafana-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: grafana.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              StringLike:
+                aws:SourceArn: !Sub 'arn:aws:grafana:${AWS::Region}:${AWS::AccountId}:/workspaces/*'
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/AmazonPrometheusQueryAccess'
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/CloudWatchReadOnlyAccess'
+      Policies:
+        - PolicyName: PrometheusAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:QueryMetrics
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:GetMetricMetadata
+                Resource: !GetAtt PrometheusWorkspace.Arn
+
+  # ============================================================================
+  # IAM Role for ECS Tasks to Write Metrics
+  # ============================================================================
+
+  PrometheusRemoteWriteRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-prometheus-write-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PrometheusRemoteWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:RemoteWrite
+                Resource: !GetAtt PrometheusWorkspace.Arn
+
+  # Policy for existing ECS Task Role to assume the remote write role
+  PrometheusWritePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub '${EnvironmentName}-prometheus-write-policy'
+      Description: Policy allowing ECS tasks to write metrics to AMP
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - aps:RemoteWrite
+              - aps:GetLabels
+              - aps:GetSeries
+              - aps:GetMetricMetadata
+            Resource: !GetAtt PrometheusWorkspace.Arn
+
+  # ============================================================================
+  # SNS Topic for Alerts (optional)
+  # ============================================================================
+
+  AlertSNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: EnableAlerting
+    Properties:
+      TopicName: !Sub '${EnvironmentName}-alerts'
+      DisplayName: MCP Gateway Alerts
+
+  # ============================================================================
+  # CloudWatch Dashboard for Quick Overview
+  # ============================================================================
+
+  MCPGatewayDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${EnvironmentName}-overview'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "text",
+              "x": 0,
+              "y": 0,
+              "width": 24,
+              "height": 1,
+              "properties": {
+                "markdown": "# MCP Gateway Registry - Observability Dashboard\n**Prometheus Workspace:** [${PrometheusWorkspace}](https://${AWS::Region}.console.aws.amazon.com/prometheus/home?region=${AWS::Region}#/workspaces/${PrometheusWorkspace}/overview) | **Grafana:** [Open Grafana](${GrafanaWorkspace.Endpoint})"
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 1,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "ECS Service CPU Utilization",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/ECS", "CPUUtilization", "ClusterName", "${EnvironmentName}-cluster", "ServiceName", "${EnvironmentName}-registry", {"label": "Registry"}],
+                  ["...", "${EnvironmentName}-auth-server", {"label": "Auth Server"}],
+                  ["...", "${EnvironmentName}-keycloak", {"label": "Keycloak"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8,
+              "y": 1,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "ECS Service Memory Utilization",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/ECS", "MemoryUtilization", "ClusterName", "${EnvironmentName}-cluster", "ServiceName", "${EnvironmentName}-registry", {"label": "Registry"}],
+                  ["...", "${EnvironmentName}-auth-server", {"label": "Auth Server"}],
+                  ["...", "${EnvironmentName}-keycloak", {"label": "Keycloak"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16,
+              "y": 1,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "ALB Request Count",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${EnvironmentName}-alb", {"stat": "Sum", "label": "Total Requests"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 7,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "ALB Target Response Time",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", "${EnvironmentName}-alb", {"stat": "Average", "label": "Avg Response Time"}],
+                  ["...", {"stat": "p95", "label": "p95 Response Time"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 12,
+              "y": 7,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "ALB HTTP Response Codes",
+                "view": "timeSeries",
+                "stacked": true,
+                "metrics": [
+                  ["AWS/ApplicationELB", "HTTPCode_Target_2XX_Count", "LoadBalancer", "${EnvironmentName}-alb", {"stat": "Sum", "label": "2XX", "color": "#2ca02c"}],
+                  [".", "HTTPCode_Target_4XX_Count", ".", ".", {"stat": "Sum", "label": "4XX", "color": "#ff7f0e"}],
+                  [".", "HTTPCode_Target_5XX_Count", ".", ".", {"stat": "Sum", "label": "5XX", "color": "#d62728"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 13,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "DocumentDB Connections",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/DocDB", "DatabaseConnections", "DBClusterIdentifier", "${EnvironmentName}-docdb", {"stat": "Average"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 8,
+              "y": 13,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "EFS Throughput",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/EFS", "TotalIOBytes", "FileSystemId", "${EnvironmentName}-efs", {"stat": "Sum", "label": "Total I/O"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            },
+            {
+              "type": "metric",
+              "x": 16,
+              "y": 13,
+              "width": 8,
+              "height": 6,
+              "properties": {
+                "title": "Aurora Serverless ACU",
+                "view": "timeSeries",
+                "stacked": false,
+                "metrics": [
+                  ["AWS/RDS", "ServerlessDatabaseCapacity", "DBClusterIdentifier", "${EnvironmentName}-keycloak-db", {"stat": "Average", "label": "ACU"}]
+                ],
+                "region": "${AWS::Region}",
+                "period": 60
+              }
+            }
+          ]
+        }
+
+Outputs:
+  PrometheusWorkspaceId:
+    Description: Amazon Managed Prometheus Workspace ID
+    Value: !Ref PrometheusWorkspace
+    Export:
+      Name: !Sub '${EnvironmentName}-PrometheusWorkspaceId'
+
+  PrometheusWorkspaceArn:
+    Description: Amazon Managed Prometheus Workspace ARN
+    Value: !GetAtt PrometheusWorkspace.Arn
+    Export:
+      Name: !Sub '${EnvironmentName}-PrometheusWorkspaceArn'
+
+  PrometheusEndpoint:
+    Description: Prometheus remote write endpoint
+    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}/api/v1/remote_write'
+    Export:
+      Name: !Sub '${EnvironmentName}-PrometheusEndpoint'
+
+  PrometheusQueryEndpoint:
+    Description: Prometheus query endpoint
+    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}'
+    Export:
+      Name: !Sub '${EnvironmentName}-PrometheusQueryEndpoint'
+
+  GrafanaWorkspaceId:
+    Description: Amazon Managed Grafana Workspace ID
+    Value: !Ref GrafanaWorkspace
+    Export:
+      Name: !Sub '${EnvironmentName}-GrafanaWorkspaceId'
+
+  GrafanaWorkspaceEndpoint:
+    Description: Grafana Workspace URL
+    Value: !GetAtt GrafanaWorkspace.Endpoint
+    Export:
+      Name: !Sub '${EnvironmentName}-GrafanaEndpoint'
+
+  PrometheusRemoteWriteRoleArn:
+    Description: IAM Role ARN for ECS tasks to write to Prometheus
+    Value: !GetAtt PrometheusRemoteWriteRole.Arn
+    Export:
+      Name: !Sub '${EnvironmentName}-PrometheusRemoteWriteRoleArn'
+
+  PrometheusWritePolicyArn:
+    Description: IAM Policy ARN for Prometheus write access
+    Value: !Ref PrometheusWritePolicy
+    Export:
+      Name: !Sub '${EnvironmentName}-PrometheusWritePolicyArn'
+
+  AlertSNSTopicArn:
+    Condition: EnableAlerting
+    Description: SNS Topic ARN for alerts
+    Value: !Ref AlertSNSTopic
+    Export:
+      Name: !Sub '${EnvironmentName}-AlertSNSTopicArn'
+
+  CloudWatchDashboardName:
+    Description: CloudWatch Dashboard name
+    Value: !Sub '${EnvironmentName}-overview'
+    Export:
+      Name: !Sub '${EnvironmentName}-CloudWatchDashboard'
