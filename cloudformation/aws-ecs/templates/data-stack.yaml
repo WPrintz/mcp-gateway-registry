@@ -293,7 +293,6 @@ Resources:
     DependsOn: DocumentDBCredentialsSecret
     Properties:
       DBClusterIdentifier: !Sub ${EnvironmentName}-registry
-      Engine: docdb
       EngineVersion: '5.0.0'
       MasterUsername: !Ref DocumentDBUsername
       MasterUserPassword: !Ref DocumentDBPassword
