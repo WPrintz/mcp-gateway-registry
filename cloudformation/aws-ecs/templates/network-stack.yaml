@@ -452,23 +452,6 @@ Resources:
       DestinationSecurityGroupId: !Ref KeycloakEcsSG
       Description: Keycloak to ECS
 
-  # EFS Security Group
-  EfsSG:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupName: !Sub ${EnvironmentName}-efs
-      GroupDescription: Security group for EFS
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 2049
-          ToPort: 2049
-          CidrIp: !Ref VpcCidr
-          Description: NFS from VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-efs
-
   # MCP Servers Security Group
   McpServersSG:
     Type: AWS::EC2::SecurityGroup
@@ -593,12 +576,6 @@ Outputs:
     Value: !Ref DatabaseSG
     Export:
       Name: !Sub ${EnvironmentName}-DatabaseSG
-
-  EfsSecurityGroupId:
-    Description: EFS Security Group ID
-    Value: !Ref EfsSG
-    Export:
-      Name: !Sub ${EnvironmentName}-EfsSG
 
   McpServersSecurityGroupId:
     Description: MCP Servers Security Group ID

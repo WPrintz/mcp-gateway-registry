@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   MCP Gateway Registry - Data Stack (Consolidated)
-  Creates EFS, Aurora Serverless v2, RDS Proxy, Secrets Manager, SSM Parameters, and KMS.
-  Matches terraform/aws-ecs/modules/mcp-gateway/storage.tf, secrets.tf and keycloak-database.tf
+  Creates DocumentDB, Aurora Serverless v2 (for Keycloak), RDS Proxy, Secrets Manager, SSM Parameters, and KMS.
+  Matches terraform/aws-ecs/documentdb.tf, secrets.tf and keycloak-database.tf
   Target Region: us-west-2
 
 Parameters:
@@ -42,12 +42,7 @@ Parameters:
     Default: ''
     Description: Database Security Group ID (leave empty to use ImportValue)
 
-  EfsSecurityGroupId:
-    Type: String
-    Default: ''
-    Description: EFS Security Group ID (leave empty to use ImportValue)
-
-  # Database credentials (NoEcho for security)
+  # Keycloak Database credentials (NoEcho for security)
   KeycloakDatabaseUsername:
     Type: String
     Default: keycloak
@@ -68,6 +63,31 @@ Parameters:
     NoEcho: true
     MinLength: 12
 
+  # DocumentDB credentials
+  DocumentDBUsername:
+    Type: String
+    Default: docdbadmin
+    Description: DocumentDB admin username
+    NoEcho: true
+
+  DocumentDBPassword:
+    Type: String
+    Default: DocDBPass123!
+    Description: DocumentDB admin password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  # DocumentDB instance configuration
+  DocumentDBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: DocumentDB instance class (db.t3.medium = 2 vCPU, 4 GB RAM)
+    AllowedValues:
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+
   # Aurora Serverless scaling
   DatabaseMinACU:
     Type: Number
@@ -85,13 +105,14 @@ Conditions:
   UsePrivateSubnet2Param: !Not [!Equals [!Ref PrivateSubnet2, '']]
   UsePrivateSubnet3Param: !Not [!Equals [!Ref PrivateSubnet3, '']]
   UseDatabaseSgParam: !Not [!Equals [!Ref DatabaseSecurityGroupId, '']]
-  UseEfsSgParam: !Not [!Equals [!Ref EfsSecurityGroupId, '']]
 
 Resources:
 
   #============================================================================
-  # KMS Key for RDS Encryption
+  # KMS Keys for Encryption
   #============================================================================
+
+  # KMS Key for RDS (Aurora/Keycloak) Encryption
   RdsKmsKey:
     Type: AWS::KMS::Key
     Properties:
@@ -127,179 +148,216 @@ Resources:
       AliasName: !Sub alias/${EnvironmentName}-rds
       TargetKeyId: !Ref RdsKmsKey
 
-  #============================================================================
-  # EFS File System
-  #============================================================================
-  EfsFileSystem:
-    Type: AWS::EFS::FileSystem
+  # KMS Key for DocumentDB Encryption
+  DocumentDBKmsKey:
+    Type: AWS::KMS::Key
     Properties:
-      Encrypted: true
-      PerformanceMode: generalPurpose
-      ThroughputMode: bursting
-      FileSystemTags:
+      Description: KMS key for DocumentDB cluster encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow DocumentDB to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'
+      Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-efs
+          Value: !Sub ${EnvironmentName}-documentdb-kms
+        - Key: Component
+          Value: documentdb
 
-  # EFS Mount Targets (one per private subnet)
-  EfsMountTarget1:
-    Type: AWS::EFS::MountTarget
+  DocumentDBKmsKeyAlias:
+    Type: AWS::KMS::Alias
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !If
-        - UsePrivateSubnet1Param
-        - !Ref PrivateSubnet1
+      AliasName: !Sub alias/${EnvironmentName}-documentdb
+      TargetKeyId: !Ref DocumentDBKmsKey
+
+  #============================================================================
+  # DocumentDB Security Group
+  #============================================================================
+  DocumentDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-documentdb-sg
+      GroupDescription: Security group for DocumentDB Cluster
+      VpcId: !If
+        - UseVpcIdParam
+        - !Ref VpcId
         - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet1
-      SecurityGroups:
-        - !If
-          - UseEfsSgParam
-          - !Ref EfsSecurityGroupId
-          - !ImportValue
-            Fn::Sub: ${EnvironmentName}-EfsSG
+          Fn::Sub: ${EnvironmentName}-VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-sg
+        - Key: Component
+          Value: documentdb
 
-  EfsMountTarget2:
-    Type: AWS::EFS::MountTarget
+  # Ingress from ECS Tasks (Registry and Auth services share EcsTasksSG)
+  DocumentDBIngressFromEcsTasks:
+    Type: AWS::EC2::SecurityGroupIngress
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !If
-        - UsePrivateSubnet2Param
-        - !Ref PrivateSubnet2
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet2
-      SecurityGroups:
-        - !If
-          - UseEfsSgParam
-          - !Ref EfsSecurityGroupId
-          - !ImportValue
-            Fn::Sub: ${EnvironmentName}-EfsSG
+      GroupId: !Ref DocumentDBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      SourceSecurityGroupId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTasksSG
+      Description: Allow MongoDB protocol from ECS tasks (Registry, Auth) to DocumentDB
 
-  EfsMountTarget3:
-    Type: AWS::EFS::MountTarget
+  # Egress rule
+  DocumentDBEgress:
+    Type: AWS::EC2::SecurityGroupEgress
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      SubnetId: !If
-        - UsePrivateSubnet3Param
-        - !Ref PrivateSubnet3
-        - !ImportValue
-          Fn::Sub: ${EnvironmentName}-PrivateSubnet3
-      SecurityGroups:
-        - !If
-          - UseEfsSgParam
-          - !Ref EfsSecurityGroupId
-          - !ImportValue
-            Fn::Sub: ${EnvironmentName}-EfsSG
+      GroupId: !Ref DocumentDBSecurityGroup
+      IpProtocol: '-1'
+      CidrIp: 0.0.0.0/0
+      Description: Allow all outbound traffic
+
+  # ECS Tasks -> DocumentDB egress rule
+  EcsTasksToDocumentDBEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      DestinationSecurityGroupId: !Ref DocumentDBSecurityGroup
+      Description: Allow ECS tasks to connect to DocumentDB
 
   #============================================================================
-  # EFS Access Points (6 total)
+  # DocumentDB Cluster
   #============================================================================
-  EfsAccessPointServers:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: '1000'
-        Gid: '1000'
-      RootDirectory:
-        Path: /servers
-        CreationInfo:
-          OwnerUid: '1000'
-          OwnerGid: '1000'
-          Permissions: '755'
-      AccessPointTags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-servers
 
-  EfsAccessPointModels:
-    Type: AWS::EFS::AccessPoint
+  # DocumentDB Subnet Group
+  DocumentDBSubnetGroup:
+    Type: AWS::DocDB::DBSubnetGroup
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: '1000'
-        Gid: '1000'
-      RootDirectory:
-        Path: /models
-        CreationInfo:
-          OwnerUid: '1000'
-          OwnerGid: '1000'
-          Permissions: '755'
-      AccessPointTags:
+      DBSubnetGroupName: !Sub ${EnvironmentName}-documentdb-subnet-group
+      DBSubnetGroupDescription: Subnet group for MCP Gateway Registry DocumentDB cluster
+      SubnetIds:
+        - !If
+          - UsePrivateSubnet1Param
+          - !Ref PrivateSubnet1
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !If
+          - UsePrivateSubnet2Param
+          - !Ref PrivateSubnet2
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !If
+          - UsePrivateSubnet3Param
+          - !Ref PrivateSubnet3
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-models
+          Value: !Sub ${EnvironmentName}-documentdb-subnet-group
+        - Key: Component
+          Value: documentdb
 
-  EfsAccessPointLogs:
-    Type: AWS::EFS::AccessPoint
+  # DocumentDB Cluster Parameter Group
+  DocumentDBClusterParameterGroup:
+    Type: AWS::DocDB::DBClusterParameterGroup
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: '1000'
-        Gid: '1000'
-      RootDirectory:
-        Path: /logs
-        CreationInfo:
-          OwnerUid: '1000'
-          OwnerGid: '1000'
-          Permissions: '755'
-      AccessPointTags:
+      Name: !Sub ${EnvironmentName}-documentdb-params
+      Family: docdb5.0
+      Description: DocumentDB cluster parameter group for MCP Gateway Registry
+      Parameters:
+        tls: enabled
+        audit_logs: disabled
+        ttl_monitor: enabled
+      Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-logs
+          Value: !Sub ${EnvironmentName}-documentdb-params
+        - Key: Component
+          Value: documentdb
 
-  EfsAccessPointAgents:
-    Type: AWS::EFS::AccessPoint
+  # DocumentDB Cluster
+  DocumentDBCluster:
+    Type: AWS::DocDB::DBCluster
+    DependsOn: DocumentDBCredentialsSecret
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: '1000'
-        Gid: '1000'
-      RootDirectory:
-        Path: /agents
-        CreationInfo:
-          OwnerUid: '1000'
-          OwnerGid: '1000'
-          Permissions: '755'
-      AccessPointTags:
+      DBClusterIdentifier: !Sub ${EnvironmentName}-registry
+      Engine: docdb
+      EngineVersion: '5.0.0'
+      MasterUsername: !Ref DocumentDBUsername
+      MasterUserPassword: !Ref DocumentDBPassword
+      DBSubnetGroupName: !Ref DocumentDBSubnetGroup
+      DBClusterParameterGroupName: !Ref DocumentDBClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !Ref DocumentDBSecurityGroup
+      Port: 27017
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: 02:00-04:00
+      PreferredMaintenanceWindow: sun:04:00-sun:05:00
+      StorageEncrypted: true
+      KmsKeyId: !GetAtt DocumentDBKmsKey.Arn
+      DeletionProtection: false
+      EnableCloudwatchLogsExports:
+        - audit
+        - profiler
+      Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-agents
+          Value: !Sub ${EnvironmentName}-registry-docdb
+        - Key: Component
+          Value: documentdb
+        - Key: Service
+          Value: mcp-gateway-registry
 
-  EfsAccessPointAuthConfig:
-    Type: AWS::EFS::AccessPoint
+  # DocumentDB Primary Instance
+  DocumentDBInstance:
+    Type: AWS::DocDB::DBInstance
     Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: '1000'
-        Gid: '1000'
-      RootDirectory:
-        Path: /auth_config
-        CreationInfo:
-          OwnerUid: '1000'
-          OwnerGid: '1000'
-          Permissions: '755'
-      AccessPointTags:
+      DBInstanceIdentifier: !Sub ${EnvironmentName}-registry-primary
+      DBClusterIdentifier: !Ref DocumentDBCluster
+      DBInstanceClass: !Ref DocumentDBInstanceClass
+      AutoMinorVersionUpgrade: true
+      Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-auth-config
-
-  EfsAccessPointMcpgwData:
-    Type: AWS::EFS::AccessPoint
-    Properties:
-      FileSystemId: !Ref EfsFileSystem
-      PosixUser:
-        Uid: '1000'
-        Gid: '1000'
-      RootDirectory:
-        Path: /mcpgw_data
-        CreationInfo:
-          OwnerUid: '1000'
-          OwnerGid: '1000'
-          Permissions: '755'
-      AccessPointTags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-mcpgw-data
-
+          Value: !Sub ${EnvironmentName}-registry-primary
+        - Key: Component
+          Value: documentdb
+        - Key: Role
+          Value: primary
 
   #============================================================================
   # Secrets Manager Secrets
   #============================================================================
-  
-  # Database credentials secret
+
+  # DocumentDB credentials secret
+  DocumentDBCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}/documentdb/credentials
+      Description: DocumentDB Cluster admin credentials
+      SecretString: !Sub |
+        {
+          "username": "${DocumentDBUsername}",
+          "password": "${DocumentDBPassword}",
+          "engine": "docdb"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-credentials
+        - Key: Component
+          Value: documentdb
+
+  # Keycloak Database credentials secret
   KeycloakDbSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
@@ -379,9 +437,9 @@ Resources:
           Value: !Sub ${EnvironmentName}-embeddings-api-key
 
   #============================================================================
-  # Aurora Serverless v2 Database
+  # Aurora Serverless v2 Database (for Keycloak)
   #============================================================================
-  
+
   # DB Subnet Group
   DbSubnetGroup:
     Type: AWS::RDS::DBSubnetGroup
@@ -468,9 +526,9 @@ Resources:
 
 
   #============================================================================
-  # RDS Proxy
+  # RDS Proxy (for Keycloak)
   #============================================================================
-  
+
   # IAM Role for RDS Proxy
   RdsProxyRole:
     Type: AWS::IAM::Role
@@ -545,11 +603,10 @@ Resources:
         - !Ref AuroraCluster
 
   #============================================================================
-  # SSM SecureString Parameters via Custom Resource
-  # CloudFormation doesn't support SecureString with dynamic values directly,
-  # so we use a Lambda custom resource to create SecureString parameters
-  # (matching Terraform's aws_ssm_parameter with type = "SecureString")
+  # SSM Parameters
   #============================================================================
+
+  # SSM SecureString Lambda (for creating SecureString parameters)
   SsmSecureStringLambdaRole:
     Type: AWS::IAM::Role
     Properties:
@@ -581,7 +638,9 @@ Resources:
                   - ssm:AddTagsToResource
                   - ssm:RemoveTagsFromResource
                   - ssm:ListTagsForResource
-                Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EnvironmentName}/*
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-ssm-securestring-role
@@ -602,10 +661,10 @@ Resources:
           def handler(event, context):
               print(f"Event: {event}")
               ssm = boto3.client('ssm')
-              
+
               try:
                   name = event['ResourceProperties']['Name']
-                  
+
                   if event['RequestType'] == 'Delete':
                       try:
                           ssm.delete_parameter(Name=name)
@@ -614,12 +673,12 @@ Resources:
                           print(f"Parameter not found (already deleted): {name}")
                       cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                       return
-                  
+
                   # Create or Update
                   value = event['ResourceProperties']['Value']
                   description = event['ResourceProperties'].get('Description', '')
                   tags = event['ResourceProperties'].get('Tags', [])
-                  
+
                   ssm.put_parameter(
                       Name=name,
                       Value=value,
@@ -628,7 +687,7 @@ Resources:
                       Overwrite=True
                   )
                   print(f"Created/Updated SecureString parameter: {name}")
-                  
+
                   # Add tags if provided
                   if tags:
                       ssm.add_tags_to_resource(
@@ -636,14 +695,14 @@ Resources:
                           ResourceId=name,
                           Tags=tags
                       )
-                  
+
                   # Return the ARN
                   region = context.invoked_function_arn.split(':')[3]
                   account = context.invoked_function_arn.split(':')[4]
                   arn = f"arn:aws:ssm:{region}:{account}:parameter{name}"
-                  
+
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Arn': arn})
-                  
+
               except Exception as e:
                   print(f"Error: {str(e)}")
                   cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
@@ -651,7 +710,7 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-ssm-securestring
 
-  # SSM SecureString Parameters (matching Terraform exactly)
+  # Keycloak SSM Parameters
   SsmKeycloakDatabaseUrl:
     Type: Custom::SsmSecureString
     DependsOn: SsmSecureStringLambda
@@ -712,15 +771,65 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak-admin-password
 
+  # DocumentDB SSM Parameters
+  SsmDocumentDBEndpoint:
+    Type: Custom::SsmSecureString
+    DependsOn:
+      - SsmSecureStringLambda
+      - DocumentDBCluster
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: !Sub /${EnvironmentName}/documentdb/endpoint
+      Value: !GetAtt DocumentDBCluster.Endpoint
+      Description: DocumentDB Cluster endpoint
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-endpoint
+        - Key: Component
+          Value: documentdb
+
+  SsmDocumentDBReaderEndpoint:
+    Type: Custom::SsmSecureString
+    DependsOn:
+      - SsmSecureStringLambda
+      - DocumentDBCluster
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: !Sub /${EnvironmentName}/documentdb/reader_endpoint
+      Value: !GetAtt DocumentDBCluster.ReadEndpoint
+      Description: DocumentDB Cluster reader endpoint
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-reader-endpoint
+        - Key: Component
+          Value: documentdb
+
+  SsmDocumentDBConnectionString:
+    Type: Custom::SsmSecureString
+    DependsOn:
+      - SsmSecureStringLambda
+      - DocumentDBCluster
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: !Sub /${EnvironmentName}/documentdb/connection_string
+      Value: !Sub >-
+        mongodb://${DocumentDBUsername}:${DocumentDBPassword}@${DocumentDBCluster.Endpoint}:27017/?authMechanism=SCRAM-SHA-1&authSource=admin&tls=true&tlsCAFile=global-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false
+      Description: DocumentDB Cluster connection string
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-connection-string
+        - Key: Component
+          Value: documentdb
+
   #============================================================================
-  # EFS Initialization Lambda (scopes.yml)
-  # Writes the scopes.yml configuration file to EFS auth_config directory
-  # This is the CloudFormation equivalent of Terraform's run-scopes-init-task.sh
+  # DocumentDB Initialization Lambda
+  # Creates indexes and loads registry-admins scope into DocumentDB
+  # This is the CloudFormation equivalent of Terraform's run-documentdb-init.sh
   #============================================================================
-  EfsInitLambdaRole:
+  DocumentDBInitLambdaRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${EnvironmentName}-efs-init-role
+      RoleName: !Sub ${EnvironmentName}-documentdb-init-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -731,661 +840,273 @@ Resources:
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
       Policies:
-        - PolicyName: EfsInitPolicy
+        - PolicyName: DocumentDBInitPolicy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
                 Action:
-                  - elasticfilesystem:ClientMount
-                  - elasticfilesystem:ClientWrite
-                  - elasticfilesystem:DescribeMountTargets
-                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:file-system/${EfsFileSystem}
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DocumentDBCredentialsSecret
               - Effect: Allow
                 Action:
-                  - elasticfilesystem:ClientMount
-                  - elasticfilesystem:ClientWrite
-                Resource: !Sub arn:aws:elasticfilesystem:${AWS::Region}:${AWS::AccountId}:access-point/${EfsAccessPointAuthConfig}
+                  - ecs:RunTask
+                  - ecs:DescribeTasks
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-ecs-task-execution-role
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-ecs-task-role
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-efs-init-role
+          Value: !Sub ${EnvironmentName}-documentdb-init-role
 
-  EfsInitLambda:
+  # Lambda Layer for pymongo (DocumentDB driver)
+  # Note: In production, you would create this layer with pymongo installed
+  # For now, we use the boto3 layer and make HTTP calls to a sidecar or use ECS task
+
+  DocumentDBInitLambda:
     Type: AWS::Lambda::Function
     DependsOn:
-      - EfsMountTarget1
-      - EfsMountTarget2
-      - EfsMountTarget3
+      - DocumentDBInstance
     Properties:
-      FunctionName: !Sub ${EnvironmentName}-efs-init
+      FunctionName: !Sub ${EnvironmentName}-documentdb-init
+      Description: Initialize DocumentDB collections, indexes, and registry-admins scope
       Runtime: python3.12
       Handler: index.handler
-      Role: !GetAtt EfsInitLambdaRole.Arn
-      Timeout: 120
+      Role: !GetAtt DocumentDBInitLambdaRole.Arn
+      Timeout: 300
       MemorySize: 256
       VpcConfig:
         SecurityGroupIds:
-          - !If
-            - UseEfsSgParam
-            - !Ref EfsSecurityGroupId
-            - !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsSG
+          - !Ref DocumentDBSecurityGroup
         SubnetIds:
           - !If
             - UsePrivateSubnet1Param
             - !Ref PrivateSubnet1
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnet1
-      FileSystemConfigs:
-        - Arn: !GetAtt EfsAccessPointAuthConfig.Arn
-          LocalMountPath: /mnt/efs
+      Environment:
+        Variables:
+          DOCUMENTDB_HOST: !GetAtt DocumentDBCluster.Endpoint
+          DOCUMENTDB_PORT: '27017'
+          DOCUMENTDB_DATABASE: mcp_registry
+          DOCUMENTDB_NAMESPACE: default
+          DOCUMENTDB_SECRET_ARN: !Ref DocumentDBCredentialsSecret
       Code:
         ZipFile: |
-          import os
-          import cfnresponse
+          """
+          DocumentDB Initialization Lambda for MCP Gateway Registry.
 
-          SCOPES_CONTENT = '''# Scopes Configuration for MCP Gateway Registry
-          UI-Scopes:
-            mcp-registry-admin:
-              list_agents: [all]
-              get_agent: [all]
-              publish_agent: [all]
-              modify_agent: [all]
-              delete_agent: [all]
-              list_service: [all]
-              register_service: [all]
-              health_check_service: [all]
-              toggle_service: [all]
-              modify_service: [all]
-            registry-admins:
-              list_agents: [all]
-              get_agent: [all]
-              publish_agent: [all]
-              modify_agent: [all]
-              delete_agent: [all]
-              list_service: [all]
-              register_service: [all]
-              health_check_service: [all]
-              toggle_service: [all]
-              modify_service: [all]
-            registry-users-lob1:
-              list_agents: [/code-reviewer, /test-automation]
-              get_agent: [/code-reviewer, /test-automation]
-              publish_agent: [/code-reviewer, /test-automation]
-              modify_agent: [/code-reviewer, /test-automation]
-              delete_agent: [/code-reviewer, /test-automation]
-              list_service: [currenttime, mcpgw]
-              health_check_service: [currenttime, mcpgw]
-            registry-users-lob2:
-              list_agents: [/data-analysis, /security-analyzer]
-              get_agent: [/data-analysis, /security-analyzer]
-              publish_agent: [/data-analysis, /security-analyzer]
-              modify_agent: [/data-analysis, /security-analyzer]
-              delete_agent: [/data-analysis, /security-analyzer]
-              list_service: [realserverfaketools, mcpgw, fininfo]
-              health_check_service: [realserverfaketools, mcpgw, fininfo]
+          This Lambda initializes DocumentDB by triggering an ECS task that runs
+          the init-documentdb-indexes.py script. Lambda cannot directly connect to
+          DocumentDB with pymongo due to layer size limits, so we delegate to ECS.
 
-          group_mappings:
-            mcp-registry-admin:
-              - mcp-registry-admin
-              - mcp-servers-unrestricted/read
-              - mcp-servers-unrestricted/execute
-            registry-admins:
-              - registry-admins
-            registry-users-lob1:
-              - registry-users-lob1
-            registry-users-lob2:
-              - registry-users-lob2
-            mcp-servers-unrestricted:
-              - mcp-servers-unrestricted/read
-              - mcp-servers-unrestricted/execute
-
-          mcp-servers-unrestricted/read:
-            - server: '*'
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list, GET]
-              tools: '*'
-
-          mcp-servers-unrestricted/execute:
-            - server: '*'
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list, GET, POST, PUT, DELETE]
-              tools: '*'
-
-          registry-users-lob1:
-            - server: api
-              methods: [initialize, GET]
-            - server: currenttime
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list]
-              tools: [current_time_by_timezone]
-            - server: mcpgw
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list]
-              tools: [intelligent_tool_finder]
-            - agents:
-                actions:
-                  - action: list_agents
-                    resources: [/code-reviewer, /test-automation]
-                  - action: get_agent
-                    resources: [/code-reviewer, /test-automation]
-                  - action: publish_agent
-                    resources: [/code-reviewer, /test-automation]
-                  - action: modify_agent
-                    resources: [/code-reviewer, /test-automation]
-                  - action: delete_agent
-                    resources: [/code-reviewer, /test-automation]
-
-          registry-users-lob2:
-            - server: api
-              methods: [initialize, GET]
-            - server: realserverfaketools
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list]
-              tools: [quantum_flux_analyzer, neural_pattern_synthesizer, hyper_dimensional_mapper]
-            - server: mcpgw
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list]
-              tools: [intelligent_tool_finder]
-            - server: fininfo
-              methods: [initialize, notifications/initialized, ping, tools/list, tools/call, resources/list, resources/templates/list]
-              tools: [get_stock_aggregates, print_stock_data]
-            - agents:
-                actions:
-                  - action: list_agents
-                    resources: [/data-analysis, /security-analyzer]
-                  - action: get_agent
-                    resources: [/data-analysis, /security-analyzer]
-                  - action: publish_agent
-                    resources: [/data-analysis, /security-analyzer]
-                  - action: modify_agent
-                    resources: [/data-analysis, /security-analyzer]
-                  - action: delete_agent
-                    resources: [/data-analysis, /security-analyzer]
-
-          registry-admins:
-            - server: '*'
-              methods: [all]
-              tools: [all]
-            - agents:
-                actions:
-                  - action: list_agents
-                    resources: [all]
-                  - action: get_agent
-                    resources: [all]
-                  - action: publish_agent
-                    resources: [all]
-                  - action: modify_agent
-                    resources: [all]
-                  - action: delete_agent
-                    resources: [all]
-          '''
-
-          def handler(event, context):
-              print(f"Event: {event}")
-              
-              try:
-                  if event['RequestType'] == 'Delete':
-                      # On delete, optionally remove the file (or leave it)
-                      scopes_path = '/mnt/efs/scopes.yml'
-                      if os.path.exists(scopes_path):
-                          os.remove(scopes_path)
-                          print(f"Deleted {scopes_path}")
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-                      return
-                  
-                  # Create or Update - write scopes.yml to EFS
-                  scopes_path = '/mnt/efs/scopes.yml'
-                  
-                  # Ensure directory exists
-                  os.makedirs('/mnt/efs', exist_ok=True)
-                  
-                  # Write the scopes.yml file
-                  with open(scopes_path, 'w') as f:
-                      f.write(SCOPES_CONTENT.strip())
-                  
-                  # Verify file was written
-                  if os.path.exists(scopes_path):
-                      file_size = os.path.getsize(scopes_path)
-                      print(f"Successfully wrote {scopes_path} ({file_size} bytes)")
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
-                          'FilePath': scopes_path,
-                          'FileSize': str(file_size)
-                      })
-                  else:
-                      raise Exception(f"Failed to write {scopes_path}")
-                      
-              except Exception as e:
-                  print(f"Error: {str(e)}")
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-efs-init
-
-  # Custom Resource to trigger EFS initialization
-  EfsInitTrigger:
-    Type: Custom::EfsInit
-    DependsOn:
-      - EfsInitLambda
-      - EfsMountTarget1
-      - EfsMountTarget2
-      - EfsMountTarget3
-    Properties:
-      ServiceToken: !GetAtt EfsInitLambda.Arn
-      # Add a version to force update when scopes.yml changes
-      Version: '1.0.0'
-
-  #============================================================================
-  # MCP Server Registration Lambda
-  # Writes MCP server definition JSON files to EFS servers directory
-  # This registers the default MCP servers (currenttime, mcpgw, realserverfaketools)
-  #============================================================================
-  McpServerInitLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${EnvironmentName}-mcp-server-init-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: EfsAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - elasticfilesystem:ClientMount
-                  - elasticfilesystem:ClientWrite
-                  - elasticfilesystem:ClientRootAccess
-                Resource: !GetAtt EfsFileSystem.Arn
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-mcp-server-init-role
-
-  McpServerInitLambda:
-    Type: AWS::Lambda::Function
-    DependsOn:
-      - EfsMountTarget1
-      - EfsMountTarget2
-      - EfsMountTarget3
-    Properties:
-      FunctionName: !Sub ${EnvironmentName}-mcp-server-init
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt McpServerInitLambdaRole.Arn
-      Timeout: 120
-      MemorySize: 256
-      VpcConfig:
-        SecurityGroupIds:
-          - !If
-            - UseEfsSgParam
-            - !Ref EfsSecurityGroupId
-            - !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsSG
-        SubnetIds:
-          - !Ref PrivateSubnet1
-          - !Ref PrivateSubnet2
-          - !Ref PrivateSubnet3
-      FileSystemConfigs:
-        - Arn: !GetAtt EfsAccessPointServers.Arn
-          LocalMountPath: /mnt/efs
-      Code:
-        ZipFile: |
+          The ECS task will:
+          1. Create all required collections with indexes
+          2. Load the registry-admins scope into mcp_scopes_default collection
+          """
           import json
-          import os
+          import boto3
           import cfnresponse
-          
-          # MCP Server definitions for the workshop
-          MCP_SERVERS = [
-              {
-                  "server_name": "currenttime-server",
-                  "path": "/mcp/currenttime",
-                  "description": "MCP server that provides current time information",
-                  "tags": ["time", "utility", "demo"],
-                  "proxy_pass_url": "http://currenttime-server.mcp-gateway.local:8000",
-                  "is_python": True,
-                  "num_tools": 1,
-                  "tool_list": [
-                      {
-                          "name": "get_current_time",
-                          "description": "Get the current time in various formats"
-                      }
-                  ]
-              },
-              {
-                  "server_name": "mcpgw-server",
-                  "path": "/mcp/mcpgw",
-                  "description": "MCP Gateway server for federated tool access",
-                  "tags": ["gateway", "federation", "tools"],
-                  "proxy_pass_url": "http://mcpgw-server.mcp-gateway.local:8003",
-                  "is_python": True,
-                  "num_tools": 5,
-                  "tool_list": []
-              },
-              {
-                  "server_name": "realserverfaketools-server",
-                  "path": "/mcp/realserverfaketools",
-                  "description": "Demo MCP server with simulated tools for testing",
-                  "tags": ["demo", "testing", "simulation"],
-                  "proxy_pass_url": "http://realserverfaketools-server.mcp-gateway.local:8002",
-                  "is_python": True,
-                  "num_tools": 3,
-                  "tool_list": [
-                      {
-                          "name": "fake_weather",
-                          "description": "Get simulated weather data"
-                      },
-                      {
-                          "name": "fake_stock",
-                          "description": "Get simulated stock prices"
-                      },
-                      {
-                          "name": "fake_news",
-                          "description": "Get simulated news headlines"
-                      }
-                  ]
-              }
-          ]
-          
+          import os
+          import time
+
           def handler(event, context):
               print(f"Event: {json.dumps(event)}")
-              
-              try:
-                  if event['RequestType'] == 'Delete':
-                      # On delete, optionally remove the files
-                      for server in MCP_SERVERS:
-                          server_file = f"/mnt/efs/{server['server_name']}.json"
-                          if os.path.exists(server_file):
-                              os.remove(server_file)
-                              print(f"Removed {server_file}")
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-                      return
-                  
-                  # Create or Update - write server definition files to EFS
-                  os.makedirs('/mnt/efs', exist_ok=True)
-                  
-                  created_servers = []
-                  for server in MCP_SERVERS:
-                      server_file = f"/mnt/efs/{server['server_name']}.json"
-                      with open(server_file, 'w') as f:
-                          json.dump(server, f, indent=2)
-                      print(f"Created {server_file}")
-                      created_servers.append(server['server_name'])
-                  
+
+              request_type = event.get('RequestType')
+              properties = event.get('ResourceProperties', {})
+
+              # For Delete, just return success
+              if request_type == 'Delete':
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
-                      'ServersCreated': ','.join(created_servers)
+                      'Message': 'Delete request - no action needed'
                   })
-                  
+                  return
+
+              try:
+                  ecs = boto3.client('ecs')
+
+                  # Get ECS configuration from properties
+                  cluster_name = properties.get('EcsClusterName')
+                  task_family = properties.get('TaskFamily', 'mcp-gateway-registry')
+                  container_name = properties.get('ContainerName', 'registry')
+                  subnets = properties.get('Subnets', '').split(',')
+                  security_groups = properties.get('SecurityGroups', '').split(',')
+
+                  # Get DocumentDB connection info
+                  docdb_host = os.environ.get('DOCUMENTDB_HOST')
+                  docdb_port = os.environ.get('DOCUMENTDB_PORT', '27017')
+                  docdb_database = os.environ.get('DOCUMENTDB_DATABASE', 'mcp_registry')
+                  docdb_namespace = os.environ.get('DOCUMENTDB_NAMESPACE', 'default')
+                  secret_arn = os.environ.get('DOCUMENTDB_SECRET_ARN')
+
+                  # Get credentials from Secrets Manager
+                  secrets = boto3.client('secretsmanager')
+                  secret_response = secrets.get_secret_value(SecretId=secret_arn)
+                  credentials = json.loads(secret_response['SecretString'])
+                  docdb_username = credentials.get('username')
+                  docdb_password = credentials.get('password')
+
+                  print(f"Starting DocumentDB init ECS task...")
+                  print(f"  Cluster: {cluster_name}")
+                  print(f"  Task Family: {task_family}")
+                  print(f"  DocumentDB Host: {docdb_host}")
+
+                  # Build the init command
+                  init_command = (
+                      "source /app/.venv/bin/activate && "
+                      "cd /app/scripts && "
+                      "python init-documentdb-indexes.py"
+                  )
+
+                  # Run the ECS task
+                  response = ecs.run_task(
+                      cluster=cluster_name,
+                      taskDefinition=task_family,
+                      launchType='FARGATE',
+                      networkConfiguration={
+                          'awsvpcConfiguration': {
+                              'subnets': subnets,
+                              'securityGroups': security_groups,
+                              'assignPublicIp': 'DISABLED'
+                          }
+                      },
+                      overrides={
+                          'containerOverrides': [{
+                              'name': container_name,
+                              'command': ['/bin/bash', '-c', init_command],
+                              'environment': [
+                                  {'name': 'RUN_INIT_SCRIPTS', 'value': 'true'},
+                                  {'name': 'DOCUMENTDB_HOST', 'value': docdb_host},
+                                  {'name': 'DOCUMENTDB_PORT', 'value': docdb_port},
+                                  {'name': 'DOCUMENTDB_USERNAME', 'value': docdb_username},
+                                  {'name': 'DOCUMENTDB_PASSWORD', 'value': docdb_password},
+                                  {'name': 'DOCUMENTDB_DATABASE', 'value': docdb_database},
+                                  {'name': 'DOCUMENTDB_NAMESPACE', 'value': docdb_namespace},
+                                  {'name': 'DOCUMENTDB_USE_TLS', 'value': 'true'},
+                                  {'name': 'DOCUMENTDB_USE_IAM', 'value': 'false'},
+                                  {'name': 'DOCUMENTDB_TLS_CA_FILE', 'value': '/app/global-bundle.pem'}
+                              ]
+                          }]
+                      }
+                  )
+
+                  if not response.get('tasks'):
+                      failures = response.get('failures', [])
+                      raise Exception(f"Failed to start ECS task: {failures}")
+
+                  task_arn = response['tasks'][0]['taskArn']
+                  task_id = task_arn.split('/')[-1]
+                  print(f"Started ECS task: {task_id}")
+
+                  # Wait for task to complete (with timeout)
+                  max_wait_seconds = 180
+                  wait_interval = 10
+                  elapsed = 0
+
+                  while elapsed < max_wait_seconds:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+
+                      describe_response = ecs.describe_tasks(
+                          cluster=cluster_name,
+                          tasks=[task_arn]
+                      )
+
+                      if describe_response['tasks']:
+                          task = describe_response['tasks'][0]
+                          status = task.get('lastStatus', 'UNKNOWN')
+                          print(f"Task status: {status} (elapsed: {elapsed}s)")
+
+                          if status == 'STOPPED':
+                              # Check exit code
+                              containers = task.get('containers', [])
+                              if containers:
+                                  exit_code = containers[0].get('exitCode')
+                                  if exit_code == 0:
+                                      print("DocumentDB initialization completed successfully!")
+                                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                                          'TaskId': task_id,
+                                          'Status': 'SUCCESS',
+                                          'Message': 'DocumentDB indexes and registry-admins scope created'
+                                      })
+                                      return
+                                  else:
+                                      raise Exception(f"ECS task failed with exit code: {exit_code}")
+                              break
+
+                  # If we get here, task didn't complete in time
+                  print(f"Warning: Task still running after {max_wait_seconds}s, returning success anyway")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'TaskId': task_id,
+                      'Status': 'PENDING',
+                      'Message': 'DocumentDB init task started but not yet completed'
+                  })
+
               except Exception as e:
                   print(f"Error: {str(e)}")
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {
-                      'Error': str(e)
-                  })
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-mcp-server-init
-
-  McpServerInitTrigger:
-    Type: Custom::McpServerInit
-    DependsOn:
-      - McpServerInitLambda
-      - EfsMountTarget1
-      - EfsMountTarget2
-      - EfsMountTarget3
-    Properties:
-      ServiceToken: !GetAtt McpServerInitLambda.Arn
-      # Add a version to force update when server definitions change
-      Version: '1.1.0'  # Updated to use FQDNs for DNS-based service discovery
-
-  #============================================================================
-  # A2A Agent Registration Lambda
-  # Writes A2A agent definition JSON files to EFS agents directory
-  # This registers the default agents (flight-booking, travel-assistant)
-  #============================================================================
-  AgentInitLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${EnvironmentName}-agent-init-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      ManagedPolicyArns:
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
-        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
-      Policies:
-        - PolicyName: EfsAccess
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - elasticfilesystem:ClientMount
-                  - elasticfilesystem:ClientWrite
-                  - elasticfilesystem:ClientRootAccess
-                Resource: !GetAtt EfsFileSystem.Arn
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-agent-init-role
-
-  AgentInitLambda:
-    Type: AWS::Lambda::Function
-    DependsOn:
-      - EfsMountTarget1
-      - EfsMountTarget2
-      - EfsMountTarget3
-    Properties:
-      FunctionName: !Sub ${EnvironmentName}-agent-init
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt AgentInitLambdaRole.Arn
-      Timeout: 120
-      MemorySize: 256
-      VpcConfig:
-        SecurityGroupIds:
-          - !If
-            - UseEfsSgParam
-            - !Ref EfsSecurityGroupId
-            - !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsSG
-        SubnetIds:
-          - !Ref PrivateSubnet1
-          - !Ref PrivateSubnet2
-          - !Ref PrivateSubnet3
-      FileSystemConfigs:
-        - Arn: !GetAtt EfsAccessPointAgents.Arn
-          LocalMountPath: /mnt/efs
-      Code:
-        ZipFile: |
-          import json
-          import os
-          import cfnresponse
-          
-          # A2A Agent definitions for the workshop
-          A2A_AGENTS = [
-              {
-                  "name": "Flight Booking Agent",
-                  "path": "/a2a/flight-booking",
-                  "description": "AI agent that helps users search and book flights. Supports searching for flights, managing bookings, and handling cancellations.",
-                  "version": "1.0.0",
-                  "url": "http://flight-booking-agent.mcp-gateway.local:9000",
-                  "provider": {
-                      "organization": "MCP Gateway Workshop",
-                      "url": "https://github.com/aws-samples/mcp-gateway"
-                  },
-                  "capabilities": {
-                      "streaming": True,
-                      "pushNotifications": False,
-                      "stateTransitionHistory": True
-                  },
-                  "defaultInputModes": ["text"],
-                  "defaultOutputModes": ["text"],
-                  "skills": [
-                      {
-                          "id": "search_flights",
-                          "name": "Search Flights",
-                          "description": "Search for available flights between cities",
-                          "tags": ["search", "flights"]
-                      },
-                      {
-                          "id": "book_flight",
-                          "name": "Book Flight",
-                          "description": "Book a selected flight",
-                          "tags": ["booking", "reservation"]
-                      },
-                      {
-                          "id": "manage_booking",
-                          "name": "Manage Booking",
-                          "description": "View or cancel existing bookings",
-                          "tags": ["booking", "management"]
-                      }
-                  ],
-                  "tags": ["travel", "booking", "flights", "a2a"]
-              },
-              {
-                  "name": "Travel Assistant Agent",
-                  "path": "/a2a/travel-assistant",
-                  "description": "AI travel assistant that coordinates with other agents to help plan trips. Can search flights via the Flight Booking Agent and provide travel recommendations.",
-                  "version": "1.0.0",
-                  "url": "http://travel-assistant-agent.mcp-gateway.local:9000",
-                  "provider": {
-                      "organization": "MCP Gateway Workshop",
-                      "url": "https://github.com/aws-samples/mcp-gateway"
-                  },
-                  "capabilities": {
-                      "streaming": True,
-                      "pushNotifications": False,
-                      "stateTransitionHistory": True
-                  },
-                  "defaultInputModes": ["text"],
-                  "defaultOutputModes": ["text"],
-                  "skills": [
-                      {
-                          "id": "plan_trip",
-                          "name": "Plan Trip",
-                          "description": "Help plan a complete trip including flights",
-                          "tags": ["planning", "trip"]
-                      },
-                      {
-                          "id": "travel_recommendations",
-                          "name": "Travel Recommendations",
-                          "description": "Provide destination and travel recommendations",
-                          "tags": ["recommendations", "destinations"]
-                      }
-                  ],
-                  "tags": ["travel", "assistant", "planning", "a2a"]
-              }
-          ]
-          
-          def path_to_filename(path):
-              """Convert agent path to safe filename."""
-              normalized = path.lstrip("/").replace("/", "_")
-              if not normalized.endswith("_agent.json"):
-                  normalized += "_agent.json"
-              return normalized
-          
-          def handler(event, context):
-              print(f"Event: {json.dumps(event)}")
-              
-              try:
-                  if event['RequestType'] == 'Delete':
-                      # On delete, optionally remove the files
-                      for agent in A2A_AGENTS:
-                          agent_file = f"/mnt/efs/{path_to_filename(agent['path'])}"
-                          if os.path.exists(agent_file):
-                              os.remove(agent_file)
-                              print(f"Removed {agent_file}")
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
-                      return
-                  
-                  # Create or Update - write agent definition files to EFS
-                  os.makedirs('/mnt/efs', exist_ok=True)
-                  
-                  created_agents = []
-                  for agent in A2A_AGENTS:
-                      agent_file = f"/mnt/efs/{path_to_filename(agent['path'])}"
-                      with open(agent_file, 'w') as f:
-                          json.dump(agent, f, indent=2)
-                      print(f"Created {agent_file}")
-                      created_agents.append(agent['name'])
-                  
+                  # Don't fail the stack on init errors - the init can be run manually
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
-                      'AgentsCreated': ','.join(created_agents)
-                  })
-                  
-              except Exception as e:
-                  print(f"Error: {str(e)}")
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {
-                      'Error': str(e)
+                      'Status': 'WARNING',
+                      'Error': str(e),
+                      'Message': 'DocumentDB init failed but stack creation continues. Run init manually.'
                   })
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-agent-init
+          Value: !Sub ${EnvironmentName}-documentdb-init
+        - Key: Component
+          Value: documentdb
 
-  AgentInitTrigger:
-    Type: Custom::AgentInit
-    DependsOn:
-      - AgentInitLambda
-      - EfsMountTarget1
-      - EfsMountTarget2
-      - EfsMountTarget3
-    Properties:
-      ServiceToken: !GetAtt AgentInitLambda.Arn
-      # Add a version to force update when agent definitions change
-      Version: '1.0.0'
+  # Note: The DocumentDBInitTrigger custom resource is defined in services-stack.yaml
+  # after the Registry ECS service is created, since it needs to run an ECS task
+  # using the registry task definition.
 
 #============================================================================
 # Outputs
 #============================================================================
 Outputs:
-  # EFS Outputs
-  EfsFileSystemId:
-    Description: EFS File System ID
-    Value: !Ref EfsFileSystem
+  # DocumentDB Outputs
+  DocumentDBClusterEndpoint:
+    Description: DocumentDB cluster endpoint
+    Value: !GetAtt DocumentDBCluster.Endpoint
     Export:
-      Name: !Sub ${EnvironmentName}-EfsFileSystemId
+      Name: !Sub ${EnvironmentName}-DocumentDBClusterEndpoint
 
-  EfsAccessPointServersId:
-    Description: EFS Access Point ID for servers
-    Value: !Ref EfsAccessPointServers
+  DocumentDBClusterPort:
+    Description: DocumentDB cluster port
+    Value: !GetAtt DocumentDBCluster.Port
     Export:
-      Name: !Sub ${EnvironmentName}-EfsAccessPointServers
+      Name: !Sub ${EnvironmentName}-DocumentDBClusterPort
 
-  EfsAccessPointModelsId:
-    Description: EFS Access Point ID for models
-    Value: !Ref EfsAccessPointModels
+  DocumentDBClusterReadEndpoint:
+    Description: DocumentDB cluster reader endpoint
+    Value: !GetAtt DocumentDBCluster.ReadEndpoint
     Export:
-      Name: !Sub ${EnvironmentName}-EfsAccessPointModels
+      Name: !Sub ${EnvironmentName}-DocumentDBClusterReadEndpoint
 
-  EfsAccessPointLogsId:
-    Description: EFS Access Point ID for logs
-    Value: !Ref EfsAccessPointLogs
+  DocumentDBSecurityGroupId:
+    Description: DocumentDB security group ID
+    Value: !Ref DocumentDBSecurityGroup
     Export:
-      Name: !Sub ${EnvironmentName}-EfsAccessPointLogs
+      Name: !Sub ${EnvironmentName}-DocumentDBSecurityGroupId
 
-  EfsAccessPointAgentsId:
-    Description: EFS Access Point ID for agents
-    Value: !Ref EfsAccessPointAgents
+  DocumentDBCredentialsSecretArn:
+    Description: DocumentDB credentials secret ARN
+    Value: !Ref DocumentDBCredentialsSecret
     Export:
-      Name: !Sub ${EnvironmentName}-EfsAccessPointAgents
+      Name: !Sub ${EnvironmentName}-DocumentDBCredentialsSecretArn
 
-  EfsAccessPointAuthConfigId:
-    Description: EFS Access Point ID for auth config
-    Value: !Ref EfsAccessPointAuthConfig
+  DocumentDBInitLambdaArn:
+    Description: DocumentDB initialization Lambda ARN
+    Value: !GetAtt DocumentDBInitLambda.Arn
     Export:
-      Name: !Sub ${EnvironmentName}-EfsAccessPointAuthConfig
+      Name: !Sub ${EnvironmentName}-DocumentDBInitLambdaArn
 
-  EfsAccessPointMcpgwDataId:
-    Description: EFS Access Point ID for mcpgw data
-    Value: !Ref EfsAccessPointMcpgwData
-    Export:
-      Name: !Sub ${EnvironmentName}-EfsAccessPointMcpgwData
-
-  # Database Outputs
+  # Aurora (Keycloak) Database Outputs
   AuroraClusterEndpoint:
     Description: Aurora cluster endpoint
     Value: !GetAtt AuroraCluster.Endpoint.Address
@@ -1479,23 +1200,8 @@ Outputs:
     Export:
       Name: !Sub ${EnvironmentName}-RdsKmsKeyArn
 
-  # EFS Init Status
-  EfsInitStatus:
-    Description: EFS initialization status (scopes.yml written to auth_config)
-    Value: 'Initialized'
+  DocumentDBKmsKeyArn:
+    Description: DocumentDB KMS key ARN
+    Value: !GetAtt DocumentDBKmsKey.Arn
     Export:
-      Name: !Sub ${EnvironmentName}-EfsInitStatus
-
-  # MCP Server Init Status
-  McpServerInitStatus:
-    Description: MCP Server initialization status (server definitions written to EFS)
-    Value: 'Initialized'
-    Export:
-      Name: !Sub ${EnvironmentName}-McpServerInitStatus
-
-  # A2A Agent Init Status
-  AgentInitStatus:
-    Description: A2A Agent initialization status (agent definitions written to EFS)
-    Value: 'Initialized'
-    Export:
-      Name: !Sub ${EnvironmentName}-AgentInitStatus
+      Name: !Sub ${EnvironmentName}-DocumentDBKmsKeyArn

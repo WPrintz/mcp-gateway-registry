@@ -58,17 +58,42 @@ Parameters:
 
   KeycloakDatabasePassword:
     Type: String
-    Default: McpGateway2025!
+    Default: McpGateway2026!
     Description: Keycloak database password (min 8 characters)
     NoEcho: true
     MinLength: 8
 
   KeycloakAdminPassword:
     Type: String
-    Default: AdminPassword2025!
+    Default: AdminPassword2026!
     Description: Keycloak admin password (min 12 characters)
     NoEcho: true
     MinLength: 12
+
+  # DocumentDB Credentials
+  DocumentDBUsername:
+    Type: String
+    Default: docdbadmin
+    Description: DocumentDB admin username
+    NoEcho: true
+
+  DocumentDBPassword:
+    Type: String
+    Default: DocDBPass2026!
+    Description: DocumentDB admin password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  # DocumentDB Instance Configuration
+  DocumentDBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: DocumentDB instance class (db.t3.medium = 2 vCPU, 4 GB RAM)
+    AllowedValues:
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
 
   # Aurora Serverless Scaling
   DatabaseMinACU:
@@ -354,7 +379,7 @@ Resources:
 
   #============================================================================
   # Data Stack
-  # Approx. 1200 sec to deploy
+  # Approx. 1200 sec to deploy (includes DocumentDB cluster creation)
   #============================================================================
   DataStack:
     Type: AWS::CloudFormation::Stack
@@ -369,10 +394,12 @@ Resources:
         PrivateSubnet2: !GetAtt NetworkStack.Outputs.PrivateSubnet2
         PrivateSubnet3: !GetAtt NetworkStack.Outputs.PrivateSubnet3
         DatabaseSecurityGroupId: !GetAtt NetworkStack.Outputs.DatabaseSecurityGroupId
-        EfsSecurityGroupId: !GetAtt NetworkStack.Outputs.EfsSecurityGroupId
         KeycloakDatabaseUsername: !Ref KeycloakDatabaseUsername
         KeycloakDatabasePassword: !Ref KeycloakDatabasePassword
         KeycloakAdminPassword: !Ref KeycloakAdminPassword
+        DocumentDBUsername: !Ref DocumentDBUsername
+        DocumentDBPassword: !Ref DocumentDBPassword
+        DocumentDBInstanceClass: !Ref DocumentDBInstanceClass
         DatabaseMinACU: !Ref DatabaseMinACU
         DatabaseMaxACU: !Ref DatabaseMaxACU
       Tags:

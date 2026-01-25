@@ -420,12 +420,15 @@ Resources:
                     Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
                   - !ImportValue
                     Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
               - Effect: Allow
                 Action:
                   - ssm:GetParameters
                   - ssm:GetParameter
                 Resource:
                   - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EnvironmentName}/*
         - PolicyName: EcsExecLogging
           PolicyDocument:
             Version: '2012-10-17'

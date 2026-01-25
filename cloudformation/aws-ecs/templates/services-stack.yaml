@@ -324,6 +324,7 @@ Resources:
 
   #============================================================================
   # Task Definition: Auth Server
+  # Uses DocumentDB for scopes storage (mongodb-ce backend)
   #============================================================================
   AuthServerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -338,23 +339,6 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
       TaskRoleArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
-      Volumes:
-        - Name: mcp-logs
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointLogs
-        - Name: auth-config
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointAuthConfig
       ContainerDefinitions:
         - Name: auth-server
           Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AuthServerImageRepo}:${AuthServerImageTag}'
@@ -386,12 +370,28 @@ Resources:
               Value: mcp-gateway
             - Name: KEYCLOAK_CLIENT_ID
               Value: mcp-gateway-web
-            - Name: SCOPES_CONFIG_PATH
-              Value: /efs/auth_config/scopes.yml
             - Name: SESSION_COOKIE_SECURE
               Value: !Ref SessionCookieSecure
             - Name: SESSION_COOKIE_DOMAIN
               Value: !Ref SessionCookieDomain
+            # DocumentDB Configuration (matching Terraform)
+            - Name: STORAGE_BACKEND
+              Value: mongodb-ce
+            - Name: DOCUMENTDB_HOST
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-DocumentDBClusterEndpoint
+            - Name: DOCUMENTDB_PORT
+              Value: '27017'
+            - Name: DOCUMENTDB_DATABASE
+              Value: mcp_registry
+            - Name: DOCUMENTDB_NAMESPACE
+              Value: default
+            - Name: DOCUMENTDB_USE_TLS
+              Value: 'true'
+            - Name: DOCUMENTDB_USE_IAM
+              Value: 'false'
+            - Name: DOCUMENTDB_TLS_CA_FILE
+              Value: /app/global-bundle.pem
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
@@ -403,13 +403,16 @@ Resources:
                 - '${SecretArn}:client_secret::'
                 - SecretArn: !ImportValue
                     Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
-          MountPoints:
-            - SourceVolume: mcp-logs
-              ContainerPath: /app/logs
-              ReadOnly: false
-            - SourceVolume: auth-config
-              ContainerPath: /efs/auth_config
-              ReadOnly: false
+            - Name: DOCUMENTDB_USERNAME
+              ValueFrom: !Sub
+                - '${SecretArn}:username::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+            - Name: DOCUMENTDB_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -431,6 +434,7 @@ Resources:
 
   #============================================================================
   # Task Definition: Registry
+  # Uses DocumentDB for data storage (mongodb-ce backend)
   #============================================================================
   RegistryTaskDefinition:
     Type: AWS::ECS::TaskDefinition
@@ -445,47 +449,6 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
       TaskRoleArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
-      Volumes:
-        - Name: mcp-servers
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointServers
-        - Name: mcp-agents
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointAgents
-        - Name: mcp-models
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointModels
-        - Name: mcp-logs
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointLogs
-        - Name: auth-config
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointAuthConfig
       ContainerDefinitions:
         - Name: registry
           Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RegistryImageRepo}:${RegistryImageTag}'
@@ -525,8 +488,6 @@ Resources:
               Value: keycloak
             - Name: AWS_REGION
               Value: !Ref AWS::Region
-            - Name: SCOPES_CONFIG_PATH
-              Value: /app/auth_server/scopes.yml
             - Name: EMBEDDINGS_PROVIDER
               Value: !Ref EmbeddingsProvider
             - Name: EMBEDDINGS_MODEL_NAME
@@ -555,6 +516,24 @@ Resources:
             # Keycloak Admin for Management API
             - Name: KEYCLOAK_ADMIN
               Value: admin
+            # DocumentDB Configuration (matching Terraform)
+            - Name: STORAGE_BACKEND
+              Value: mongodb-ce
+            - Name: DOCUMENTDB_HOST
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-DocumentDBClusterEndpoint
+            - Name: DOCUMENTDB_PORT
+              Value: '27017'
+            - Name: DOCUMENTDB_DATABASE
+              Value: mcp_registry
+            - Name: DOCUMENTDB_NAMESPACE
+              Value: default
+            - Name: DOCUMENTDB_USE_TLS
+              Value: 'true'
+            - Name: DOCUMENTDB_USE_IAM
+              Value: 'false'
+            - Name: DOCUMENTDB_TLS_CA_FILE
+              Value: /app/global-bundle.pem
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
@@ -582,22 +561,16 @@ Resources:
             - Name: EMBEDDINGS_API_KEY
               ValueFrom: !ImportValue
                 Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
-          MountPoints:
-            - SourceVolume: mcp-servers
-              ContainerPath: /app/registry/servers
-              ReadOnly: false
-            - SourceVolume: mcp-agents
-              ContainerPath: /app/registry/agents
-              ReadOnly: false
-            - SourceVolume: mcp-models
-              ContainerPath: /app/registry/models
-              ReadOnly: false
-            - SourceVolume: mcp-logs
-              ContainerPath: /app/logs
-              ReadOnly: false
-            - SourceVolume: auth-config
-              ContainerPath: /app/auth_server
-              ReadOnly: false
+            - Name: DOCUMENTDB_USERNAME
+              ValueFrom: !Sub
+                - '${SecretArn}:username::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+            - Name: DOCUMENTDB_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -774,15 +747,6 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
       TaskRoleArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
-      Volumes:
-        - Name: mcpgw-data
-          EFSVolumeConfiguration:
-            FilesystemId: !ImportValue
-              Fn::Sub: ${EnvironmentName}-EfsFileSystemId
-            TransitEncryption: ENABLED
-            AuthorizationConfig:
-              AccessPointId: !ImportValue
-                Fn::Sub: ${EnvironmentName}-EfsAccessPointMcpgwData
       ContainerDefinitions:
         - Name: mcpgw-server
           Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${McpgwImageRepo}:${McpgwImageTag}'
@@ -804,10 +768,6 @@ Resources:
                 - '${SecretArn}:admin_password::'
                 - SecretArn: !ImportValue
                     Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
-          MountPoints:
-            - SourceVolume: mcpgw-data
-              ContainerPath: /app/data
-              ReadOnly: false
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -1721,16 +1681,17 @@ Resources:
           Value: !Sub ${EnvironmentName}-keycloak-init-lambda-role
 
   # Lambda Function for Keycloak Initialization
+  # This Lambda replicates the functionality of Terraform's init-keycloak.sh script
   KeycloakInitLambda:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub ${EnvironmentName}-keycloak-init
-      Description: Initialize Keycloak realm, clients, and groups for MCP Gateway
+      Description: Initialize Keycloak realm, clients, groups, users, and scopes for MCP Gateway
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt KeycloakInitLambdaRole.Arn
-      Timeout: 300
-      MemorySize: 256
+      Timeout: 600
+      MemorySize: 512
       # No VPC config needed - Lambda accesses Keycloak via CloudFront HTTPS
       Environment:
         Variables:
@@ -1739,6 +1700,7 @@ Resources:
         ZipFile: |
           """
           Lambda function to initialize Keycloak realm for MCP Gateway.
+          Replicates Terraform's init-keycloak.sh functionality.
           Used as a CloudFormation Custom Resource.
           """
           import json
@@ -1750,6 +1712,37 @@ Resources:
           import cfnresponse
           import time
 
+          # All groups to create (matches Terraform init-keycloak.sh)
+          ALL_GROUPS = [
+              'mcp-registry-admin',
+              'mcp-registry-user',
+              'mcp-registry-developer',
+              'mcp-registry-operator',
+              'mcp-servers-unrestricted',
+              'mcp-servers-restricted',
+              'a2a-agent-admin',
+              'a2a-agent-publisher',
+              'a2a-agent-user',
+              'registry-admins',
+              'registry-users-lob1',
+              'registry-users-lob2'
+          ]
+
+          # Custom MCP scopes
+          CUSTOM_SCOPES = [
+              'mcp-servers-unrestricted/read',
+              'mcp-servers-unrestricted/execute',
+              'mcp-servers-restricted/read',
+              'mcp-servers-restricted/execute'
+          ]
+
+          # Service account clients
+          SERVICE_ACCOUNTS = [
+              ('registry-admin-bot', 'registry-admins'),
+              ('lob1-bot', 'registry-users-lob1'),
+              ('lob2-bot', 'registry-users-lob2')
+          ]
+
           def get_admin_token(keycloak_url, admin_user, admin_password):
               """Get admin access token from Keycloak."""
               url = f"{keycloak_url}/realms/master/protocol/openid-connect/token"
@@ -1759,10 +1752,8 @@ Resources:
                   'grant_type': 'password',
                   'client_id': 'admin-cli'
               }).encode('utf-8')
-              
               req = urllib.request.Request(url, data=data, method='POST')
               req.add_header('Content-Type', 'application/x-www-form-urlencoded')
-              
               ctx = ssl.create_default_context()
               with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                   result = json.loads(response.read().decode('utf-8'))
@@ -1773,10 +1764,8 @@ Resources:
               req = urllib.request.Request(url, method=method)
               req.add_header('Authorization', f'Bearer {token}')
               req.add_header('Content-Type', 'application/json')
-              
               if data:
                   req.data = json.dumps(data).encode('utf-8')
-              
               ctx = ssl.create_default_context()
               try:
                   with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
@@ -1787,7 +1776,7 @@ Resources:
                               return {}
                       return {}
               except urllib.error.HTTPError as e:
-                  if e.code == 409:  # Conflict - already exists
+                  if e.code == 409:
                       return {'exists': True}
                   raise
 
@@ -1816,44 +1805,89 @@ Resources:
                   time.sleep(10)
               return False
 
+          def get_client_uuid(keycloak_url, token, realm, client_id):
+              """Get client UUID by clientId."""
+              clients = keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/clients?clientId={client_id}",
+                  token
+              )
+              if clients and len(clients) > 0:
+                  return clients[0].get('id')
+              return None
+
+          def get_group_id(keycloak_url, token, realm, group_name):
+              """Get group ID by name."""
+              groups = keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/groups",
+                  token
+              )
+              for group in groups:
+                  if group.get('name') == group_name:
+                      return group.get('id')
+              return None
+
+          def get_user_id(keycloak_url, token, realm, username):
+              """Get user ID by username."""
+              users = keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/users?username={username}",
+                  token
+              )
+              if users and len(users) > 0:
+                  return users[0].get('id')
+              return None
+
+          def add_groups_mapper(keycloak_url, token, realm, client_uuid):
+              """Add groups mapper to client."""
+              keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/protocol-mappers/models",
+                  token,
+                  method='POST',
+                  data={
+                      'name': 'groups',
+                      'protocol': 'openid-connect',
+                      'protocolMapper': 'oidc-group-membership-mapper',
+                      'consentRequired': False,
+                      'config': {
+                          'full.path': 'false',
+                          'id.token.claim': 'true',
+                          'access.token.claim': 'true',
+                          'claim.name': 'groups',
+                          'userinfo.token.claim': 'true'
+                      }
+                  }
+              )
+
           def handler(event, context):
               """CloudFormation Custom Resource handler."""
               print(f"Event: {json.dumps(event)}")
-              
               request_type = event.get('RequestType')
               properties = event.get('ResourceProperties', {})
-              
-              # Extract parameters
               keycloak_url = properties.get('KeycloakUrl')
               registry_url = properties.get('RegistryUrl')
               client_secret_arn = properties.get('ClientSecretArn')
-              
-              # For Delete, just return success
+              m2m_client_secret_arn = properties.get('M2MClientSecretArn')
+
               if request_type == 'Delete':
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
                   return
-              
+
               try:
-                  # Get admin credentials from SSM Parameter Store
                   ssm = boto3.client('ssm')
                   admin_user = ssm.get_parameter(Name='/keycloak/admin', WithDecryption=True)['Parameter']['Value']
                   admin_password = ssm.get_parameter(Name='/keycloak/admin_password', WithDecryption=True)['Parameter']['Value']
-                  
                   print(f"Initializing Keycloak at {keycloak_url}")
-                  
-                  # Wait for Keycloak to be ready
+
                   if not wait_for_keycloak(keycloak_url):
                       raise Exception("Keycloak not ready after maximum attempts")
-                  
-                  # Get admin token
+
                   token = get_admin_token(keycloak_url, admin_user, admin_password)
                   if not token:
                       raise Exception("Failed to get admin token")
                   print("Got admin token")
-                  
+
                   realm = 'mcp-gateway'
-                  
-                  # Create realm if not exists
+
+                  # 1. Create realm
                   if not realm_exists(keycloak_url, token, realm):
                       print("Creating realm...")
                       keycloak_request(
@@ -1866,14 +1900,18 @@ Resources:
                               'registrationAllowed': False,
                               'loginWithEmailAllowed': True,
                               'duplicateEmailsAllowed': False,
-                              'resetPasswordAllowed': True
+                              'resetPasswordAllowed': True,
+                              'editUsernameAllowed': False
                           }
                       )
                       print("Realm created")
                   else:
                       print("Realm already exists")
-                  
-                  # Create web client
+
+                  # Refresh token after realm creation
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+
+                  # 2. Create web client
                   print("Creating web client...")
                   keycloak_request(
                       f"{keycloak_url}/admin/realms/{realm}/clients",
@@ -1893,138 +1931,277 @@ Resources:
                           'webOrigins': [registry_url, "http://localhost:7860", "+"],
                           'protocol': 'openid-connect',
                           'standardFlowEnabled': True,
+                          'implicitFlowEnabled': False,
                           'directAccessGrantsEnabled': True,
+                          'serviceAccountsEnabled': False,
                           'publicClient': False
                       }
                   )
-                  
-                  # Add group mapper to client for including groups in token
-                  print("Adding group mapper to client...")
-                  clients = keycloak_request(
-                      f"{keycloak_url}/admin/realms/{realm}/clients?clientId=mcp-gateway-web",
-                      token
-                  )
-                  if clients and len(clients) > 0:
-                      client_uuid = clients[0].get('id')
-                      keycloak_request(
-                          f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/protocol-mappers/models",
-                          token,
-                          method='POST',
-                          data={
-                              'name': 'groups',
-                              'protocol': 'openid-connect',
-                              'protocolMapper': 'oidc-group-membership-mapper',
-                              'consentRequired': False,
-                              'config': {
-                                  'full.path': 'false',
-                                  'id.token.claim': 'true',
-                                  'access.token.claim': 'true',
-                                  'claim.name': 'groups',
-                                  'userinfo.token.claim': 'true'
-                              }
-                          }
-                      )
-                  
-                  # Create groups
-                  print("Creating groups...")
-                  for group in ['mcp-registry-admin', 'mcp-registry-user', 'mcp-servers-unrestricted']:
-                      keycloak_request(
-                          f"{keycloak_url}/admin/realms/{realm}/groups",
-                          token,
-                          method='POST',
-                          data={'name': group}
-                      )
-                  
-                  # Create admin user
-                  print("Creating admin user...")
+
+                  # 3. Create M2M client
+                  print("Creating M2M client...")
                   keycloak_request(
-                      f"{keycloak_url}/admin/realms/{realm}/users",
+                      f"{keycloak_url}/admin/realms/{realm}/clients",
                       token,
                       method='POST',
                       data={
-                          'username': 'admin',
-                          'email': 'admin@example.com',
+                          'clientId': 'mcp-gateway-m2m',
+                          'name': 'MCP Gateway M2M Client',
                           'enabled': True,
-                          'emailVerified': True,
-                          'firstName': 'Admin',
-                          'lastName': 'User',
-                          'credentials': [{'type': 'password', 'value': 'changeme', 'temporary': False}]
+                          'clientAuthenticatorType': 'client-secret',
+                          'protocol': 'openid-connect',
+                          'standardFlowEnabled': False,
+                          'implicitFlowEnabled': False,
+                          'directAccessGrantsEnabled': False,
+                          'serviceAccountsEnabled': True,
+                          'publicClient': False
                       }
                   )
-                  
-                  # Get admin user ID and assign to groups
-                  users = keycloak_request(
-                      f"{keycloak_url}/admin/realms/{realm}/users?username=admin",
-                      token
-                  )
-                  if users and len(users) > 0:
-                      admin_id = users[0].get('id')
-                      groups = keycloak_request(
+
+                  # 4. Create custom scopes
+                  print("Creating custom scopes...")
+                  for scope in CUSTOM_SCOPES:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/client-scopes",
+                          token,
+                          method='POST',
+                          data={
+                              'name': scope,
+                              'description': f'MCP Gateway scope for {scope} access',
+                              'protocol': 'openid-connect'
+                          }
+                      )
+                      print(f"  Created scope: {scope}")
+
+                  # 5. Create all groups
+                  print("Creating groups...")
+                  for group in ALL_GROUPS:
+                      keycloak_request(
                           f"{keycloak_url}/admin/realms/{realm}/groups",
+                          token,
+                          method='POST',
+                          data={
+                              'name': group,
+                              'attributes': {'description': [f'{group} group for MCP Gateway access']}
+                          }
+                      )
+                      print(f"  Created group: {group}")
+
+                  # Refresh token
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+
+                  # 6. Create users
+                  print("Creating users...")
+                  users_config = [
+                      ('admin', 'admin@example.com', 'Admin', 'User', 'Workshop2026!',
+                       ['mcp-registry-admin', 'mcp-servers-unrestricted', 'registry-admins']),
+                      ('testuser', 'testuser@example.com', 'Test', 'User', 'testpass',
+                       ['mcp-registry-user', 'mcp-registry-developer', 'mcp-registry-operator',
+                        'mcp-servers-unrestricted', 'mcp-servers-restricted']),
+                      ('lob1-user', 'lob1-user@example.com', 'LOB1', 'User', 'lob1pass',
+                       ['registry-users-lob1']),
+                      ('lob2-user', 'lob2-user@example.com', 'LOB2', 'User', 'lob2pass',
+                       ['registry-users-lob2'])
+                  ]
+
+                  for username, email, first, last, password, groups in users_config:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/users",
+                          token,
+                          method='POST',
+                          data={
+                              'username': username,
+                              'email': email,
+                              'enabled': True,
+                              'emailVerified': True,
+                              'firstName': first,
+                              'lastName': last,
+                              'credentials': [{'type': 'password', 'value': password, 'temporary': False}]
+                          }
+                      )
+                      print(f"  Created user: {username}")
+
+                      # Assign user to groups
+                      user_id = get_user_id(keycloak_url, token, realm, username)
+                      if user_id:
+                          for group_name in groups:
+                              group_id = get_group_id(keycloak_url, token, realm, group_name)
+                              if group_id:
+                                  keycloak_request(
+                                      f"{keycloak_url}/admin/realms/{realm}/users/{user_id}/groups/{group_id}",
+                                      token,
+                                      method='PUT'
+                                  )
+                                  print(f"    Assigned to group: {group_name}")
+
+                  # 7. Create service account clients
+                  print("Creating service account clients...")
+                  for client_name, group_name in SERVICE_ACCOUNTS:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients",
+                          token,
+                          method='POST',
+                          data={
+                              'clientId': client_name,
+                              'name': f'{client_name} Service Account',
+                              'description': f'Service account for {client_name} operations',
+                              'enabled': True,
+                              'serviceAccountsEnabled': True,
+                              'standardFlowEnabled': False,
+                              'implicitFlowEnabled': False,
+                              'directAccessGrantsEnabled': False,
+                              'publicClient': False,
+                              'protocol': 'openid-connect'
+                          }
+                      )
+                      print(f"  Created client: {client_name}")
+
+                      # Get service account user and assign to group
+                      client_uuid = get_client_uuid(keycloak_url, token, realm, client_name)
+                      if client_uuid:
+                          sa_user = keycloak_request(
+                              f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/service-account-user",
+                              token
+                          )
+                          if sa_user and sa_user.get('id'):
+                              group_id = get_group_id(keycloak_url, token, realm, group_name)
+                              if group_id:
+                                  keycloak_request(
+                                      f"{keycloak_url}/admin/realms/{realm}/users/{sa_user['id']}/groups/{group_id}",
+                                      token,
+                                      method='PUT'
+                                  )
+                                  print(f"    Assigned to group: {group_name}")
+
+                          # Add groups mapper
+                          add_groups_mapper(keycloak_url, token, realm, client_uuid)
+                          print(f"    Added groups mapper")
+
+                  # Refresh token
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+
+                  # 8. Add groups mapper to web and M2M clients
+                  print("Adding groups mappers to clients...")
+                  web_uuid = get_client_uuid(keycloak_url, token, realm, 'mcp-gateway-web')
+                  if web_uuid:
+                      add_groups_mapper(keycloak_url, token, realm, web_uuid)
+                      print("  Added groups mapper to web client")
+
+                  m2m_uuid = get_client_uuid(keycloak_url, token, realm, 'mcp-gateway-m2m')
+                  if m2m_uuid:
+                      add_groups_mapper(keycloak_url, token, realm, m2m_uuid)
+                      print("  Added groups mapper to M2M client")
+
+                  # 9. Assign custom scopes to M2M client
+                  print("Assigning scopes to M2M client...")
+                  if m2m_uuid:
+                      all_scopes = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/client-scopes",
                           token
                       )
-                      for group in groups:
-                          if group.get('name') in ['mcp-registry-admin', 'mcp-servers-unrestricted']:
+                      for scope in CUSTOM_SCOPES:
+                          scope_id = None
+                          for s in all_scopes:
+                              if s.get('name') == scope:
+                                  scope_id = s.get('id')
+                                  break
+                          if scope_id:
                               keycloak_request(
-                                  f"{keycloak_url}/admin/realms/{realm}/users/{admin_id}/groups/{group['id']}",
+                                  f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/default-client-scopes/{scope_id}",
                                   token,
                                   method='PUT'
                               )
-                  
-                  # Generate and store client secret
-                  print("Generating client secret...")
-                  clients = keycloak_request(
-                      f"{keycloak_url}/admin/realms/{realm}/clients?clientId=mcp-gateway-web",
-                      token
-                  )
-                  if clients and len(clients) > 0:
-                      client_uuid = clients[0].get('id')
-                      
-                      # Generate new secret
+                              print(f"  Assigned scope: {scope}")
+
+                  # Assign M2M service account to groups
+                  if m2m_uuid:
+                      m2m_sa = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/service-account-user",
+                          token
+                      )
+                      if m2m_sa and m2m_sa.get('id'):
+                          for group_name in ['mcp-servers-unrestricted', 'a2a-agent-admin']:
+                              group_id = get_group_id(keycloak_url, token, realm, group_name)
+                              if group_id:
+                                  keycloak_request(
+                                      f"{keycloak_url}/admin/realms/{realm}/users/{m2m_sa['id']}/groups/{group_id}",
+                                      token,
+                                      method='PUT'
+                                  )
+                                  print(f"  M2M service account assigned to: {group_name}")
+
+                  # 10. Generate and store client secrets
+                  print("Generating client secrets...")
+                  secrets = boto3.client('secretsmanager')
+
+                  # Web client secret
+                  if web_uuid:
                       keycloak_request(
-                          f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/client-secret",
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{web_uuid}/client-secret",
                           token,
                           method='POST'
                       )
-                      
-                      # Get the secret
                       secret_response = keycloak_request(
-                          f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/client-secret",
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{web_uuid}/client-secret",
                           token
                       )
-                      client_secret = secret_response.get('value')
-                      
-                      if client_secret:
-                          # Store in Secrets Manager
-                          print("Storing client secret in Secrets Manager...")
-                          secrets = boto3.client('secretsmanager')
+                      web_secret = secret_response.get('value')
+                      if web_secret and client_secret_arn:
                           secrets.update_secret(
                               SecretId=client_secret_arn,
-                              SecretString=json.dumps({'client_secret': client_secret})
+                              SecretString=json.dumps({
+                                  'client_id': 'mcp-gateway-web',
+                                  'client_secret': web_secret
+                              })
                           )
-                          print("Client secret stored")
-                          
-                          # Restart auth-server to pick up new secret
-                          print("Restarting auth-server service...")
-                          ecs_cluster = properties.get('EcsClusterName')
-                          auth_service = properties.get('AuthServiceName')
-                          if ecs_cluster and auth_service:
-                              ecs = boto3.client('ecs')
-                              ecs.update_service(
-                                  cluster=ecs_cluster,
-                                  service=auth_service,
-                                  forceNewDeployment=True
-                              )
-                              print(f"Auth-server restart triggered")
-                  
+                          print("  Web client secret stored")
+
+                  # M2M client secret
+                  if m2m_uuid:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/client-secret",
+                          token,
+                          method='POST'
+                      )
+                      secret_response = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/client-secret",
+                          token
+                      )
+                      m2m_secret = secret_response.get('value')
+                      if m2m_secret and m2m_client_secret_arn:
+                          secrets.update_secret(
+                              SecretId=m2m_client_secret_arn,
+                              SecretString=json.dumps({
+                                  'client_id': 'mcp-gateway-m2m',
+                                  'client_secret': m2m_secret
+                              })
+                          )
+                          print("  M2M client secret stored")
+
+                  # 11. Restart auth-server
+                  print("Restarting auth-server service...")
+                  ecs_cluster = properties.get('EcsClusterName')
+                  auth_service = properties.get('AuthServiceName')
+                  if ecs_cluster and auth_service:
+                      ecs = boto3.client('ecs')
+                      ecs.update_service(
+                          cluster=ecs_cluster,
+                          service=auth_service,
+                          forceNewDeployment=True
+                      )
+                      print("Auth-server restart triggered")
+
                   print("Keycloak initialization complete!")
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                       'Realm': realm,
-                      'ClientId': 'mcp-gateway-web'
+                      'WebClientId': 'mcp-gateway-web',
+                      'M2MClientId': 'mcp-gateway-m2m'
                   })
-                  
+
               except Exception as e:
                   print(f"Error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
                   cfnresponse.send(event, context, cfnresponse.FAILED, {
                       'Error': str(e)
                   })
@@ -2054,98 +2231,123 @@ Resources:
       EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
       AuthServiceName: !Sub ${EnvironmentName}-auth-server
       # Force re-run on stack updates by including a timestamp or version
-      Version: '1.1'
+      Version: '2.0'
 
-#============================================================================
-# ADOT Collector for Prometheus Metrics (Optional)
-#============================================================================
-ADOTCollectorLogGroup:
-  Type: AWS::Logs::LogGroup
-  Condition: EnableADOTCondition
-  Properties:
-    LogGroupName: !Sub '/ecs/${EnvironmentName}/adot-collector'
-    RetentionInDays: 7
-    Tags:
-      - Key: Name
-        Value: !Sub '${EnvironmentName}-adot-collector'
+  #============================================================================
+  # DocumentDB Initialization (Custom Resource)
+  # Triggers the DocumentDB init Lambda to create indexes and registry-admins scope
+  #============================================================================
+  DocumentDBInitTrigger:
+    Type: Custom::DocumentDBInit
+    DependsOn:
+      - RegistryService
+    Properties:
+      ServiceToken: !ImportValue
+        Fn::Sub: ${EnvironmentName}-DocumentDBInitLambdaArn
+      # ECS configuration for running init task
+      EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      TaskFamily: !Sub ${EnvironmentName}-registry
+      ContainerName: registry
+      Subnets: !Join
+        - ','
+        - - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+          - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+      SecurityGroups: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTasksSecurityGroup
+      # Force re-run on stack updates
+      Version: '1.0'
 
-ADOTCollectorTaskDefinition:
-  Type: AWS::ECS::TaskDefinition
-  Condition: EnableADOTCondition
-  Properties:
-    Family: !Sub '${EnvironmentName}-adot-collector'
-    NetworkMode: awsvpc
-    RequiresCompatibilities:
-      - FARGATE
-    Cpu: '256'
-    Memory: '512'
-    ExecutionRoleArn: !ImportValue
-      Fn::Sub: '${EnvironmentName}-EcsTaskExecutionRoleArn'
-    TaskRoleArn: !ImportValue
-      Fn::Sub: '${EnvironmentName}-EcsTaskRoleArn'
-    ContainerDefinitions:
-      - Name: adot-collector
-        Image: public.ecr.aws/aws-observability/aws-otel-collector:latest
-        Essential: true
-        Command:
-          - '--config=/etc/ecs/ecs-default-config.yaml'
-        Environment:
-          - Name: AWS_REGION
-            Value: !Ref AWS::Region
-          - Name: AMP_REMOTE_WRITE_ENDPOINT
-            Value: !Ref AMPRemoteWriteEndpoint
-          - Name: ENVIRONMENT_NAME
-            Value: !Ref EnvironmentName
-        PortMappings:
-          - ContainerPort: 4317
-            Protocol: tcp
-          - ContainerPort: 4318
-            Protocol: tcp
-          - ContainerPort: 8888
-            Protocol: tcp
-        LogConfiguration:
-          LogDriver: awslogs
-          Options:
-            awslogs-group: !Ref ADOTCollectorLogGroup
-            awslogs-region: !Ref AWS::Region
-            awslogs-stream-prefix: adot
-        HealthCheck:
+  #============================================================================
+  # ADOT Collector for Prometheus Metrics (Optional)
+  #============================================================================
+  ADOTCollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableADOTCondition
+    Properties:
+      LogGroupName: !Sub '/ecs/${EnvironmentName}/adot-collector'
+      RetentionInDays: 7
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-adot-collector'
+
+  ADOTCollectorTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: EnableADOTCondition
+    Properties:
+      Family: !Sub '${EnvironmentName}-adot-collector'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskExecutionRoleArn'
+      TaskRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskRoleArn'
+      ContainerDefinitions:
+        - Name: adot-collector
+          Image: public.ecr.aws/aws-observability/aws-otel-collector:latest
+          Essential: true
           Command:
-            - CMD-SHELL
-            - 'curl -f http://localhost:8888/metrics || exit 1'
-          Interval: 30
-          Timeout: 5
-          Retries: 3
-          StartPeriod: 30
-    Tags:
-      - Key: Name
-        Value: !Sub '${EnvironmentName}-adot-collector'
+            - '--config=/etc/ecs/ecs-default-config.yaml'
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AMP_REMOTE_WRITE_ENDPOINT
+              Value: !Ref AMPRemoteWriteEndpoint
+            - Name: ENVIRONMENT_NAME
+              Value: !Ref EnvironmentName
+          PortMappings:
+            - ContainerPort: 4317
+              Protocol: tcp
+            - ContainerPort: 4318
+              Protocol: tcp
+            - ContainerPort: 8888
+              Protocol: tcp
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ADOTCollectorLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: adot
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'curl -f http://localhost:8888/metrics || exit 1'
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-adot-collector'
 
-ADOTCollectorService:
-  Type: AWS::ECS::Service
-  Condition: EnableADOTCondition
-  Properties:
-    ServiceName: !Sub '${EnvironmentName}-adot-collector'
-    Cluster: !ImportValue
-      Fn::Sub: '${EnvironmentName}-EcsClusterArn'
-    TaskDefinition: !Ref ADOTCollectorTaskDefinition
-    DesiredCount: 1
-    LaunchType: FARGATE
-    NetworkConfiguration:
-      AwsvpcConfiguration:
-        AssignPublicIp: DISABLED
-        SecurityGroups:
-          - !ImportValue
-              Fn::Sub: '${EnvironmentName}-EcsSecurityGroupId'
-        Subnets:
-          - !ImportValue
-              Fn::Sub: '${EnvironmentName}-PrivateSubnet1Id'
-          - !ImportValue
-              Fn::Sub: '${EnvironmentName}-PrivateSubnet2Id'
-    EnableExecuteCommand: true
-    Tags:
-      - Key: Name
-        Value: !Sub '${EnvironmentName}-adot-collector'
+  ADOTCollectorService:
+    Type: AWS::ECS::Service
+    Condition: EnableADOTCondition
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-adot-collector'
+      Cluster: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainEcsClusterArn'
+      TaskDefinition: !Ref ADOTCollectorTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-EcsTasksSG'
+          Subnets: !Split
+            - ','
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrivateSubnets'
+      EnableExecuteCommand: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-adot-collector'
 
 #============================================================================
 # Outputs

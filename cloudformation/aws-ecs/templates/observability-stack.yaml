@@ -380,11 +380,11 @@ Resources:
               "width": 8,
               "height": 6,
               "properties": {
-                "title": "EFS Throughput",
+                "title": "DocumentDB Connections",
                 "view": "timeSeries",
                 "stacked": false,
                 "metrics": [
-                  ["AWS/EFS", "TotalIOBytes", "FileSystemId", "${EnvironmentName}-efs", {"stat": "Sum", "label": "Total I/O"}]
+                  ["AWS/DocDB", "DatabaseConnections", "DBClusterIdentifier", "${EnvironmentName}-registry", {"stat": "Average", "label": "Connections"}]
                 ],
                 "region": "${AWS::Region}",
                 "period": 60
