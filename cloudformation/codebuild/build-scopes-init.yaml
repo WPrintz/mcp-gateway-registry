@@ -1,0 +1,26 @@
+version: 0.2
+
+# Builds only the scopes-init image
+
+env:
+  variables:
+    DOCKER_BUILDKIT: "1"
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Building scopes-init from upstream v1.0.12 ==="
+      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - echo "ECR Registry - $ECR_REGISTRY"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      - docker pull public.ecr.aws/docker/library/python:3.12-slim || true
+      - docker tag public.ecr.aws/docker/library/python:3.12-slim python:3.12-slim
+
+  build:
+    commands:
+      - echo "Building scopes-init..." && docker build -t $ECR_REGISTRY/mcp-gateway-scopes-init:latest -f docker/Dockerfile.scopes-init . && docker push $ECR_REGISTRY/mcp-gateway-scopes-init:latest
+
+  post_build:
+    commands:
+      - echo "scopes-init image built and pushed"

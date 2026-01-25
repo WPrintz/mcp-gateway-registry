@@ -1,0 +1,25 @@
+version: 0.2
+
+# Rebuilds mcpgw with correct build context (needs registry module)
+
+env:
+  variables:
+    DOCKER_BUILDKIT: "1"
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Rebuilding mcpgw with registry module ==="
+      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      - docker pull public.ecr.aws/docker/library/python:3.12-slim || true
+      - docker tag public.ecr.aws/docker/library/python:3.12-slim python:3.12-slim
+
+  build:
+    commands:
+      - echo "Building mcpgw from repo root with SERVER_DIR..." && docker build --build-arg SERVER_DIR=servers/mcpgw -t $ECR_REGISTRY/mcp-gateway-mcpgw:latest -f docker/Dockerfile.mcp-server . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest
+
+  post_build:
+    commands:
+      - echo "mcpgw rebuilt with registry module"

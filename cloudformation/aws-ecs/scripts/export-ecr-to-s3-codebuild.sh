@@ -6,11 +6,11 @@
 #
 # Options:
 #   -b, --bucket BUCKET     S3 bucket name (default: mcp-gateway-images-export-<account-id>)
-#   -p, --prefix PREFIX     S3 prefix (default: mcp-gateway/v1.0.8)
+#   -p, --prefix PREFIX     S3 prefix (default: mcp-gateway/v1.0.12)
 #   -r, --region REGION     AWS region (default: us-west-2)
 #   -i, --images "IMG1 IMG2" Space-separated list of image names to export
 #                           (default: all mcp-gateway images)
-#   -t, --tag TAG           Image tag to use for all images (default: v1.0.8)
+#   -t, --tag TAG           Image tag to use for all images (default: v1.0.12)
 #
 # Examples:
 #   # Export all default images with default tag
@@ -20,8 +20,8 @@
 #   ./export-ecr-to-s3-codebuild.sh -i "mcp-gateway-keycloak"
 #   ./export-ecr-to-s3-codebuild.sh -i "mcp-gateway-registry mcp-gateway-auth-server"
 #
-#   # Export only changed images for v1.0.8 (registry and mcpgw)
-#   ./export-ecr-to-s3-codebuild.sh -i "mcp-gateway-registry mcp-gateway-mcpgw" -t v1.0.8
+#   # Export only changed images for v1.0.12 (registry and mcpgw)
+#   ./export-ecr-to-s3-codebuild.sh -i "mcp-gateway-registry mcp-gateway-mcpgw" -t v1.0.12
 #
 #   # Custom bucket and prefix
 #   ./export-ecr-to-s3-codebuild.sh -b my-bucket -p images/v2.0.0 -i "mcp-gateway-keycloak"
@@ -30,7 +30,7 @@ set -e
 
 # Default values - dynamically set based on environment
 DEFAULT_IMAGES="mcp-gateway-registry mcp-gateway-auth-server mcp-gateway-currenttime mcp-gateway-mcpgw mcp-gateway-realserverfaketools mcp-gateway-flight-booking-agent mcp-gateway-travel-assistant-agent mcp-gateway-keycloak"
-DEFAULT_TAG="v1.0.8"
+DEFAULT_TAG="v1.0.12"
 
 REGION="us-west-2"
 S3_BUCKET=""  # Will be set dynamically if not provided

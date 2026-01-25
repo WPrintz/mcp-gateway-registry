@@ -1,0 +1,40 @@
+version: 0.2
+
+env:
+  variables:
+    DOCKER_BUILDKIT: "1"
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Building from upstream agentic-community/mcp-gateway-registry ==="
+      - echo "Source version - $CODEBUILD_RESOLVED_SOURCE_VERSION"
+      - echo "AWS Region - $AWS_DEFAULT_REGION"
+      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - echo "ECR Registry - $ECR_REGISTRY"
+      - echo "Logging in to Amazon ECR..."
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      - echo "Pulling base images..."
+      - docker pull public.ecr.aws/docker/library/python:3.12-slim || true
+      - docker pull quay.io/keycloak/keycloak:latest || true
+      - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/ 2>/dev/null || true
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/ 2>/dev/null || true
+
+  build:
+    commands:
+      - echo "=== Building all container images ==="
+      - echo "Building registry..." && docker build -t $ECR_REGISTRY/mcp-gateway-registry:latest -f docker/Dockerfile.registry . && docker push $ECR_REGISTRY/mcp-gateway-registry:latest
+      - echo "Building auth_server..." && docker build -t $ECR_REGISTRY/mcp-gateway-auth-server:latest -f docker/Dockerfile.auth . && docker push $ECR_REGISTRY/mcp-gateway-auth-server:latest
+      - echo "Building keycloak..." && docker build -t $ECR_REGISTRY/keycloak:latest -f docker/keycloak/Dockerfile docker/keycloak && docker push $ECR_REGISTRY/keycloak:latest
+      - echo "Building currenttime..." && docker build -t $ECR_REGISTRY/mcp-gateway-currenttime:latest -f docker/Dockerfile.mcp-server servers/currenttime && docker push $ECR_REGISTRY/mcp-gateway-currenttime:latest
+      - echo "Building mcpgw..." && docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:latest -f docker/Dockerfile.mcp-server servers/mcpgw && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest
+      - echo "Building realserverfaketools..." && docker build -t $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest -f docker/Dockerfile.mcp-server servers/realserverfaketools && docker push $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest
+      - echo "Building flight_booking_agent..." && docker build -t $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest -f agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent && docker push $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest
+      - echo "Building travel_assistant_agent..." && docker build -t $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest -f agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent && docker push $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest
+
+  post_build:
+    commands:
+      - echo "Build completed on $(date)"
+      - echo "All images pushed to $ECR_REGISTRY"
