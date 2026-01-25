@@ -2255,7 +2255,7 @@ Resources:
           - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnet2
       SecurityGroups: !ImportValue
-        Fn::Sub: ${EnvironmentName}-EcsTasksSecurityGroup
+        Fn::Sub: ${EnvironmentName}-EcsTasksSG
       # Force re-run on stack updates
       Version: '1.0'
 
