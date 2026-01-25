@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
   MCP Gateway Registry - Network Stack (Consolidated)
-  Creates VPC, subnets, NAT gateways, security groups, and VPC endpoints.
-  Matches terraform/aws-ecs/vpc.tf and keycloak-security-groups.tf configuration.
+  Creates VPC, subnets, Regional NAT Gateway, security groups, and VPC endpoints.
+  Uses AWS Regional NAT Gateway for simplified HA and cost savings.
   Target Region: us-west-2
 
 Parameters:
@@ -138,61 +138,22 @@ Resources:
           Value: private
 
   #============================================================================
-  # NAT Gateways (one per AZ for HA)
+  # Regional NAT Gateway (single VPC-wide NAT with automatic HA)
+  # Uses AWS Regional NAT Gateway feature for simplified management and cost savings
+  # - Automatic multi-AZ expansion based on workload
+  # - No public subnet required
+  # - Automatic IP management
   #============================================================================
-  NatGateway1EIP:
-    Type: AWS::EC2::EIP
+  RegionalNatGateway:
+    Type: AWS::EC2::NatGateway
     DependsOn: InternetGatewayAttachment
     Properties:
-      Domain: vpc
+      VpcId: !Ref VPC
+      ConnectivityType: public
+      AvailabilityMode: regional
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-nat-eip-1
-
-  NatGateway2EIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-nat-eip-2
-
-  NatGateway3EIP:
-    Type: AWS::EC2::EIP
-    DependsOn: InternetGatewayAttachment
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-nat-eip-3
-
-  NatGateway1:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway1EIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-nat-1
-
-  NatGateway2:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway2EIP.AllocationId
-      SubnetId: !Ref PublicSubnet2
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-nat-2
-
-  NatGateway3:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatGateway3EIP.AllocationId
-      SubnetId: !Ref PublicSubnet3
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-nat-3
+          Value: !Sub ${EnvironmentName}-nat-regional
 
   #============================================================================
   # Route Tables
@@ -231,67 +192,38 @@ Resources:
       RouteTableId: !Ref PublicRouteTable
       SubnetId: !Ref PublicSubnet3
 
-  PrivateRouteTable1:
+  # Single shared private route table for all AZs (uses Regional NAT Gateway)
+  PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref VPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName}-private-rt-1
+          Value: !Sub ${EnvironmentName}-private-rt
 
-  DefaultPrivateRoute1:
+  DefaultPrivateRoute:
     Type: AWS::EC2::Route
     Properties:
-      RouteTableId: !Ref PrivateRouteTable1
+      RouteTableId: !Ref PrivateRouteTable
       DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway1
+      NatGatewayId: !Ref RegionalNatGateway
 
   PrivateSubnet1RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PrivateRouteTable1
+      RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet1
-
-  PrivateRouteTable2:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-private-rt-2
-
-  DefaultPrivateRoute2:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable2
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway2
 
   PrivateSubnet2RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PrivateRouteTable2
+      RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet2
-
-  PrivateRouteTable3:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: !Sub ${EnvironmentName}-private-rt-3
-
-  DefaultPrivateRoute3:
-    Type: AWS::EC2::Route
-    Properties:
-      RouteTableId: !Ref PrivateRouteTable3
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway3
 
   PrivateSubnet3RouteTableAssociation:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      RouteTableId: !Ref PrivateRouteTable3
+      RouteTableId: !Ref PrivateRouteTable
       SubnetId: !Ref PrivateSubnet3
 
   #============================================================================
@@ -587,9 +519,7 @@ Resources:
       ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
       VpcEndpointType: Gateway
       RouteTableIds:
-        - !Ref PrivateRouteTable1
-        - !Ref PrivateRouteTable2
-        - !Ref PrivateRouteTable3
+        - !Ref PrivateRouteTable
 
 #============================================================================
 # Outputs
