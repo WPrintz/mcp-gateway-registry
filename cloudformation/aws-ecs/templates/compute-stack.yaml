@@ -1192,6 +1192,10 @@ Resources:
             OriginCustomHeaders:
               - HeaderName: X-Forwarded-Proto
                 HeaderValue: https
+              # Custom header for reliable HTTPS detection in auth-server
+              # ALB overwrites X-Forwarded-Proto, but won't touch this custom header
+              - HeaderName: X-Cloudfront-Forwarded-Proto
+                HeaderValue: https
         DefaultCacheBehavior:
           TargetOriginId: MainAlbOrigin
           ViewerProtocolPolicy: redirect-to-https
@@ -1238,6 +1242,10 @@ Resources:
               OriginKeepaliveTimeout: 5
             OriginCustomHeaders:
               - HeaderName: X-Forwarded-Proto
+                HeaderValue: https
+              # Custom header for reliable HTTPS detection
+              # ALB overwrites X-Forwarded-Proto, but won't touch this custom header
+              - HeaderName: X-Cloudfront-Forwarded-Proto
                 HeaderValue: https
         DefaultCacheBehavior:
           TargetOriginId: KeycloakAlbOrigin
