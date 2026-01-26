@@ -376,7 +376,7 @@ Resources:
               Value: !Ref SessionCookieDomain
             # DocumentDB Configuration (matching Terraform)
             - Name: STORAGE_BACKEND
-              Value: mongodb-ce
+              Value: documentdb
             - Name: DOCUMENTDB_HOST
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-DocumentDBClusterEndpoint
@@ -518,7 +518,7 @@ Resources:
               Value: admin
             # DocumentDB Configuration (matching Terraform)
             - Name: STORAGE_BACKEND
-              Value: mongodb-ce
+              Value: documentdb
             - Name: DOCUMENTDB_HOST
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-DocumentDBClusterEndpoint
