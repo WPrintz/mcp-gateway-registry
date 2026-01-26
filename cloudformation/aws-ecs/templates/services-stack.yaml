@@ -2017,7 +2017,7 @@ Resources:
                   ]
 
                   for username, email, first, last, password, groups in users_config:
-                      keycloak_request(
+                      result = keycloak_request(
                           f"{keycloak_url}/admin/realms/{realm}/users",
                           token,
                           method='POST',
@@ -2031,7 +2031,21 @@ Resources:
                               'credentials': [{'type': 'password', 'value': password, 'temporary': False}]
                           }
                       )
-                      print(f"  Created user: {username}")
+                      if result and result.get('exists'):
+                          # User exists - reset password
+                          user_id = get_user_id(keycloak_url, token, realm, username)
+                          if user_id:
+                              keycloak_request(
+                                  f"{keycloak_url}/admin/realms/{realm}/users/{user_id}/reset-password",
+                                  token,
+                                  method='PUT',
+                                  data={'type': 'password', 'value': password, 'temporary': False}
+                              )
+                              print(f"  Reset password for existing user: {username}")
+                          else:
+                              print(f"  User exists but could not get ID: {username}")
+                      else:
+                          print(f"  Created user: {username}")
 
                       # Assign user to groups
                       user_id = get_user_id(keycloak_url, token, realm, username)
@@ -2257,7 +2271,7 @@ Resources:
       AuthServiceName: !Sub ${EnvironmentName}-auth-server
       RegistryServiceName: !Sub ${EnvironmentName}-registry
       # Force re-run on stack updates by including a timestamp or version
-      Version: '3.0'
+      Version: '4.0'
 
   #============================================================================
   # DocumentDB Initialization (Custom Resource)
