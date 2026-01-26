@@ -345,3 +345,9 @@ agent_security_scans/
 
 # Claude
 .claude
+
+# Scratchpad documents
+.scrathpad/
+
+# Workshop content (managed separately in Workshop Studio)
+cloudformation/aws-ecs/content/

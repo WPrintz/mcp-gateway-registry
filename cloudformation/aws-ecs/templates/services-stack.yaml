@@ -1665,6 +1665,8 @@ Resources:
                     Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
                   - !ImportValue
                     Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
               - Effect: Allow
                 Action:
                   - logs:CreateLogGroup
@@ -1676,6 +1678,7 @@ Resources:
                   - ecs:UpdateService
                 Resource:
                   - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-auth-server
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-registry
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak-init-lambda-role
@@ -1866,6 +1869,7 @@ Resources:
               registry_url = properties.get('RegistryUrl')
               client_secret_arn = properties.get('ClientSecretArn')
               m2m_client_secret_arn = properties.get('M2MClientSecretArn')
+              admin_password_arn = properties.get('AdminPasswordSecretArn')
 
               if request_type == 'Delete':
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
@@ -1873,8 +1877,15 @@ Resources:
 
               try:
                   ssm = boto3.client('ssm')
+                  secrets = boto3.client('secretsmanager')
                   admin_user = ssm.get_parameter(Name='/keycloak/admin', WithDecryption=True)['Parameter']['Value']
                   admin_password = ssm.get_parameter(Name='/keycloak/admin_password', WithDecryption=True)['Parameter']['Value']
+
+                  # Get user password from Secrets Manager
+                  user_password_secret = json.loads(
+                      secrets.get_secret_value(SecretId=admin_password_arn)['SecretString']
+                  )
+                  user_password = user_password_secret.get('admin_password', 'changeme')
                   print(f"Initializing Keycloak at {keycloak_url}")
 
                   if not wait_for_keycloak(keycloak_url):
@@ -1991,9 +2002,10 @@ Resources:
                   token = get_admin_token(keycloak_url, admin_user, admin_password)
 
                   # 6. Create users
+                  # Admin user uses password from Secrets Manager, others use hardcoded passwords
                   print("Creating users...")
                   users_config = [
-                      ('admin', 'admin@example.com', 'Admin', 'User', 'Workshop2026!',
+                      ('admin', 'admin@example.com', 'Admin', 'User', user_password,
                        ['mcp-registry-admin', 'mcp-servers-unrestricted', 'registry-admins']),
                       ('testuser', 'testuser@example.com', 'Test', 'User', 'testpass',
                        ['mcp-registry-user', 'mcp-registry-developer', 'mcp-registry-operator',
@@ -2178,18 +2190,26 @@ Resources:
                           )
                           print("  M2M client secret stored")
 
-                  # 11. Restart auth-server
-                  print("Restarting auth-server service...")
+                  # 11. Restart auth-server and registry services
+                  print("Restarting services...")
                   ecs_cluster = properties.get('EcsClusterName')
                   auth_service = properties.get('AuthServiceName')
+                  registry_service = properties.get('RegistryServiceName')
+                  ecs = boto3.client('ecs')
                   if ecs_cluster and auth_service:
-                      ecs = boto3.client('ecs')
                       ecs.update_service(
                           cluster=ecs_cluster,
                           service=auth_service,
                           forceNewDeployment=True
                       )
-                      print("Auth-server restart triggered")
+                      print("  Auth-server restart triggered")
+                  if ecs_cluster and registry_service:
+                      ecs.update_service(
+                          cluster=ecs_cluster,
+                          service=registry_service,
+                          forceNewDeployment=True
+                      )
+                      print("  Registry restart triggered")
 
                   print("Keycloak initialization complete!")
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
@@ -2210,12 +2230,14 @@ Resources:
           Value: !Sub ${EnvironmentName}-keycloak-init
 
   # Custom Resource to trigger Keycloak initialization
+  # Must run after DocumentDB init to ensure scope mappings exist before auth-server restart
   KeycloakRealmInit:
     Type: Custom::KeycloakInit
     DependsOn:
       - KeycloakService
       - AuthServerService
       - RegistryService
+      - DocumentDBInitTrigger
     Properties:
       ServiceToken: !GetAtt KeycloakInitLambda.Arn
       # Use CloudFront URL for HTTPS access to Keycloak
@@ -2227,11 +2249,15 @@ Resources:
         Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
       M2MClientSecretArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
-      # ECS cluster and service names for restarting auth-server after secret update
+      # Admin password secret for user creation
+      AdminPasswordSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+      # ECS cluster and service names for restarting services after initialization
       EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
       AuthServiceName: !Sub ${EnvironmentName}-auth-server
+      RegistryServiceName: !Sub ${EnvironmentName}-registry
       # Force re-run on stack updates by including a timestamp or version
-      Version: '2.0'
+      Version: '3.0'
 
   #============================================================================
   # DocumentDB Initialization (Custom Resource)
