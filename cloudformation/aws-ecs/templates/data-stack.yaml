@@ -856,8 +856,9 @@ Resources:
                 Action:
                   - iam:PassRole
                 Resource:
-                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-ecs-task-execution-role
-                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-ecs-task-role
+                  # Must match role names defined in compute-stack.yaml
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-task-execution
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-task-role
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-documentdb-init-role
