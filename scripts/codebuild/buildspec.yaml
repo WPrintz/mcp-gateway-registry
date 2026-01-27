@@ -42,6 +42,7 @@ phases:
         build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
         build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
         build_and_push mcp-gateway-grafana cloudformation/aws-ecs/grafana/Dockerfile cloudformation/aws-ecs/grafana &
+        build_and_push mcp-gateway-metrics-service metrics-service/Dockerfile metrics-service &
 
         # Wait for all background jobs and capture exit codes
         FAILED=0

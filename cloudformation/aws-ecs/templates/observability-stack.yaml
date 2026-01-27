@@ -100,6 +100,32 @@ Parameters:
     Default: ''
     Description: Security group ID of the ALB
 
+  # Metrics Service Configuration
+  EnableMetricsService:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Enable metrics-service deployment for collecting application metrics.
+      Required for MCP analytics dashboards to show data.
+
+  MetricsServiceImageUri:
+    Type: String
+    Default: ''
+    Description: ECR URI for metrics-service container image
+
+  ServiceDiscoveryNamespaceId:
+    Type: String
+    Default: ''
+    Description: Cloud Map namespace ID for service discovery
+
+  EcsTasksSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Security group ID for ECS tasks (for metrics-service ingress)
+
 Conditions:
   HasSSOUser: !Not [!Equals [!Ref SSOAdminUserArn, '']]
   DeployGrafana: !And
@@ -109,6 +135,11 @@ Conditions:
     - !Equals [!Ref EnableGrafanaOSS, 'true']
     - !Not [!Equals [!Ref GrafanaOSSImageUri, '']]
     - !Not [!Equals [!Ref ECSClusterArn, '']]
+  DeployMetricsService: !And
+    - !Equals [!Ref EnableMetricsService, 'true']
+    - !Not [!Equals [!Ref MetricsServiceImageUri, '']]
+    - !Not [!Equals [!Ref ECSClusterArn, '']]
+    - !Not [!Equals [!Ref ServiceDiscoveryNamespaceId, '']]
   HasVpcConfig: !And
     - !Not [!Equals [!Ref VpcId, '']]
     - !Not [!Equals [!Ref PrivateSubnetIds, '']]
@@ -454,6 +485,161 @@ Resources:
         }
 
   # ============================================================================
+  # Metrics Service on ECS (Required for MCP Analytics)
+  # ============================================================================
+
+  MetricsServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: DeployMetricsService
+    Properties:
+      GroupDescription: Security group for metrics-service ECS task
+      GroupName: !Sub '${EnvironmentName}-metrics-service-sg'
+      VpcId: !Ref VpcIdForGrafana
+      SecurityGroupIngress:
+        # Allow metrics API access from ECS tasks (registry, auth-server)
+        - IpProtocol: tcp
+          FromPort: 8890
+          ToPort: 8890
+          SourceSecurityGroupId: !Ref EcsTasksSecurityGroupId
+          Description: Allow metrics API from ECS tasks
+        # Allow Prometheus scraping from ADOT (if deployed in same security group)
+        - IpProtocol: tcp
+          FromPort: 9465
+          ToPort: 9465
+          SourceSecurityGroupId: !Ref EcsTasksSecurityGroupId
+          Description: Allow Prometheus scraping from ADOT
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-metrics-service-sg'
+
+  MetricsServiceTaskRole:
+    Type: AWS::IAM::Role
+    Condition: DeployMetricsService
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-metrics-service-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      # No special permissions needed - metrics-service is stateless
+
+  MetricsServiceExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: DeployMetricsService
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-metrics-service-exec-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+
+  MetricsServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployMetricsService
+    Properties:
+      LogGroupName: !Sub '/ecs/${EnvironmentName}/metrics-service'
+      RetentionInDays: 7
+
+  MetricsServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: DeployMetricsService
+    Properties:
+      Family: !Sub '${EnvironmentName}-metrics-service'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !GetAtt MetricsServiceExecutionRole.Arn
+      TaskRoleArn: !GetAtt MetricsServiceTaskRole.Arn
+      ContainerDefinitions:
+        - Name: metrics-service
+          Image: !Ref MetricsServiceImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8890
+              Protocol: tcp
+            - ContainerPort: 9465
+              Protocol: tcp
+          Environment:
+            - Name: METRICS_SERVICE_HOST
+              Value: '0.0.0.0'
+            - Name: METRICS_SERVICE_PORT
+              Value: '8890'
+            - Name: OTEL_SERVICE_NAME
+              Value: 'mcp-metrics-service'
+            - Name: OTEL_PROMETHEUS_ENABLED
+              Value: 'true'
+            - Name: OTEL_PROMETHEUS_PORT
+              Value: '9465'
+            - Name: METRICS_RATE_LIMIT
+              Value: '5000'
+            - Name: SQLITE_DB_PATH
+              Value: '/tmp/metrics.db'
+            # API key for authentication (simple key for workshop)
+            - Name: METRICS_API_KEY
+              Value: 'workshop-metrics-key-2024'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MetricsServiceLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: metrics
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:8890/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+
+  MetricsServiceDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: DeployMetricsService
+    Properties:
+      Name: metrics-service
+      NamespaceId: !Ref ServiceDiscoveryNamespaceId
+      Description: DNS service discovery for metrics-service
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-metrics-service-discovery'
+
+  MetricsServiceEcsService:
+    Type: AWS::ECS::Service
+    Condition: DeployMetricsService
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-metrics-service'
+      Cluster: !Ref ECSClusterArn
+      TaskDefinition: !Ref MetricsServiceTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIdsList
+          SecurityGroups:
+            - !Ref MetricsServiceSecurityGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt MetricsServiceDiscovery.Arn
+      HealthCheckGracePeriodSeconds: 60
+
+  # ============================================================================
   # Grafana OSS on ECS (Alternative to AMG - no SSO required)
   # ============================================================================
 
@@ -731,3 +917,24 @@ Outputs:
     Value: !Ref GrafanaOSSTargetGroup
     Export:
       Name: !Sub '${EnvironmentName}-GrafanaOSSTargetGroup'
+
+  MetricsServiceEndpoint:
+    Condition: DeployMetricsService
+    Description: Metrics service internal endpoint (for METRICS_SERVICE_URL)
+    Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+    Export:
+      Name: !Sub '${EnvironmentName}-MetricsServiceEndpoint'
+
+  MetricsServicePrometheusEndpoint:
+    Condition: DeployMetricsService
+    Description: Metrics service Prometheus endpoint (for ADOT scraping)
+    Value: !Sub 'metrics-service.${EnvironmentName}.local:9465'
+    Export:
+      Name: !Sub '${EnvironmentName}-MetricsServicePrometheusEndpoint'
+
+  MetricsServiceSecurityGroupId:
+    Condition: DeployMetricsService
+    Description: Metrics service security group ID
+    Value: !Ref MetricsServiceSecurityGroup
+    Export:
+      Name: !Sub '${EnvironmentName}-MetricsServiceSecurityGroupId'
