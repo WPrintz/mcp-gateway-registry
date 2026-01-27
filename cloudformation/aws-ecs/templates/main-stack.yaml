@@ -331,6 +331,20 @@ Parameters:
       - 'false'
     Description: Add security-pending tag to servers that fail security scan
 
+  # Observability Configuration (ADOT + AMP)
+  EnableADOTSidecar:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable AWS Distro for OpenTelemetry (ADOT) collector for metrics export to AMP
+
+  AMPRemoteWriteEndpoint:
+    Type: String
+    Default: ''
+    Description: Amazon Managed Prometheus remote write endpoint (required if EnableADOTSidecar is true)
+
   # Template S3 Location (for nested stacks)
   # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
   # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
@@ -476,6 +490,8 @@ Resources:
         SecurityAnalyzers: !Ref SecurityAnalyzers
         SecurityScanTimeout: !Ref SecurityScanTimeout
         SecurityAddPendingTag: !Ref SecurityAddPendingTag
+        EnableADOTSidecar: !Ref EnableADOTSidecar
+        AMPRemoteWriteEndpoint: !Ref AMPRemoteWriteEndpoint
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services

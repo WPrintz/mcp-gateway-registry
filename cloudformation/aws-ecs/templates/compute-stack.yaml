@@ -467,6 +467,17 @@ Resources:
                   - ssmmessages:OpenControlChannel
                   - ssmmessages:OpenDataChannel
                 Resource: '*'
+        - PolicyName: AMPRemoteWrite
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:RemoteWrite
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:GetMetricMetadata
+                Resource: !Sub 'arn:${AWS::Partition}:aps:${AWS::Region}:${AWS::AccountId}:workspace/*'
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-task-role
@@ -646,6 +657,17 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-travel-assistant-agent-ecr
+
+  MetricsServiceEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-metrics-service
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-metrics-service-ecr
 
   #============================================================================
   # CodeBuild Project for Building Container Images
@@ -1497,6 +1519,12 @@ Outputs:
     Value: !GetAtt TravelAssistantAgentEcrRepository.RepositoryUri
     Export:
       Name: !Sub ${EnvironmentName}-TravelAssistantAgentEcrRepositoryUri
+
+  MetricsServiceEcrRepositoryUri:
+    Description: Metrics Service ECR Repository URI
+    Value: !GetAtt MetricsServiceEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceEcrRepositoryUri
 
   # Cloud Map Discovery Service ARNs for ECS Service Registries
   CurrentTimeDiscoveryServiceArn:
