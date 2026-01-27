@@ -2631,7 +2631,7 @@ Resources:
     Condition: EnableObservabilityCondition
     Properties:
       ListenerArn: !ImportValue
-        Fn::Sub: '${EnvironmentName}-MainAlbHttpsListenerArn'
+        Fn::Sub: '${EnvironmentName}-MainAlbHttpListenerArn'
       Priority: 15
       Conditions:
         - Field: path-pattern

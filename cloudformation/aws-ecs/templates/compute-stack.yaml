@@ -1389,6 +1389,12 @@ Outputs:
     Export:
       Name: !Sub ${EnvironmentName}-MainAlbArn
 
+  MainAlbHttpListenerArn:
+    Description: Main ALB HTTP Listener ARN (port 80)
+    Value: !Ref MainAlbHttpListener
+    Export:
+      Name: !Sub ${EnvironmentName}-MainAlbHttpListenerArn
+
   KeycloakAlbDnsName:
     Description: Keycloak ALB DNS Name
     Value: !GetAtt KeycloakAlb.DNSName
