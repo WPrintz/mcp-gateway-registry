@@ -47,8 +47,68 @@ Parameters:
       - 'false'
     Description: Enable default alerting rules for MCP Gateway
 
+  # Grafana Configuration (AMG - requires SSO)
+  EnableGrafana:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Enable Amazon Managed Grafana deployment.
+      Requires IAM Identity Center (SSO) to be configured in the account.
+      Set to false to deploy only AMP and CloudWatch dashboard.
+
+  # Grafana OSS Configuration (ECS-based, no SSO required)
+  EnableGrafanaOSS:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Enable Grafana OSS deployment on ECS.
+      Does not require SSO - uses anonymous access for workshop.
+
+  GrafanaOSSImageUri:
+    Type: String
+    Default: ''
+    Description: ECR URI for Grafana OSS container image
+
+  ECSClusterArn:
+    Type: String
+    Default: ''
+    Description: ARN of existing ECS cluster for Grafana OSS
+
+  PrivateSubnetIdsList:
+    Type: CommaDelimitedList
+    Default: ''
+    Description: List of private subnet IDs for Grafana ECS service
+
+  ALBListenerArn:
+    Type: String
+    Default: ''
+    Description: ARN of ALB HTTPS listener for Grafana
+
+  VpcIdForGrafana:
+    Type: String
+    Default: ''
+    Description: VPC ID for Grafana security group
+
+  ALBSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Security group ID of the ALB
+
 Conditions:
   HasSSOUser: !Not [!Equals [!Ref SSOAdminUserArn, '']]
+  DeployGrafana: !And
+    - !Equals [!Ref EnableGrafana, 'true']
+    - !Not [!Equals [!Ref SSOAdminUserArn, '']]
+  DeployGrafanaOSS: !And
+    - !Equals [!Ref EnableGrafanaOSS, 'true']
+    - !Not [!Equals [!Ref GrafanaOSSImageUri, '']]
+    - !Not [!Equals [!Ref ECSClusterArn, '']]
   HasVpcConfig: !And
     - !Not [!Equals [!Ref VpcId, '']]
     - !Not [!Equals [!Ref PrivateSubnetIds, '']]
@@ -69,47 +129,33 @@ Resources:
         - Key: Environment
           Value: !Ref EnvironmentName
 
-  # Alert Manager Definition (optional)
-  PrometheusAlertManagerDefinition:
-    Type: AWS::APS::AlertManagerDefinition
-    Condition: EnableAlerting
-    Properties:
-      WorkspaceId: !Ref PrometheusWorkspace
-      AlertManagerDefinition: |
-        alertmanager_config: |
-          route:
-            receiver: 'default'
-            group_wait: 30s
-            group_interval: 5m
-            repeat_interval: 4h
-          receivers:
-            - name: 'default'
+  # NOTE: AWS::APS::AlertManagerDefinition is not supported in CloudFormation
+  # Alert Manager must be configured via AWS CLI or Console after deployment:
+  #   aws amp create-alert-manager-definition \
+  #     --workspace-id <WORKSPACE_ID> \
+  #     --data <BASE64_ENCODED_CONFIG> \
+  #     --region us-west-2
 
   # Rule Groups Namespace for MCP Gateway Alerts
   PrometheusRuleGroup:
     Type: AWS::APS::RuleGroupsNamespace
     Condition: EnableAlerting
     Properties:
-      WorkspaceId: !Ref PrometheusWorkspace
+      Workspace: !GetAtt PrometheusWorkspace.Arn
       Name: mcp-gateway-alerts
-      Data: |
+      Data: !Sub |
         groups:
           - name: mcp-gateway
             interval: 60s
             rules:
-              # High error rate alert
               - alert: MCPGatewayHighErrorRate
-                expr: |
-                  sum(rate(http_requests_total{status=~"5.."}[5m])) /
-                  sum(rate(http_requests_total[5m])) > 0.05
+                expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
                 for: 5m
                 labels:
                   severity: warning
                 annotations:
                   summary: High error rate in MCP Gateway
                   description: Error rate is above 5% for 5 minutes
-
-              # Registry service down
               - alert: MCPRegistryDown
                 expr: up{job="mcp-registry"} == 0
                 for: 2m
@@ -118,13 +164,8 @@ Resources:
                 annotations:
                   summary: MCP Registry is down
                   description: MCP Registry service has been down for 2 minutes
-
-              # High latency alert
               - alert: MCPGatewayHighLatency
-                expr: |
-                  histogram_quantile(0.95,
-                    sum(rate(http_request_duration_seconds_bucket[5m])) by (le)
-                  ) > 2
+                expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 2
                 for: 5m
                 labels:
                   severity: warning
@@ -138,6 +179,7 @@ Resources:
 
   GrafanaWorkspace:
     Type: AWS::Grafana::Workspace
+    Condition: DeployGrafana
     Properties:
       Name: !Sub '${EnvironmentName}-grafana'
       Description: Grafana workspace for MCP Gateway Registry monitoring
@@ -160,6 +202,7 @@ Resources:
   # Grafana Workspace IAM Role
   GrafanaWorkspaceRole:
     Type: AWS::IAM::Role
+    Condition: DeployGrafana
     Properties:
       RoleName: !Sub '${EnvironmentName}-grafana-role'
       AssumeRolePolicyDocument:
@@ -261,7 +304,7 @@ Resources:
               "width": 24,
               "height": 1,
               "properties": {
-                "markdown": "# MCP Gateway Registry - Observability Dashboard\n**Prometheus Workspace:** [${PrometheusWorkspace}](https://${AWS::Region}.console.aws.amazon.com/prometheus/home?region=${AWS::Region}#/workspaces/${PrometheusWorkspace}/overview) | **Grafana:** [Open Grafana](${GrafanaWorkspace.Endpoint})"
+                "markdown": "# MCP Gateway Registry - Observability Dashboard\n**Prometheus Workspace:** [Open AMP Console](https://${AWS::Region}.console.aws.amazon.com/prometheus/home?region=${AWS::Region}#/workspaces/${PrometheusWorkspace}/overview)"
               }
             },
             {
@@ -275,9 +318,9 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "metrics": [
-                  ["AWS/ECS", "CPUUtilization", "ClusterName", "${EnvironmentName}-cluster", "ServiceName", "${EnvironmentName}-registry", {"label": "Registry"}],
+                  ["AWS/ECS", "CPUUtilization", "ClusterName", "${EnvironmentName}-ecs-cluster", "ServiceName", "${EnvironmentName}-registry", {"label": "Registry"}],
                   ["...", "${EnvironmentName}-auth-server", {"label": "Auth Server"}],
-                  ["...", "${EnvironmentName}-keycloak", {"label": "Keycloak"}]
+                  ["AWS/ECS", "CPUUtilization", "ClusterName", "${EnvironmentName}-keycloak-cluster", "ServiceName", "${EnvironmentName}-keycloak", {"label": "Keycloak"}]
                 ],
                 "region": "${AWS::Region}",
                 "period": 60
@@ -294,9 +337,9 @@ Resources:
                 "view": "timeSeries",
                 "stacked": false,
                 "metrics": [
-                  ["AWS/ECS", "MemoryUtilization", "ClusterName", "${EnvironmentName}-cluster", "ServiceName", "${EnvironmentName}-registry", {"label": "Registry"}],
+                  ["AWS/ECS", "MemoryUtilization", "ClusterName", "${EnvironmentName}-ecs-cluster", "ServiceName", "${EnvironmentName}-registry", {"label": "Registry"}],
                   ["...", "${EnvironmentName}-auth-server", {"label": "Auth Server"}],
-                  ["...", "${EnvironmentName}-keycloak", {"label": "Keycloak"}]
+                  ["AWS/ECS", "MemoryUtilization", "ClusterName", "${EnvironmentName}-keycloak-cluster", "ServiceName", "${EnvironmentName}-keycloak", {"label": "Keycloak"}]
                 ],
                 "region": "${AWS::Region}",
                 "period": 60
@@ -410,6 +453,195 @@ Resources:
           ]
         }
 
+  # ============================================================================
+  # Grafana OSS on ECS (Alternative to AMG - no SSO required)
+  # ============================================================================
+
+  GrafanaOSSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Condition: DeployGrafanaOSS
+    Properties:
+      GroupDescription: Security group for Grafana OSS ECS service
+      GroupName: !Sub '${EnvironmentName}-grafana-oss-sg'
+      VpcId: !Ref VpcIdForGrafana
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref ALBSecurityGroupId
+          Description: Allow traffic from ALB
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana-oss-sg'
+
+  GrafanaOSSTaskRole:
+    Type: AWS::IAM::Role
+    Condition: DeployGrafanaOSS
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-grafana-oss-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GrafanaAMPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:QueryMetrics
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:GetMetricMetadata
+                Resource: !GetAtt PrometheusWorkspace.Arn
+        - PolicyName: GrafanaCloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarmsForMetric
+                  - cloudwatch:DescribeAlarmHistory
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetInsightRuleReport
+                  - logs:DescribeLogGroups
+                  - logs:GetLogGroupFields
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                  - logs:GetLogEvents
+                  - ec2:DescribeTags
+                  - ec2:DescribeInstances
+                  - ec2:DescribeRegions
+                  - tag:GetResources
+                Resource: '*'
+
+  GrafanaOSSExecutionRole:
+    Type: AWS::IAM::Role
+    Condition: DeployGrafanaOSS
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-grafana-oss-exec-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub 'arn:${AWS::Partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy'
+
+  GrafanaOSSLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: DeployGrafanaOSS
+    Properties:
+      LogGroupName: !Sub '/ecs/${EnvironmentName}/grafana-oss'
+      RetentionInDays: 7
+
+  GrafanaOSSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: DeployGrafanaOSS
+    Properties:
+      Family: !Sub '${EnvironmentName}-grafana-oss'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !GetAtt GrafanaOSSExecutionRole.Arn
+      TaskRoleArn: !GetAtt GrafanaOSSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: grafana
+          Image: !Ref GrafanaOSSImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AMP_ENDPOINT
+              Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}'
+            - Name: GF_SERVER_ROOT_URL
+              Value: '%(protocol)s://%(domain)s/grafana/'
+            - Name: GF_SERVER_SERVE_FROM_SUB_PATH
+              Value: 'true'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref GrafanaOSSLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: grafana
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - wget -q --spider http://localhost:3000/api/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+
+  GrafanaOSSTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: DeployGrafanaOSS
+    Properties:
+      Name: !Sub '${EnvironmentName}-grafana-tg'
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VpcIdForGrafana
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+
+  GrafanaOSSListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: DeployGrafanaOSS
+    Properties:
+      ListenerArn: !Ref ALBListenerArn
+      Priority: 15
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/grafana/*'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref GrafanaOSSTargetGroup
+
+  GrafanaOSSService:
+    Type: AWS::ECS::Service
+    Condition: DeployGrafanaOSS
+    DependsOn: GrafanaOSSListenerRule
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-grafana-oss'
+      Cluster: !Ref ECSClusterArn
+      TaskDefinition: !Ref GrafanaOSSTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Ref PrivateSubnetIdsList
+          SecurityGroups:
+            - !Ref GrafanaOSSSecurityGroup
+      LoadBalancers:
+        - ContainerName: grafana
+          ContainerPort: 3000
+          TargetGroupArn: !Ref GrafanaOSSTargetGroup
+      HealthCheckGracePeriodSeconds: 120
+
 Outputs:
   PrometheusWorkspaceId:
     Description: Amazon Managed Prometheus Workspace ID
@@ -436,12 +668,14 @@ Outputs:
       Name: !Sub '${EnvironmentName}-PrometheusQueryEndpoint'
 
   GrafanaWorkspaceId:
+    Condition: DeployGrafana
     Description: Amazon Managed Grafana Workspace ID
     Value: !Ref GrafanaWorkspace
     Export:
       Name: !Sub '${EnvironmentName}-GrafanaWorkspaceId'
 
   GrafanaWorkspaceEndpoint:
+    Condition: DeployGrafana
     Description: Grafana Workspace URL
     Value: !GetAtt GrafanaWorkspace.Endpoint
     Export:
@@ -471,3 +705,17 @@ Outputs:
     Value: !Sub '${EnvironmentName}-overview'
     Export:
       Name: !Sub '${EnvironmentName}-CloudWatchDashboard'
+
+  GrafanaOSSServiceName:
+    Condition: DeployGrafanaOSS
+    Description: Grafana OSS ECS Service name
+    Value: !Sub '${EnvironmentName}-grafana-oss'
+    Export:
+      Name: !Sub '${EnvironmentName}-GrafanaOSSService'
+
+  GrafanaOSSTargetGroupArn:
+    Condition: DeployGrafanaOSS
+    Description: Grafana OSS Target Group ARN (for CloudFront integration)
+    Value: !Ref GrafanaOSSTargetGroup
+    Export:
+      Name: !Sub '${EnvironmentName}-GrafanaOSSTargetGroup'
