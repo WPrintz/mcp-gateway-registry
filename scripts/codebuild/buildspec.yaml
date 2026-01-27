@@ -1,60 +1,59 @@
 version: 0.2
-
-env:
-  variables:
-    DOCKER_BUILDKIT: "1"
-
 phases:
   pre_build:
     commands:
-      - echo "=== Pre-build phase ==="
-      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - echo "ECR Registry $ECR_REGISTRY"
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
-      - echo "Pulling base images from public ECR..."
-      - docker pull public.ecr.aws/docker/library/python:3.12-slim || true
-      - docker pull public.ecr.aws/docker/library/node:20-slim || true
-      - docker pull quay.io/keycloak/keycloak:23.0 || true
-      - docker pull grafana/grafana:12.3.1 || true
-      - echo "Pulling existing images for cache..."
-      - docker pull $ECR_REGISTRY/mcp-gateway-registry:latest || true
-      - docker pull $ECR_REGISTRY/mcp-gateway-auth-server:latest || true
-      - docker pull $ECR_REGISTRY/keycloak:latest || true
-      - docker pull $ECR_REGISTRY/mcp-gateway-grafana:latest || true
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      # Pre-pull base images to cache them before parallel builds
+      - echo Pre-pulling base images for layer caching...
+      - docker pull public.ecr.aws/docker/library/python:3.12-slim
+      - docker pull quay.io/keycloak/keycloak:23.0
+      - docker pull grafana/grafana:12.3.1
+      # Setup A2A agent dependencies
       - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
-      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/ 2>/dev/null || true
-      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/ 2>/dev/null || true
-
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
   build:
     commands:
-      - echo "=== Build phase ==="
-      - docker build --cache-from $ECR_REGISTRY/mcp-gateway-registry:latest -t $ECR_REGISTRY/mcp-gateway-registry:latest -f docker/Dockerfile.registry .
-      - docker push $ECR_REGISTRY/mcp-gateway-registry:latest
-      - docker build --cache-from $ECR_REGISTRY/mcp-gateway-auth-server:latest -t $ECR_REGISTRY/mcp-gateway-auth-server:latest -f docker/Dockerfile.auth .
-      - docker push $ECR_REGISTRY/mcp-gateway-auth-server:latest
-      - docker build --cache-from $ECR_REGISTRY/keycloak:latest -t $ECR_REGISTRY/keycloak:latest -f docker/keycloak/Dockerfile docker/keycloak
-      - docker push $ECR_REGISTRY/keycloak:latest
-      - docker build -t $ECR_REGISTRY/mcp-gateway-currenttime:latest -f docker/Dockerfile.mcp-server servers/currenttime
-      - docker push $ECR_REGISTRY/mcp-gateway-currenttime:latest
-      - docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:latest -f docker/Dockerfile.mcp-server servers/mcpgw
-      - docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest
-      - docker build -t $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest -f docker/Dockerfile.mcp-server servers/realserverfaketools
-      - docker push $ECR_REGISTRY/mcp-gateway-realserverfaketools:latest
-      - docker build -t $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest -f agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent
-      - docker push $ECR_REGISTRY/mcp-gateway-flight-booking-agent:latest
-      - docker build -t $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest -f agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent
-      - docker push $ECR_REGISTRY/mcp-gateway-travel-assistant-agent:latest
-      - echo "Building Grafana OSS container..."
-      - docker build -t $ECR_REGISTRY/mcp-gateway-grafana:latest -f cloudformation/aws-ecs/grafana/Dockerfile cloudformation/aws-ecs/grafana
-      - docker push $ECR_REGISTRY/mcp-gateway-grafana:latest
+      - echo Building container images in parallel...
+      - |
+        echo "Using image tag: $IMAGE_TAG"
 
+        # Build function that builds and pushes an image
+        # Passes BUILD_VERSION as build arg for version display in UI
+        build_and_push() {
+          local name=$1
+          local dockerfile=$2
+          local context=$3
+          echo "Starting build: $name"
+          docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
+          docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
+          echo "Completed: $name" || echo "FAILED: $name"
+        }
+
+        # Start all builds in parallel
+        # Using CPU-only Dockerfiles for registry and mcpgw (smaller images, no GPU required)
+        build_and_push mcp-gateway-registry docker/Dockerfile.registry-cpu . &
+        build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
+        build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
+        docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && echo "Completed: mcp-gateway-mcpgw" &
+        build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
+        build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
+        build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
+        build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
+        build_and_push mcp-gateway-grafana cloudformation/aws-ecs/grafana/Dockerfile cloudformation/aws-ecs/grafana &
+
+        # Wait for all background jobs and capture exit codes
+        FAILED=0
+        for job in $(jobs -p); do
+          wait $job || FAILED=$((FAILED+1))
+        done
+
+        if [ $FAILED -gt 0 ]; then
+          echo "$FAILED build(s) failed"
+          exit 1
+        fi
+        echo "All builds completed successfully"
   post_build:
     commands:
-      - echo "Build completed on $(date)"
-      - echo "All images pushed to ECR"
-
-cache:
-  paths:
-    - '/root/.cache/pip/**/*'
-    - '/root/.npm/**/*'
+      - echo Build completed on `date`
