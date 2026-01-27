@@ -8,7 +8,7 @@ phases:
       - echo Pre-pulling base images for layer caching...
       - docker pull public.ecr.aws/docker/library/python:3.12-slim
       - docker pull quay.io/keycloak/keycloak:23.0
-      - docker pull grafana/grafana:12.3.1
+      # NOTE: Grafana OSS uses public image directly (grafana/grafana:11.4.0) - no ECR build needed
       # Setup A2A agent dependencies
       - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
       - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
@@ -41,7 +41,7 @@ phases:
         build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
         build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
         build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
-        build_and_push mcp-gateway-grafana cloudformation/aws-ecs/grafana/Dockerfile cloudformation/aws-ecs/grafana &
+        # NOTE: Grafana OSS build removed - using public grafana/grafana:11.4.0 image directly
         build_and_push mcp-gateway-metrics-service metrics-service/Dockerfile metrics-service &
 
         # Wait for all background jobs and capture exit codes

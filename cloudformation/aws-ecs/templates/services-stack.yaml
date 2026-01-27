@@ -247,22 +247,50 @@ Parameters:
     Default: ''
     Description: Email address for CloudWatch alarm notifications (leave empty to disable SNS)
 
-  # Observability Configuration (AMP + ADOT)
+  # Observability Configuration (AMP + ADOT + Grafana + Metrics Service)
+  EnableObservability:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Enable full observability stack (Grafana OSS, metrics-service, ADOT).
+      When enabled, deploys Grafana with dashboards and metrics collection.
+
   EnableADOTSidecar:
     Type: String
-    Default: 'false'
+    Default: 'true'
     AllowedValues: ['true', 'false']
-    Description: Enable AWS Distro for OpenTelemetry (ADOT) sidecar for metrics export
+    Description: Enable AWS Distro for OpenTelemetry (ADOT) collector for metrics export to AMP
 
   AMPRemoteWriteEndpoint:
     Type: String
     Default: ''
-    Description: Amazon Managed Prometheus remote write endpoint (required if EnableADOTSidecar is true)
+    Description: >
+      Amazon Managed Prometheus remote write endpoint. If empty, auto-imports from compute-stack.
+      Format: https://aps-workspaces.<region>.amazonaws.com/workspaces/<workspace-id>/api/v1/remote_write
+
+  # Grafana OSS Configuration (using public OSS image, no custom build)
+  GrafanaImageTag:
+    Type: String
+    Default: '11.4.0'
+    Description: Grafana OSS image tag (pinned to stable version)
+
+  # Metrics Service Configuration
+  MetricsServiceImageRepo:
+    Type: String
+    Default: 'mcp-gateway-metrics-service'
+    Description: ECR repository name for metrics-service
+
+  MetricsServiceImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for metrics-service
 
 Conditions:
   EnableAutoScalingCondition: !Equals [!Ref EnableAutoScaling, 'true']
   EnableMonitoringCondition: !Equals [!Ref EnableMonitoring, 'true']
   EnableADOTCondition: !Equals [!Ref EnableADOTSidecar, 'true']
+  EnableObservabilityCondition: !Equals [!Ref EnableObservability, 'true']
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
   CreateSnsTopicCondition: !And
     - !Condition EnableMonitoringCondition
@@ -320,6 +348,21 @@ Resources:
     Properties:
       LogGroupName: !Sub /ecs/${EnvironmentName}-travel-assistant-agent
       RetentionInDays: 30
+
+  # Observability Log Groups (Grafana, Metrics Service)
+  GrafanaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-grafana
+      RetentionInDays: 7
+
+  MetricsServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-metrics-service
+      RetentionInDays: 7
 
 
   #============================================================================
@@ -2430,6 +2473,298 @@ Resources:
         - Key: Name
           Value: !Sub '${EnvironmentName}-adot-collector'
 
+  #============================================================================
+  # Grafana OSS (Uses public image grafana/grafana, no custom ECR build)
+  # Provides dashboards for MCP Analytics and AWS Infrastructure monitoring
+  #============================================================================
+
+  GrafanaTaskRole:
+    Type: AWS::IAM::Role
+    Condition: EnableObservabilityCondition
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-grafana-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GrafanaAMPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:QueryMetrics
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:GetMetricMetadata
+                Resource: !ImportValue
+                  Fn::Sub: '${EnvironmentName}-PrometheusWorkspaceArn'
+        - PolicyName: GrafanaCloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarmsForMetric
+                  - cloudwatch:DescribeAlarmHistory
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetInsightRuleReport
+                  - logs:DescribeLogGroups
+                  - logs:GetLogGroupFields
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                  - logs:GetLogEvents
+                  - ec2:DescribeTags
+                  - ec2:DescribeInstances
+                  - ec2:DescribeRegions
+                  - tag:GetResources
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana-task-role'
+
+  GrafanaTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: EnableObservabilityCondition
+    Properties:
+      Family: !Sub '${EnvironmentName}-grafana'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskExecutionRoleArn'
+      TaskRoleArn: !Ref GrafanaTaskRole
+      ContainerDefinitions:
+        - Name: grafana
+          # Use official Grafana OSS image directly (no custom ECR build needed)
+          Image: !Sub 'grafana/grafana:${GrafanaImageTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            # AMP endpoint for Prometheus datasource (auto-configured)
+            - Name: AMP_ENDPOINT
+              Value: !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrometheusQueryEndpoint'
+            # Server configuration for CloudFront path-based routing
+            - Name: GF_SERVER_ROOT_URL
+              Value: '%(protocol)s://%(domain)s/grafana/'
+            - Name: GF_SERVER_SERVE_FROM_SUB_PATH
+              Value: 'true'
+            # Authentication - anonymous access for workshop simplicity
+            - Name: GF_AUTH_ANONYMOUS_ENABLED
+              Value: 'true'
+            - Name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              Value: 'Admin'
+            - Name: GF_AUTH_DISABLE_LOGIN_FORM
+              Value: 'false'
+            - Name: GF_SECURITY_ADMIN_PASSWORD
+              Value: 'admin'
+            - Name: GF_USERS_ALLOW_SIGN_UP
+              Value: 'false'
+            # Embedding settings
+            - Name: GF_SECURITY_ALLOW_EMBEDDING
+              Value: 'true'
+            # Logging
+            - Name: GF_LOG_MODE
+              Value: 'console'
+            - Name: GF_LOG_LEVEL
+              Value: 'info'
+            # Performance settings
+            - Name: GF_DASHBOARDS_MIN_REFRESH_INTERVAL
+              Value: '10s'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref GrafanaLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: grafana
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - wget -q --spider http://localhost:3000/api/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana'
+
+  GrafanaTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      Name: !Sub '${EnvironmentName}-grafana-tg'
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !ImportValue
+        Fn::Sub: '${EnvironmentName}-VpcId'
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana-tg'
+
+  GrafanaListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: EnableObservabilityCondition
+    Properties:
+      ListenerArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainAlbHttpsListenerArn'
+      Priority: 15
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/grafana/*'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref GrafanaTargetGroup
+
+  GrafanaService:
+    Type: AWS::ECS::Service
+    Condition: EnableObservabilityCondition
+    DependsOn: GrafanaListenerRule
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-grafana'
+      Cluster: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainEcsClusterArn'
+      TaskDefinition: !Ref GrafanaTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-GrafanaSG'
+          Subnets: !Split
+            - ','
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrivateSubnets'
+      LoadBalancers:
+        - ContainerName: grafana
+          ContainerPort: 3000
+          TargetGroupArn: !Ref GrafanaTargetGroup
+      HealthCheckGracePeriodSeconds: 120
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana'
+
+  #============================================================================
+  # Metrics Service for MCP Analytics
+  # Collects and aggregates metrics from registry and auth-server
+  #============================================================================
+
+  MetricsServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: EnableObservabilityCondition
+    Properties:
+      Family: !Sub '${EnvironmentName}-metrics-service'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '256'
+      Memory: '512'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskExecutionRoleArn'
+      TaskRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskRoleArn'
+      ContainerDefinitions:
+        - Name: metrics-service
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${MetricsServiceImageRepo}:${MetricsServiceImageTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8890
+              Protocol: tcp
+            - ContainerPort: 9465
+              Protocol: tcp
+          Environment:
+            - Name: METRICS_SERVICE_HOST
+              Value: '0.0.0.0'
+            - Name: METRICS_SERVICE_PORT
+              Value: '8890'
+            - Name: OTEL_SERVICE_NAME
+              Value: 'mcp-metrics-service'
+            - Name: OTEL_PROMETHEUS_ENABLED
+              Value: 'true'
+            - Name: OTEL_PROMETHEUS_PORT
+              Value: '9465'
+            - Name: METRICS_RATE_LIMIT
+              Value: '5000'
+            - Name: SQLITE_DB_PATH
+              Value: '/tmp/metrics.db'
+            # API key for authentication (simple key for workshop)
+            - Name: METRICS_API_KEY
+              Value: 'workshop-metrics-key-2024'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MetricsServiceLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: metrics
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:8890/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-metrics-service'
+
+  MetricsServiceEcsService:
+    Type: AWS::ECS::Service
+    Condition: EnableObservabilityCondition
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-metrics-service'
+      Cluster: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainEcsClusterArn'
+      TaskDefinition: !Ref MetricsServiceTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-MetricsServiceSG'
+          Subnets: !Split
+            - ','
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrivateSubnets'
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: '${EnvironmentName}-MetricsServiceDiscoveryServiceArn'
+          ContainerName: metrics-service
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-metrics-service'
+
 #============================================================================
 # Outputs
 #============================================================================
@@ -2490,10 +2825,45 @@ Outputs:
     Export:
       Name: !Sub ${EnvironmentName}-AlarmSnsTopicArn
 
-  # Observability Outputs (ADOT)
+  # Observability Outputs (ADOT, Grafana, Metrics Service)
   ADOTCollectorServiceArn:
     Condition: EnableADOTCondition
     Description: ADOT Collector ECS Service ARN
     Value: !Ref ADOTCollectorService
     Export:
       Name: !Sub ${EnvironmentName}-ADOTCollectorServiceArn
+
+  GrafanaServiceArn:
+    Condition: EnableObservabilityCondition
+    Description: Grafana OSS ECS Service ARN
+    Value: !Ref GrafanaService
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaServiceArn
+
+  GrafanaTargetGroupArn:
+    Condition: EnableObservabilityCondition
+    Description: Grafana OSS Target Group ARN (for CloudFront integration)
+    Value: !Ref GrafanaTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaTargetGroupArn
+
+  MetricsServiceServiceArn:
+    Condition: EnableObservabilityCondition
+    Description: Metrics Service ECS Service ARN
+    Value: !Ref MetricsServiceEcsService
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceServiceArn
+
+  MetricsServiceEndpoint:
+    Condition: EnableObservabilityCondition
+    Description: Metrics service internal endpoint (for METRICS_SERVICE_URL env var)
+    Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceEndpoint
+
+  MetricsServicePrometheusEndpoint:
+    Condition: EnableObservabilityCondition
+    Description: Metrics service Prometheus endpoint (for ADOT scraping)
+    Value: !Sub 'metrics-service.${EnvironmentName}.local:9465'
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServicePrometheusEndpoint

@@ -479,6 +479,70 @@ Resources:
       Description: MCP ports from ECS tasks
 
   #============================================================================
+  # Observability Security Groups (Grafana OSS, Metrics Service)
+  #============================================================================
+
+  # Grafana OSS Security Group - allows traffic from ALB on port 3000
+  GrafanaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-grafana
+      GroupDescription: Security group for Grafana OSS ECS service
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          SourceSecurityGroupId: !Ref MainAlbSG
+          Description: Grafana UI from ALB
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound (for AMP queries, CloudWatch)
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-grafana
+
+  # Allow ALB to route to Grafana on port 3000
+  MainAlbEgressToGrafana:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref MainAlbSG
+      IpProtocol: tcp
+      FromPort: 3000
+      ToPort: 3000
+      DestinationSecurityGroupId: !Ref GrafanaSG
+      Description: ALB to Grafana
+
+  # Metrics Service Security Group - allows traffic from ECS tasks and ADOT scraping
+  MetricsServiceSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-metrics-service
+      GroupDescription: Security group for metrics-service ECS task
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # Allow metrics API access from ECS tasks (registry, auth-server)
+        - IpProtocol: tcp
+          FromPort: 8890
+          ToPort: 8890
+          SourceSecurityGroupId: !Ref EcsTasksSG
+          Description: Metrics API from ECS tasks
+        # Allow Prometheus scraping from ADOT (also in EcsTasksSG)
+        - IpProtocol: tcp
+          FromPort: 9465
+          ToPort: 9465
+          SourceSecurityGroupId: !Ref EcsTasksSG
+          Description: Prometheus scraping from ADOT
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+          Description: Allow all outbound
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-metrics-service
+
+  #============================================================================
   # VPC Endpoints
   #============================================================================
   STSEndpoint:
@@ -582,4 +646,16 @@ Outputs:
     Value: !Ref McpServersSG
     Export:
       Name: !Sub ${EnvironmentName}-McpServersSG
+
+  GrafanaSecurityGroupId:
+    Description: Grafana OSS Security Group ID
+    Value: !Ref GrafanaSG
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaSG
+
+  MetricsServiceSecurityGroupId:
+    Description: Metrics Service Security Group ID
+    Value: !Ref MetricsServiceSG
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceSG
 

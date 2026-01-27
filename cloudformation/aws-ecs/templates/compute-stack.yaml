@@ -251,6 +251,56 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-ecs-logs
 
+  #============================================================================
+  # Amazon Managed Service for Prometheus (AMP) Workspace
+  # Provides metrics storage and querying for MCP Gateway observability
+  #============================================================================
+  PrometheusWorkspace:
+    Type: AWS::APS::Workspace
+    Properties:
+      Alias: !Sub '${EnvironmentName}-prometheus'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-prometheus'
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  # Prometheus Rule Group for MCP Gateway Alerts
+  PrometheusRuleGroup:
+    Type: AWS::APS::RuleGroupsNamespace
+    Properties:
+      Workspace: !GetAtt PrometheusWorkspace.Arn
+      Name: mcp-gateway-alerts
+      Data: !Sub |
+        groups:
+          - name: mcp-gateway
+            interval: 60s
+            rules:
+              - alert: MCPGatewayHighErrorRate
+                expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: High error rate in MCP Gateway
+                  description: Error rate is above 5% for 5 minutes
+              - alert: MCPRegistryDown
+                expr: up{job="mcp-registry"} == 0
+                for: 2m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: MCP Registry is down
+                  description: MCP Registry service has been down for 2 minutes
+              - alert: MCPGatewayHighLatency
+                expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le)) > 2
+                for: 5m
+                labels:
+                  severity: warning
+                annotations:
+                  summary: High latency in MCP Gateway
+                  description: 95th percentile latency is above 2 seconds
+
   ServiceDiscoveryNamespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
     Properties:
@@ -387,6 +437,24 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-registry-discovery
+
+  # Metrics Service discovery for inter-service communication and ADOT scraping
+  MetricsServiceDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: metrics-service
+      NamespaceId: !Ref ServiceDiscoveryNamespace
+      Description: DNS service discovery for Metrics Service
+      DnsConfig:
+        DnsRecords:
+          - Type: A
+            TTL: 10
+        RoutingPolicy: MULTIVALUE
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-metrics-service-discovery
 
   EcsTaskExecutionRole:
     Type: AWS::IAM::Role
@@ -740,64 +808,7 @@ Resources:
       Source:
         Type: GITHUB
         Location: !Ref GitHubRepoUrl
-        BuildSpec: |
-          version: 0.2
-          phases:
-            pre_build:
-              commands:
-                - echo Logging in to Amazon ECR...
-                - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
-                # Pre-pull base images to cache them before parallel builds
-                - echo Pre-pulling base images for layer caching...
-                - docker pull public.ecr.aws/docker/library/python:3.12-slim
-                - docker pull quay.io/keycloak/keycloak:23.0
-                # Setup A2A agent dependencies
-                - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
-                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
-                - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
-            build:
-              commands:
-                - echo Building container images in parallel...
-                - |
-                  echo "Using image tag: $IMAGE_TAG"
-                  
-                  # Build function that builds and pushes an image
-                  # Passes BUILD_VERSION as build arg for version display in UI
-                  build_and_push() {
-                    local name=$1
-                    local dockerfile=$2
-                    local context=$3
-                    echo "Starting build: $name"
-                    docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
-                    docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
-                    echo "Completed: $name" || echo "FAILED: $name"
-                  }
-
-                  # Start all builds in parallel
-                  # Using CPU-only Dockerfiles for registry and mcpgw (smaller images, no GPU required)
-                  build_and_push mcp-gateway-registry docker/Dockerfile.registry-cpu . &
-                  build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
-                  build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
-                  docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && echo "Completed: mcp-gateway-mcpgw" &
-                  build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
-                  build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
-                  build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
-                  build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
-
-                  # Wait for all background jobs and capture exit codes
-                  FAILED=0
-                  for job in $(jobs -p); do
-                    wait $job || FAILED=$((FAILED+1))
-                  done
-
-                  if [ $FAILED -gt 0 ]; then
-                    echo "$FAILED build(s) failed"
-                    exit 1
-                  fi
-                  echo "All builds completed successfully"
-            post_build:
-              commands:
-                - echo Build completed on `date`
+        BuildSpec: scripts/codebuild/buildspec.yaml
       TimeoutInMinutes: 30
       Tags:
         - Key: Name
@@ -1568,3 +1579,34 @@ Outputs:
     Value: !GetAtt RegistryDiscoveryService.Arn
     Export:
       Name: !Sub ${EnvironmentName}-RegistryDiscoveryServiceArn
+
+  MetricsServiceDiscoveryServiceArn:
+    Description: Metrics Service Cloud Map Discovery Service ARN
+    Value: !GetAtt MetricsServiceDiscoveryService.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceDiscoveryServiceArn
+
+  # Amazon Managed Prometheus (AMP) Outputs
+  PrometheusWorkspaceId:
+    Description: Amazon Managed Prometheus Workspace ID
+    Value: !Ref PrometheusWorkspace
+    Export:
+      Name: !Sub ${EnvironmentName}-PrometheusWorkspaceId
+
+  PrometheusWorkspaceArn:
+    Description: Amazon Managed Prometheus Workspace ARN
+    Value: !GetAtt PrometheusWorkspace.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-PrometheusWorkspaceArn
+
+  PrometheusRemoteWriteEndpoint:
+    Description: Prometheus remote write endpoint for ADOT collector
+    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}/api/v1/remote_write'
+    Export:
+      Name: !Sub ${EnvironmentName}-PrometheusRemoteWriteEndpoint
+
+  PrometheusQueryEndpoint:
+    Description: Prometheus query endpoint for Grafana
+    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}'
+    Export:
+      Name: !Sub ${EnvironmentName}-PrometheusQueryEndpoint

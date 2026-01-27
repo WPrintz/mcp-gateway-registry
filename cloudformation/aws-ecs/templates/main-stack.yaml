@@ -331,10 +331,20 @@ Parameters:
       - 'false'
     Description: Add security-pending tag to servers that fail security scan
 
-  # Observability Configuration (ADOT + AMP)
+  # Observability Configuration (ADOT + AMP + Grafana + Metrics Service)
+  EnableObservability:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Enable full observability stack (Grafana OSS, metrics-service, ADOT collector).
+      When enabled, deploys Grafana dashboards for MCP Analytics and AWS Infrastructure monitoring.
+
   EnableADOTSidecar:
     Type: String
-    Default: 'false'
+    Default: 'true'
     AllowedValues:
       - 'true'
       - 'false'
@@ -343,7 +353,24 @@ Parameters:
   AMPRemoteWriteEndpoint:
     Type: String
     Default: ''
-    Description: Amazon Managed Prometheus remote write endpoint (required if EnableADOTSidecar is true)
+    Description: >
+      Amazon Managed Prometheus remote write endpoint. If empty, auto-uses endpoint from compute-stack.
+      Format: https://aps-workspaces.<region>.amazonaws.com/workspaces/<workspace-id>/api/v1/remote_write
+
+  GrafanaImageTag:
+    Type: String
+    Default: '11.4.0'
+    Description: Grafana OSS image tag (pinned to stable version, uses public Docker Hub image)
+
+  MetricsServiceImageRepo:
+    Type: String
+    Default: 'mcp-gateway-metrics-service'
+    Description: ECR repository name for metrics-service
+
+  MetricsServiceImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for metrics-service (defaults to UpstreamVersion if empty)
 
   # Template S3 Location (for nested stacks)
   # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
@@ -372,6 +399,7 @@ Conditions:
   UseDefaultRealServerFakeToolsTag: !Equals [!Ref RealServerFakeToolsImageTag, '']
   UseDefaultFlightBookingAgentTag: !Equals [!Ref FlightBookingAgentImageTag, '']
   UseDefaultTravelAssistantAgentTag: !Equals [!Ref TravelAssistantAgentImageTag, '']
+  UseDefaultMetricsServiceTag: !Equals [!Ref MetricsServiceImageTag, '']
 
 Resources:
 
@@ -490,8 +518,13 @@ Resources:
         SecurityAnalyzers: !Ref SecurityAnalyzers
         SecurityScanTimeout: !Ref SecurityScanTimeout
         SecurityAddPendingTag: !Ref SecurityAddPendingTag
+        # Observability Configuration
+        EnableObservability: !Ref EnableObservability
         EnableADOTSidecar: !Ref EnableADOTSidecar
         AMPRemoteWriteEndpoint: !Ref AMPRemoteWriteEndpoint
+        GrafanaImageTag: !Ref GrafanaImageTag
+        MetricsServiceImageRepo: !Ref MetricsServiceImageRepo
+        MetricsServiceImageTag: !If [UseDefaultMetricsServiceTag, !Ref UpstreamVersion, !Ref MetricsServiceImageTag]
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services
@@ -508,6 +541,10 @@ Outputs:
   KeycloakUrl:
     Description: Keycloak URL (HTTPS via CloudFront)
     Value: !GetAtt ComputeStack.Outputs.KeycloakCloudFrontUrl
+
+  GrafanaUrl:
+    Description: Grafana Dashboard URL (HTTPS via CloudFront, anonymous access enabled)
+    Value: !Sub '${ComputeStack.Outputs.MainCloudFrontUrl}/grafana/'
 
   # Admin Credentials (SSM/Secrets Manager Console URLs)
   MCPGatewayAdminPassword:
