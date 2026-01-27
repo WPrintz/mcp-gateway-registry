@@ -474,6 +474,18 @@ Resources:
         - Key: Name
           Value: !Sub '${EnvironmentName}-grafana-oss-sg'
 
+  # Allow ALB to send traffic to Grafana on port 3000
+  ALBEgressToGrafana:
+    Type: AWS::EC2::SecurityGroupEgress
+    Condition: DeployGrafanaOSS
+    Properties:
+      GroupId: !Ref ALBSecurityGroupId
+      IpProtocol: tcp
+      FromPort: 3000
+      ToPort: 3000
+      DestinationSecurityGroupId: !Ref GrafanaOSSSecurityGroup
+      Description: Allow ALB to reach Grafana OSS
+
   GrafanaOSSTaskRole:
     Type: AWS::IAM::Role
     Condition: DeployGrafanaOSS
