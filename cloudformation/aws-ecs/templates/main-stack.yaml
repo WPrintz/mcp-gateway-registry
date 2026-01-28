@@ -365,7 +365,7 @@ Parameters:
   GrafanaImageTag:
     Type: String
     Default: ''
-    Description: Image tag for Grafana (defaults to UpstreamVersion if empty)
+    Description: Image tag for Grafana (defaults to 'latest' if empty)
 
   MetricsServiceImageRepo:
     Type: String
@@ -375,7 +375,7 @@ Parameters:
   MetricsServiceImageTag:
     Type: String
     Default: ''
-    Description: Image tag for metrics-service (defaults to UpstreamVersion if empty)
+    Description: Image tag for metrics-service (defaults to 'latest' if empty)
 
   # Template S3 Location (for nested stacks)
   # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
@@ -529,9 +529,9 @@ Resources:
         EnableADOTSidecar: !Ref EnableADOTSidecar
         AMPRemoteWriteEndpoint: !Ref AMPRemoteWriteEndpoint
         GrafanaImageRepo: !Ref GrafanaImageRepo
-        GrafanaImageTag: !If [UseDefaultGrafanaTag, !Ref UpstreamVersion, !Ref GrafanaImageTag]
+        GrafanaImageTag: !If [UseDefaultGrafanaTag, 'latest', !Ref GrafanaImageTag]
         MetricsServiceImageRepo: !Ref MetricsServiceImageRepo
-        MetricsServiceImageTag: !If [UseDefaultMetricsServiceTag, !Ref UpstreamVersion, !Ref MetricsServiceImageTag]
+        MetricsServiceImageTag: !If [UseDefaultMetricsServiceTag, 'latest', !Ref MetricsServiceImageTag]
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services
