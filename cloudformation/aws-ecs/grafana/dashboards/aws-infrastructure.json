@@ -410,12 +410,22 @@
     "list": [
       {
         "name": "cluster_name",
-        "type": "constant",
-        "query": "mcp-gateway-ecs-cluster",
-        "hide": 2
+        "label": "ECS Cluster",
+        "type": "query",
+        "datasource": "CloudWatch",
+        "query": {
+          "queryType": "dimensionValues",
+          "namespace": "ECS/ContainerInsights",
+          "dimensionKey": "ClusterName",
+          "region": "default"
+        },
+        "refresh": 1,
+        "regex": "/mcp-gateway.*/",
+        "sort": 1
       },
       {
         "name": "service_name",
+        "label": "ECS Service",
         "type": "query",
         "datasource": "CloudWatch",
         "query": {
@@ -429,31 +439,70 @@
         },
         "refresh": 1,
         "includeAll": true,
-        "allValue": "*"
+        "allValue": "*",
+        "sort": 1
       },
       {
         "name": "alb_name",
-        "type": "constant",
-        "query": "app/mcp-gateway-alb/",
-        "hide": 2
+        "label": "Load Balancer",
+        "type": "query",
+        "datasource": "CloudWatch",
+        "query": {
+          "queryType": "dimensionValues",
+          "namespace": "AWS/ApplicationELB",
+          "dimensionKey": "LoadBalancer",
+          "region": "default"
+        },
+        "refresh": 1,
+        "regex": "/.*mcp-gateway.*/",
+        "sort": 1
       },
       {
         "name": "target_group",
-        "type": "constant",
-        "query": "targetgroup/mcp-gateway-registry/",
-        "hide": 2
+        "label": "Target Group",
+        "type": "query",
+        "datasource": "CloudWatch",
+        "query": {
+          "queryType": "dimensionValues",
+          "namespace": "AWS/ApplicationELB",
+          "dimensionKey": "TargetGroup",
+          "region": "default"
+        },
+        "refresh": 1,
+        "regex": "/.*mcp-gateway.*/",
+        "includeAll": true,
+        "allValue": "*",
+        "sort": 1
       },
       {
         "name": "docdb_cluster",
-        "type": "constant",
-        "query": "mcp-gateway-registry",
-        "hide": 2
+        "label": "DocumentDB Cluster",
+        "type": "query",
+        "datasource": "CloudWatch",
+        "query": {
+          "queryType": "dimensionValues",
+          "namespace": "AWS/DocDB",
+          "dimensionKey": "DBClusterIdentifier",
+          "region": "default"
+        },
+        "refresh": 1,
+        "regex": "/.*mcp-gateway.*/",
+        "sort": 1
       },
       {
         "name": "keycloak_db_cluster",
-        "type": "constant",
-        "query": "mcp-gateway-keycloak-db",
-        "hide": 2
+        "label": "Keycloak DB Cluster",
+        "type": "query",
+        "datasource": "CloudWatch",
+        "query": {
+          "queryType": "dimensionValues",
+          "namespace": "AWS/RDS",
+          "dimensionKey": "DBClusterIdentifier",
+          "region": "default"
+        },
+        "refresh": 1,
+        "regex": "/.*mcp-gateway.*keycloak.*/",
+        "sort": 1
       }
     ]
   },
