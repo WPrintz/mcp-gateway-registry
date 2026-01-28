@@ -584,9 +584,11 @@ Resources:
               Value: '5000'
             - Name: SQLITE_DB_PATH
               Value: '/tmp/metrics.db'
-            # API key for authentication (simple key for workshop)
-            - Name: METRICS_API_KEY
-              Value: 'workshop-metrics-key-2024'
+            # Pre-shared API keys for services (auto-registered at startup)
+            - Name: METRICS_API_KEY_REGISTRY
+              Value: 'workshop-metrics-key-2026'
+            - Name: METRICS_API_KEY_AUTH
+              Value: 'workshop-metrics-key-2026'
           LogConfiguration:
             LogDriver: awslogs
             Options:
