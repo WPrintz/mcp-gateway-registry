@@ -1612,7 +1612,8 @@ Outputs:
   # Amazon Managed Prometheus (AMP) Outputs
   PrometheusWorkspaceId:
     Description: Amazon Managed Prometheus Workspace ID
-    Value: !Ref PrometheusWorkspace
+    # Note: !Ref returns ARN, use !GetAtt WorkspaceId to get just the ID
+    Value: !GetAtt PrometheusWorkspace.WorkspaceId
     Export:
       Name: !Sub ${EnvironmentName}-PrometheusWorkspaceId
 
@@ -1624,12 +1625,17 @@ Outputs:
 
   PrometheusRemoteWriteEndpoint:
     Description: Prometheus remote write endpoint for ADOT collector
-    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}/api/v1/remote_write'
+    # Use WorkspaceId (not Ref which returns ARN) to construct correct endpoint URL
+    Value: !Sub
+      - 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${WorkspaceId}/api/v1/remote_write'
+      - WorkspaceId: !GetAtt PrometheusWorkspace.WorkspaceId
     Export:
       Name: !Sub ${EnvironmentName}-PrometheusRemoteWriteEndpoint
 
   PrometheusQueryEndpoint:
     Description: Prometheus query endpoint for Grafana
-    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}'
+    Value: !Sub
+      - 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${WorkspaceId}'
+      - WorkspaceId: !GetAtt PrometheusWorkspace.WorkspaceId
     Export:
       Name: !Sub ${EnvironmentName}-PrometheusQueryEndpoint

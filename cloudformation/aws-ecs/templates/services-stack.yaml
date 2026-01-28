@@ -2204,7 +2204,8 @@ Resources:
                           token
                       )
                       if m2m_sa and m2m_sa.get('id'):
-                          for group_name in ['mcp-servers-unrestricted', 'a2a-agent-admin']:
+                          # registry-admins needed for /api/servers/register and /api/agents/register
+                          for group_name in ['mcp-servers-unrestricted', 'a2a-agent-admin', 'registry-admins']:
                               group_id = get_group_id(keycloak_url, token, realm, group_name)
                               if group_id:
                                   keycloak_request(
@@ -2329,7 +2330,8 @@ Resources:
       AuthServiceName: !Sub ${EnvironmentName}-auth-server
       RegistryServiceName: !Sub ${EnvironmentName}-registry
       # Force re-run on stack updates by including a timestamp or version
-      Version: '4.0'
+      # v5.0: Added registry-admins group to M2M service account for server registration
+      Version: '5.0'
 
   #============================================================================
   # DocumentDB Initialization (Custom Resource)
@@ -2356,6 +2358,352 @@ Resources:
         Fn::Sub: ${EnvironmentName}-EcsTasksSG
       # Force re-run on stack updates
       Version: '1.0'
+
+  #============================================================================
+  # MCP Server and Agent Auto-Registration (Custom Resource)
+  # Registers all deployed MCP servers and A2A agents with the registry
+  # Runs after KeycloakRealmInit to ensure M2M client is available
+  #============================================================================
+  MCPServerRegistrationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-mcp-registration-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MCPRegistrationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcp-registration-lambda-role
+
+  MCPServerRegistrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-mcp-registration
+      Description: Auto-register MCP servers and A2A agents with the registry
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt MCPServerRegistrationLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          """
+          Lambda function to auto-register MCP servers and A2A agents.
+          Used as a CloudFormation Custom Resource.
+          """
+          import json
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+          import ssl
+          import boto3
+          import cfnresponse
+          import time
+
+          # MCP Servers to register (form data fields for /api/servers/register)
+          MCP_SERVERS = [
+              {
+                  'name': 'Current Time API',
+                  'description': 'A simple API that returns the current server time in various formats.',
+                  'path': '/currenttime/',
+                  'proxy_pass_url': 'http://currenttime.{namespace}.local:8000/',
+                  'tags': 'time,timezone,datetime,api,utility',
+                  'num_tools': '1',
+                  'is_python': 'true',
+                  'license': 'MIT-0'
+              },
+              {
+                  'name': 'MCP Gateway Tools',
+                  'description': 'Provides tools to interact with the MCP Gateway Registry API.',
+                  'path': '/mcpgw/',
+                  'proxy_pass_url': 'http://mcpgw.{namespace}.local:8003/',
+                  'tags': 'registry,management,admin,gateway,mcp-tools',
+                  'num_tools': '11',
+                  'is_python': 'true',
+                  'license': 'MIT'
+              },
+              {
+                  'name': 'Real Server Fake Tools',
+                  'description': 'A collection of fake tools with interesting names for testing.',
+                  'path': '/realserverfaketools/',
+                  'proxy_pass_url': 'http://realserverfaketools.{namespace}.local:8002/',
+                  'tags': 'demo,fake,tools,testing',
+                  'num_tools': '6',
+                  'is_python': 'true',
+                  'license': 'MIT'
+              }
+          ]
+
+          # A2A Agents to register
+          A2A_AGENTS = [
+              {
+                  'name': 'Flight Booking Agent',
+                  'description': 'Flight booking and reservation management agent',
+                  'url': 'http://flight-booking-agent.{namespace}.local:9000/',
+                  'path': '/flight-booking-agent',
+                  'protocolVersion': '0.3.0',
+                  'version': '0.0.1',
+                  'capabilities': {'streaming': True},
+                  'defaultInputModes': ['text/plain', 'application/json'],
+                  'defaultOutputModes': ['text/plain', 'application/json'],
+                  'provider': {'organization': 'MCP Gateway Workshop', 'url': 'https://example.com'},
+                  'skills': [
+                      {'id': 'check_availability', 'name': 'Check Availability', 'description': 'Check seat availability for a flight.', 'tags': ['flight', 'availability']},
+                      {'id': 'reserve_flight', 'name': 'Reserve Flight', 'description': 'Reserve seats on a flight.', 'tags': ['flight', 'reservation']},
+                      {'id': 'confirm_booking', 'name': 'Confirm Booking', 'description': 'Confirm and finalize a booking.', 'tags': ['flight', 'confirmation']},
+                      {'id': 'process_payment', 'name': 'Process Payment', 'description': 'Process payment (simulated).', 'tags': ['payment']},
+                      {'id': 'manage_reservation', 'name': 'Manage Reservation', 'description': 'Update or cancel reservations.', 'tags': ['reservation', 'management']}
+                  ],
+                  'tags': ['travel', 'flight-booking', 'reservation'],
+                  'visibility': 'public',
+                  'license': 'MIT'
+              },
+              {
+                  'name': 'Travel Assistant Agent',
+                  'description': 'Flight search and trip planning agent',
+                  'url': 'http://travel-assistant-agent.{namespace}.local:9000/',
+                  'path': '/travel-assistant-agent',
+                  'protocolVersion': '0.3.0',
+                  'version': '0.0.1',
+                  'capabilities': {'streaming': True},
+                  'defaultInputModes': ['text'],
+                  'defaultOutputModes': ['text'],
+                  'provider': {'organization': 'MCP Gateway Workshop', 'url': 'https://example.com'},
+                  'skills': [
+                      {'id': 'search_flights', 'name': 'Search Flights', 'description': 'Search for available flights.', 'tags': ['flight', 'search']},
+                      {'id': 'check_prices', 'name': 'Check Prices', 'description': 'Get pricing and availability.', 'tags': ['pricing']},
+                      {'id': 'get_recommendations', 'name': 'Get Recommendations', 'description': 'Get flight recommendations.', 'tags': ['recommendations']},
+                      {'id': 'create_trip_plan', 'name': 'Create Trip Plan', 'description': 'Create a trip planning record.', 'tags': ['planning']}
+                  ],
+                  'tags': ['travel', 'flight-search', 'trip-planning'],
+                  'visibility': 'public',
+                  'license': 'MIT'
+              }
+          ]
+
+          def get_m2m_token(keycloak_url, client_id, client_secret):
+              """Get M2M access token from Keycloak."""
+              url = f"{keycloak_url}/realms/mcp-gateway/protocol/openid-connect/token"
+              data = urllib.parse.urlencode({
+                  'grant_type': 'client_credentials',
+                  'client_id': client_id,
+                  'client_secret': client_secret
+              }).encode('utf-8')
+              req = urllib.request.Request(url, data=data, method='POST')
+              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+              ctx = ssl.create_default_context()
+              with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                  result = json.loads(response.read().decode('utf-8'))
+                  return result.get('access_token')
+
+          def api_request_form(url, token, form_data):
+              """Make authenticated POST request with form data to Registry API."""
+              encoded_data = urllib.parse.urlencode(form_data).encode('utf-8')
+              req = urllib.request.Request(url, data=encoded_data, method='POST')
+              req.add_header('Authorization', f'Bearer {token}')
+              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                      if response.status in [200, 201, 204]:
+                          try:
+                              return json.loads(response.read().decode('utf-8'))
+                          except:
+                              return {'success': True}
+                      return {'success': True}
+              except urllib.error.HTTPError as e:
+                  if e.code == 409:
+                      return {'exists': True, 'success': True}
+                  if e.code in [400, 422]:
+                      body = e.read().decode('utf-8')
+                      if 'already' in body.lower() or 'exists' in body.lower():
+                          return {'exists': True, 'success': True}
+                      print(f"API error {e.code}: {body}")
+                      return {'success': False, 'error': body}
+                  raise
+
+          def api_request_json(url, token, json_data):
+              """Make authenticated POST request with JSON data to Registry API."""
+              req = urllib.request.Request(url, method='POST')
+              req.add_header('Authorization', f'Bearer {token}')
+              req.add_header('Content-Type', 'application/json')
+              req.data = json.dumps(json_data).encode('utf-8')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                      if response.status in [200, 201, 204]:
+                          try:
+                              return json.loads(response.read().decode('utf-8'))
+                          except:
+                              return {'success': True}
+                      return {'success': True}
+              except urllib.error.HTTPError as e:
+                  if e.code == 409:
+                      return {'exists': True, 'success': True}
+                  if e.code in [400, 422]:
+                      body = e.read().decode('utf-8')
+                      if 'already' in body.lower() or 'exists' in body.lower():
+                          return {'exists': True, 'success': True}
+                      print(f"API error {e.code}: {body}")
+                      return {'success': False, 'error': body}
+                  raise
+
+          def wait_for_registry(registry_url, max_attempts=30):
+              """Wait for Registry API to be ready using health endpoint."""
+              ctx = ssl.create_default_context()
+              for i in range(max_attempts):
+                  try:
+                      # Use /health endpoint which doesn't require auth
+                      req = urllib.request.Request(f"{registry_url}/health")
+                      with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+                          if response.status == 200:
+                              print(f"Registry ready after {i+1} attempts")
+                              return True
+                  except Exception as e:
+                      print(f"Attempt {i+1}: Registry not ready - {str(e)}")
+                  time.sleep(5)
+              return False
+
+          def handler(event, context):
+              """CloudFormation Custom Resource handler."""
+              print(f"Event: {json.dumps(event)}")
+              request_type = event.get('RequestType')
+              properties = event.get('ResourceProperties', {})
+              registry_url = properties.get('RegistryUrl')
+              keycloak_url = properties.get('KeycloakUrl')
+              m2m_secret_arn = properties.get('M2MClientSecretArn')
+              namespace = properties.get('EnvironmentName', 'mcp-gateway')
+
+              if request_type == 'Delete':
+                  # Don't delete registrations on stack delete
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  secrets = boto3.client('secretsmanager')
+
+                  # Get M2M client credentials
+                  m2m_secret = json.loads(
+                      secrets.get_secret_value(SecretId=m2m_secret_arn)['SecretString']
+                  )
+                  client_id = m2m_secret.get('client_id', 'mcp-gateway-m2m')
+                  client_secret = m2m_secret.get('client_secret')
+
+                  print(f"Getting M2M token from {keycloak_url}")
+                  token = get_m2m_token(keycloak_url, client_id, client_secret)
+                  if not token:
+                      raise Exception("Failed to get M2M token")
+                  print("Got M2M token")
+
+                  # Wait for registry to be ready (uses /health endpoint, no auth needed)
+                  if not wait_for_registry(registry_url):
+                      raise Exception("Registry not ready after maximum attempts")
+
+                  # Register MCP Servers (uses form data)
+                  print("Registering MCP Servers...")
+                  servers_registered = 0
+                  for server in MCP_SERVERS:
+                      # Replace namespace placeholder
+                      server_data = server.copy()
+                      server_data['proxy_pass_url'] = server_data['proxy_pass_url'].replace('{namespace}', namespace)
+
+                      print(f"  Registering: {server_data['name']}")
+                      result = api_request_form(
+                          f"{registry_url}/api/servers/register",
+                          token,
+                          server_data
+                      )
+                      if result.get('success') or result.get('exists'):
+                          print(f"    OK (exists={result.get('exists', False)})")
+                          servers_registered += 1
+                      else:
+                          print(f"    Failed: {result}")
+
+                  # Register A2A Agents (uses JSON data)
+                  print("Registering A2A Agents...")
+                  agents_registered = 0
+                  for agent in A2A_AGENTS:
+                      # Replace namespace placeholder
+                      agent_data = agent.copy()
+                      agent_data['url'] = agent_data['url'].replace('{namespace}', namespace)
+
+                      print(f"  Registering: {agent_data['name']}")
+                      result = api_request_json(
+                          f"{registry_url}/api/agents/register",
+                          token,
+                          agent_data
+                      )
+                      if result.get('success') or result.get('exists'):
+                          print(f"    OK (exists={result.get('exists', False)})")
+                          agents_registered += 1
+                      else:
+                          print(f"    Failed: {result}")
+
+                  print(f"Registration complete: {servers_registered} servers, {agents_registered} agents")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'ServersRegistered': servers_registered,
+                      'AgentsRegistered': agents_registered
+                  })
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcp-registration
+
+  # Custom Resource to trigger MCP server and agent registration
+  MCPServerRegistration:
+    Type: Custom::MCPServerRegistration
+    DependsOn:
+      - KeycloakRealmInit
+      - CurrentTimeService
+      - McpgwService
+      - RealServerFakeToolsService
+      - FlightBookingAgentService
+      - TravelAssistantAgentService
+    Properties:
+      ServiceToken: !GetAtt MCPServerRegistrationLambda.Arn
+      RegistryUrl: !ImportValue
+        Fn::Sub: ${EnvironmentName}-RegistryUrl
+      KeycloakUrl: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
+      M2MClientSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+      EnvironmentName: !Ref EnvironmentName
+      # Increment to force re-registration on stack updates
+      # v1.3: Fixed to use form data instead of JSON for server registration
+      Version: '1.3'
 
   #============================================================================
   # ADOT Collector for Prometheus Metrics (Optional)

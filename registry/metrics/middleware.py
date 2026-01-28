@@ -35,36 +35,55 @@ class RegistryMetricsMiddleware(BaseHTTPMiddleware):
         """Extract operation type and resource information from the request."""
         path = request.url.path
         method = request.method
-        
-        # Skip non-API endpoints
-        if not path.startswith('/api/'):
+
+        # Skip non-API and non-MCP endpoints
+        if not (path.startswith('/api/') or path.startswith('/mcp/')):
             return None
-        
+
         # Determine operation and resource type
         operation = "unknown"
         resource_type = "unknown"
         resource_id = ""
-        
-        # Map HTTP methods to operations
+
+        # Parse path to determine resource type and ID
+        path_parts = [p for p in path.split('/') if p]  # Remove empty parts
+
+        # Handle MCP protocol calls: /mcp/{server}/
+        if len(path_parts) >= 1 and path_parts[0] == 'mcp':
+            resource_type = "mcp_protocol"
+            operation = "mcp_call"
+            if len(path_parts) >= 2:
+                resource_id = path_parts[1]  # server name
+            return {
+                "operation": operation,
+                "resource_type": resource_type,
+                "resource_id": resource_id,
+                "path": path
+            }
+
+        # Map HTTP methods to operations for API calls
         method_mapping = {
             "GET": "read",
-            "POST": "create", 
+            "POST": "create",
             "PUT": "update",
             "PATCH": "update",
             "DELETE": "delete"
         }
-        
+
         operation = method_mapping.get(method, "unknown")
-        
-        # Parse path to determine resource type and ID
-        path_parts = [p for p in path.split('/') if p]  # Remove empty parts
-        
+
         if len(path_parts) >= 2 and path_parts[0] == 'api':
             if path_parts[1] == 'servers':
                 resource_type = "server"
                 if len(path_parts) >= 3:
                     resource_id = path_parts[2]
                 # Special case for GET /api/servers - this is a list operation
+                if method == "GET" and len(path_parts) == 2:
+                    operation = "list"
+            elif path_parts[1] == 'agents':
+                resource_type = "agent"
+                if len(path_parts) >= 3:
+                    resource_id = path_parts[2]
                 if method == "GET" and len(path_parts) == 2:
                     operation = "list"
             elif path_parts[1] == 'search':
@@ -82,7 +101,7 @@ class RegistryMetricsMiddleware(BaseHTTPMiddleware):
                         operation = "logout"
                     elif path_parts[2] == 'me':
                         operation = "profile"
-        
+
         return {
             "operation": operation,
             "resource_type": resource_type,

@@ -766,7 +766,9 @@ Resources:
             - Name: AWS_REGION
               Value: !Ref AWS::Region
             - Name: AMP_ENDPOINT
-              Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}'
+              Value: !Sub
+                - 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${WorkspaceId}'
+                - WorkspaceId: !GetAtt PrometheusWorkspace.WorkspaceId
             - Name: GF_SERVER_ROOT_URL
               Value: '%(protocol)s://%(domain)s/grafana/'
             - Name: GF_SERVER_SERVE_FROM_SUB_PATH
@@ -843,7 +845,8 @@ Resources:
 Outputs:
   PrometheusWorkspaceId:
     Description: Amazon Managed Prometheus Workspace ID
-    Value: !Ref PrometheusWorkspace
+    # Note: !Ref returns ARN, use !GetAtt WorkspaceId to get just the ID
+    Value: !GetAtt PrometheusWorkspace.WorkspaceId
     Export:
       Name: !Sub '${EnvironmentName}-PrometheusWorkspaceId'
 
@@ -855,13 +858,18 @@ Outputs:
 
   PrometheusEndpoint:
     Description: Prometheus remote write endpoint
-    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}/api/v1/remote_write'
+    # Use WorkspaceId (not Ref which returns ARN) to construct correct endpoint URL
+    Value: !Sub
+      - 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${WorkspaceId}/api/v1/remote_write'
+      - WorkspaceId: !GetAtt PrometheusWorkspace.WorkspaceId
     Export:
       Name: !Sub '${EnvironmentName}-PrometheusEndpoint'
 
   PrometheusQueryEndpoint:
     Description: Prometheus query endpoint
-    Value: !Sub 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${PrometheusWorkspace}'
+    Value: !Sub
+      - 'https://aps-workspaces.${AWS::Region}.amazonaws.com/workspaces/${WorkspaceId}'
+      - WorkspaceId: !GetAtt PrometheusWorkspace.WorkspaceId
     Export:
       Name: !Sub '${EnvironmentName}-PrometheusQueryEndpoint'
 

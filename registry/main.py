@@ -43,6 +43,9 @@ from registry.health.service import health_service
 from registry.core.nginx_service import nginx_service
 from registry.services.federation_service import get_federation_service
 
+# Import metrics middleware
+from registry.metrics import add_registry_metrics_middleware
+
 # Import core configuration
 from registry.core.config import settings
 
@@ -296,6 +299,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Add metrics collection middleware for observability
+add_registry_metrics_middleware(app)
 
 # Register API routers with /api prefix
 app.include_router(auth_router, prefix="/api/auth", tags=["Authentication"])
