@@ -31,6 +31,10 @@ UI-Scopes:
     - all
     delete_agent:
     - all
+    toggle_agent:
+    - all
+    health_check_agent:
+    - all
     list_service:
     - all
     register_service:
@@ -53,6 +57,10 @@ UI-Scopes:
     modify_agent:
     - all
     delete_agent:
+    - all
+    toggle_agent:
+    - all
+    health_check_agent:
     - all
     list_service:
     - all
