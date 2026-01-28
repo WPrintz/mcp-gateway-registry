@@ -737,6 +737,17 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-metrics-service-ecr
 
+  GrafanaEcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: mcp-gateway-grafana
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-grafana-ecr
+
   #============================================================================
   # CodeBuild Project for Building Container Images
   #============================================================================
@@ -1542,6 +1553,12 @@ Outputs:
     Value: !GetAtt MetricsServiceEcrRepository.RepositoryUri
     Export:
       Name: !Sub ${EnvironmentName}-MetricsServiceEcrRepositoryUri
+
+  GrafanaEcrRepositoryUri:
+    Description: Grafana ECR Repository URI
+    Value: !GetAtt GrafanaEcrRepository.RepositoryUri
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaEcrRepositoryUri
 
   # Cloud Map Discovery Service ARNs for ECS Service Registries
   CurrentTimeDiscoveryServiceArn:

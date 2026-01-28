@@ -357,10 +357,15 @@ Parameters:
       Amazon Managed Prometheus remote write endpoint. If empty, auto-uses endpoint from compute-stack.
       Format: https://aps-workspaces.<region>.amazonaws.com/workspaces/<workspace-id>/api/v1/remote_write
 
+  GrafanaImageRepo:
+    Type: String
+    Default: 'mcp-gateway-grafana'
+    Description: ECR repository name for Grafana (with dashboards baked in from cloudformation/aws-ecs/grafana/)
+
   GrafanaImageTag:
     Type: String
-    Default: '11.4.0'
-    Description: Grafana OSS image tag (pinned to stable version, uses public Docker Hub image)
+    Default: ''
+    Description: Image tag for Grafana (defaults to UpstreamVersion if empty)
 
   MetricsServiceImageRepo:
     Type: String
@@ -400,6 +405,7 @@ Conditions:
   UseDefaultFlightBookingAgentTag: !Equals [!Ref FlightBookingAgentImageTag, '']
   UseDefaultTravelAssistantAgentTag: !Equals [!Ref TravelAssistantAgentImageTag, '']
   UseDefaultMetricsServiceTag: !Equals [!Ref MetricsServiceImageTag, '']
+  UseDefaultGrafanaTag: !Equals [!Ref GrafanaImageTag, '']
 
 Resources:
 
@@ -522,7 +528,8 @@ Resources:
         EnableObservability: !Ref EnableObservability
         EnableADOTSidecar: !Ref EnableADOTSidecar
         AMPRemoteWriteEndpoint: !Ref AMPRemoteWriteEndpoint
-        GrafanaImageTag: !Ref GrafanaImageTag
+        GrafanaImageRepo: !Ref GrafanaImageRepo
+        GrafanaImageTag: !If [UseDefaultGrafanaTag, !Ref UpstreamVersion, !Ref GrafanaImageTag]
         MetricsServiceImageRepo: !Ref MetricsServiceImageRepo
         MetricsServiceImageTag: !If [UseDefaultMetricsServiceTag, !Ref UpstreamVersion, !Ref MetricsServiceImageTag]
       Tags:
