@@ -22,16 +22,21 @@ phases:
         # Build function that builds and pushes an image
         # Passes BUILD_VERSION as build arg for version display in UI
         # Tags with both $IMAGE_TAG and 'latest' for flexibility
+        # Returns non-zero exit code on failure so wait can detect it
         build_and_push() {
           local name=$1
           local dockerfile=$2
           local context=$3
           echo "Starting build: $name"
-          docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
-          docker tag $ECR_REGISTRY/$name:$IMAGE_TAG $ECR_REGISTRY/$name:latest && \
-          docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
-          docker push $ECR_REGISTRY/$name:latest && \
-          echo "Completed: $name" || echo "FAILED: $name"
+          if docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
+             docker tag $ECR_REGISTRY/$name:$IMAGE_TAG $ECR_REGISTRY/$name:latest && \
+             docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
+             docker push $ECR_REGISTRY/$name:latest; then
+            echo "Completed: $name"
+          else
+            echo "FAILED: $name"
+            return 1
+          fi
         }
 
         # Start all builds in parallel
@@ -39,7 +44,7 @@ phases:
         build_and_push mcp-gateway-registry docker/Dockerfile.registry-cpu . &
         build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
         build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
-        docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker tag $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG $ECR_REGISTRY/mcp-gateway-mcpgw:latest && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest && echo "Completed: mcp-gateway-mcpgw" &
+        (docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker tag $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG $ECR_REGISTRY/mcp-gateway-mcpgw:latest && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest && echo "Completed: mcp-gateway-mcpgw" || { echo "FAILED: mcp-gateway-mcpgw"; exit 1; }) &
         build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
         build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
         build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
