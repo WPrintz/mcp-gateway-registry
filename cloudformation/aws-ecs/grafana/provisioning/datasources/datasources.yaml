@@ -12,7 +12,7 @@ datasources:
       httpMethod: POST
       timeInterval: "15s"
       sigV4Auth: true
-      sigV4AuthType: default
+      sigV4AuthType: ec2_iam_role
       sigV4Region: ${AWS_REGION}
 
   # CloudWatch - uses IAM task role for authentication
