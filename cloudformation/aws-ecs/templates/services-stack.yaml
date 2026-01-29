@@ -291,6 +291,14 @@ Parameters:
     Default: 'latest'
     Description: Image tag for metrics-service
 
+  MetricsApiKey:
+    Type: String
+    Default: 'workshop-metrics-key-2026'
+    NoEcho: true
+    Description: >
+      Shared API key for metrics collection. Used by registry/auth-server to send metrics
+      and by metrics-service for authentication. Change this value to rotate the key.
+
 Conditions:
   EnableAutoScalingCondition: !Equals [!Ref EnableAutoScaling, 'true']
   EnableMonitoringCondition: !Equals [!Ref EnableMonitoring, 'true']
@@ -444,7 +452,7 @@ Resources:
             - Name: METRICS_SERVICE_URL
               Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
             - Name: METRICS_API_KEY
-              Value: 'workshop-metrics-key-2026'
+              Value: !Ref MetricsApiKey
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
@@ -591,7 +599,7 @@ Resources:
             - Name: METRICS_SERVICE_URL
               Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
             - Name: METRICS_API_KEY
-              Value: 'workshop-metrics-key-2026'
+              Value: !Ref MetricsApiKey
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
@@ -2911,6 +2919,11 @@ Resources:
           Environment:
             - Name: AWS_REGION
               Value: !Ref AWS::Region
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            # Enable AWS SDK config loading for credential discovery
+            - Name: AWS_SDK_LOAD_CONFIG
+              Value: '1'
             # AMP endpoint for Prometheus datasource (auto-configured)
             - Name: AMP_ENDPOINT
               Value: !ImportValue
@@ -3071,9 +3084,10 @@ Resources:
               Value: '5000'
             - Name: SQLITE_DB_PATH
               Value: '/tmp/metrics.db'
-            # API key for authentication (simple key for workshop)
-            - Name: METRICS_API_KEY
-              Value: 'workshop-metrics-key-2026'
+            # API keys for authentication - must match METRICS_API_KEY_* pattern for auto-registration
+            # The setup_preshared_api_keys() function registers keys from METRICS_API_KEY_<SERVICE> env vars
+            - Name: METRICS_API_KEY_REGISTRY
+              Value: !Ref MetricsApiKey
           LogConfiguration:
             LogDriver: awslogs
             Options:
