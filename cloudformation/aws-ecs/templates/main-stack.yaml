@@ -11,10 +11,16 @@ Parameters:
     Default: 'v1.0.12'
     Description: >
       Upstream mcp-gateway-registry version this deployment is based on.
-      Used as default image tag for all services. Override individual *ImageTag
-      parameters if services need different versions.
+      Used for display purposes in the registry console. Image tags default
+      to 'latest' unless explicitly overridden via *ImageTag parameters.
     AllowedPattern: '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$|^latest$'
     ConstraintDescription: Must be a semantic version (e.g., v1.0.12, 1.0.12) or 'latest'
+
+  # Build Trigger - increment to force CodeBuild rebuild
+  BuildTriggerVersion:
+    Type: String
+    Default: '1'
+    Description: Increment this value to force a CodeBuild rebuild of all container images
 
   EnvironmentName:
     Type: String
@@ -115,7 +121,7 @@ Parameters:
   RegistryImageTag:
     Type: String
     Default: ''
-    Description: Image tag for Registry service (defaults to UpstreamVersion if empty)
+    Description: Image tag for Registry service (defaults to 'latest' if empty)
 
   AuthServerImageRepo:
     Type: String
@@ -125,7 +131,7 @@ Parameters:
   AuthServerImageTag:
     Type: String
     Default: ''
-    Description: Image tag for Auth Server (defaults to UpstreamVersion if empty)
+    Description: Image tag for Auth Server (defaults to 'latest' if empty)
 
   KeycloakImageRepo:
     Type: String
@@ -135,7 +141,7 @@ Parameters:
   KeycloakImageTag:
     Type: String
     Default: ''
-    Description: Image tag for Keycloak (defaults to UpstreamVersion if empty)
+    Description: Image tag for Keycloak (defaults to 'latest' if empty)
 
   CurrentTimeImageRepo:
     Type: String
@@ -145,7 +151,7 @@ Parameters:
   CurrentTimeImageTag:
     Type: String
     Default: ''
-    Description: Image tag for CurrentTime MCP server (defaults to UpstreamVersion if empty)
+    Description: Image tag for CurrentTime MCP server (defaults to 'latest' if empty)
 
   McpgwImageRepo:
     Type: String
@@ -155,7 +161,7 @@ Parameters:
   McpgwImageTag:
     Type: String
     Default: ''
-    Description: Image tag for MCPGW MCP server (defaults to UpstreamVersion if empty)
+    Description: Image tag for MCPGW MCP server (defaults to 'latest' if empty)
 
   RealServerFakeToolsImageRepo:
     Type: String
@@ -165,7 +171,7 @@ Parameters:
   RealServerFakeToolsImageTag:
     Type: String
     Default: ''
-    Description: Image tag for RealServerFakeTools MCP server (defaults to UpstreamVersion if empty)
+    Description: Image tag for RealServerFakeTools MCP server (defaults to 'latest' if empty)
 
   FlightBookingAgentImageRepo:
     Type: String
@@ -175,7 +181,7 @@ Parameters:
   FlightBookingAgentImageTag:
     Type: String
     Default: ''
-    Description: Image tag for Flight Booking Agent (defaults to UpstreamVersion if empty)
+    Description: Image tag for Flight Booking Agent (defaults to 'latest' if empty)
 
   TravelAssistantAgentImageRepo:
     Type: String
@@ -185,7 +191,7 @@ Parameters:
   TravelAssistantAgentImageTag:
     Type: String
     Default: ''
-    Description: Image tag for Travel Assistant Agent (defaults to UpstreamVersion if empty)
+    Description: Image tag for Travel Assistant Agent (defaults to 'latest' if empty)
 
   # Resource Configuration
   ServiceCpu:
@@ -469,6 +475,7 @@ Resources:
         HostedZoneId: !Ref HostedZoneId
         UseRegionalDomains: !Ref UseRegionalDomains
         UpstreamVersion: !Ref UpstreamVersion
+        BuildTriggerVersion: !Ref BuildTriggerVersion
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-compute
@@ -487,21 +494,21 @@ Resources:
       Parameters:
         EnvironmentName: !Ref EnvironmentName
         RegistryImageRepo: !Ref RegistryImageRepo
-        RegistryImageTag: !If [UseDefaultRegistryTag, !Ref UpstreamVersion, !Ref RegistryImageTag]
+        RegistryImageTag: !If [UseDefaultRegistryTag, 'latest', !Ref RegistryImageTag]
         AuthServerImageRepo: !Ref AuthServerImageRepo
-        AuthServerImageTag: !If [UseDefaultAuthServerTag, !Ref UpstreamVersion, !Ref AuthServerImageTag]
+        AuthServerImageTag: !If [UseDefaultAuthServerTag, 'latest', !Ref AuthServerImageTag]
         KeycloakImageRepo: !Ref KeycloakImageRepo
-        KeycloakImageTag: !If [UseDefaultKeycloakTag, !Ref UpstreamVersion, !Ref KeycloakImageTag]
+        KeycloakImageTag: !If [UseDefaultKeycloakTag, 'latest', !Ref KeycloakImageTag]
         CurrentTimeImageRepo: !Ref CurrentTimeImageRepo
-        CurrentTimeImageTag: !If [UseDefaultCurrentTimeTag, !Ref UpstreamVersion, !Ref CurrentTimeImageTag]
+        CurrentTimeImageTag: !If [UseDefaultCurrentTimeTag, 'latest', !Ref CurrentTimeImageTag]
         McpgwImageRepo: !Ref McpgwImageRepo
-        McpgwImageTag: !If [UseDefaultMcpgwTag, !Ref UpstreamVersion, !Ref McpgwImageTag]
+        McpgwImageTag: !If [UseDefaultMcpgwTag, 'latest', !Ref McpgwImageTag]
         RealServerFakeToolsImageRepo: !Ref RealServerFakeToolsImageRepo
-        RealServerFakeToolsImageTag: !If [UseDefaultRealServerFakeToolsTag, !Ref UpstreamVersion, !Ref RealServerFakeToolsImageTag]
+        RealServerFakeToolsImageTag: !If [UseDefaultRealServerFakeToolsTag, 'latest', !Ref RealServerFakeToolsImageTag]
         FlightBookingAgentImageRepo: !Ref FlightBookingAgentImageRepo
-        FlightBookingAgentImageTag: !If [UseDefaultFlightBookingAgentTag, !Ref UpstreamVersion, !Ref FlightBookingAgentImageTag]
+        FlightBookingAgentImageTag: !If [UseDefaultFlightBookingAgentTag, 'latest', !Ref FlightBookingAgentImageTag]
         TravelAssistantAgentImageRepo: !Ref TravelAssistantAgentImageRepo
-        TravelAssistantAgentImageTag: !If [UseDefaultTravelAssistantAgentTag, !Ref UpstreamVersion, !Ref TravelAssistantAgentImageTag]
+        TravelAssistantAgentImageTag: !If [UseDefaultTravelAssistantAgentTag, 'latest', !Ref TravelAssistantAgentImageTag]
         ServiceCpu: !Ref ServiceCpu
         ServiceMemory: !Ref ServiceMemory
         KeycloakCpu: !Ref KeycloakCpu

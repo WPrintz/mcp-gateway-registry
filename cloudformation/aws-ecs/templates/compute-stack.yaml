@@ -103,6 +103,11 @@ Parameters:
     Default: 'v1.0.12'
     Description: Version tag for container images (e.g., v1.0.12, latest)
 
+  BuildTriggerVersion:
+    Type: String
+    Default: '1'
+    Description: Increment this value to force a CodeBuild rebuild of container images
+
 Conditions:
   UseRegionalDomainsCondition: !Equals
     - !Ref UseRegionalDomains
@@ -934,6 +939,8 @@ Resources:
     Properties:
       ServiceToken: !GetAtt TriggerBuildLambda.Arn
       ProjectName: !Ref ContainerBuildProject
+      # Increment BuildTriggerVersion parameter to force a rebuild
+      TriggerVersion: !Ref BuildTriggerVersion
 
   RegistryCertificate:
     Type: AWS::CertificateManager::Certificate
