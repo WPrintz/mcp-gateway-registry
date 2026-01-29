@@ -156,25 +156,27 @@ This preserves the metrics-service benefits while using AWS-native durability.
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐ │
 │  │    Registry     │  │   Auth Server   │  │   Other Services    │ │
 │  │                 │  │                 │  │   (MCP Servers)     │ │
-│  │ METRICS_SERVICE │  │ METRICS_SERVICE │  │                     │ │
-│  │ _URL=http://    │  │ _URL=http://    │  │                     │ │
+│  │ METRICS_SERVICE │  │ METRICS_SERVICE │  │  No custom metrics  │ │
+│  │ _URL=http://    │  │ _URL=http://    │  │  (CloudWatch only)  │ │
 │  │ metrics:8890    │  │ metrics:8890    │  │                     │ │
-│  └────────┬────────┘  └────────┬────────┘  └──────────┬──────────┘ │
-│           │                    │                       │            │
-│           └────────────────────┴───────────────────────┘            │
+│  │ METRICS_API_KEY │  │ METRICS_API_KEY │  │                     │ │
+│  └────────┬────────┘  └────────┬────────┘  └─────────────────────┘ │
+│           │                    │                                     │
+│           └────────────────────┘                                     │
 │                                │                                     │
 └────────────────────────────────┼─────────────────────────────────────┘
                                  │
                                  │ HTTP POST /metrics
-                                 │ X-API-Key authentication
+                                 │ Header: X-API-Key: <METRICS_API_KEY>
                                  ▼
               ┌──────────────────────────────────────────┐
               │      metrics-service (ECS Task)          │
+              │      METRICS_API_KEY_REGISTRY=<key>      │
               │                                          │
               │  ┌────────────────────────────────────┐ │
               │  │ FastAPI Application                 │ │
               │  │ - Receives metrics via HTTP API    │ │
-              │  │ - API key authentication           │ │
+              │  │ - API key auth (METRICS_API_KEY_*) │ │
               │  │ - Rate limiting (1000 req/min)     │ │
               │  │ - Request validation               │ │
               │  │ - In-memory buffering (5s flush)   │ │
@@ -265,6 +267,65 @@ This preserves the metrics-service benefits while using AWS-native durability.
 
 ## Component Details
 
+### Services Emitting Metrics
+
+The following services emit custom metrics to the metrics-service:
+
+| Service | Metrics Emitted | Configuration |
+|---------|-----------------|---------------|
+| **Registry** | Tool discovery, tool execution, registry operations, health checks | Uses `METRICS_API_KEY` env var |
+| **Auth-server** | Authentication requests, session operations | Uses `METRICS_API_KEY` env var |
+
+**Note**: MCP servers (CurrentTime, MCPGW, RealServerFakeTools, etc.) do not emit custom metrics to metrics-service. They are monitored via ECS Container Insights and CloudWatch metrics only.
+
+The metrics emission flow:
+1. Registry/Auth-server instantiate `MetricsClient` from `registry/metrics/client.py`
+2. The client reads `METRICS_SERVICE_URL` and `METRICS_API_KEY` from environment variables
+3. Metrics are sent via HTTP POST to `{METRICS_SERVICE_URL}/metrics` with `X-API-Key` header
+
+### API Key Authentication Configuration
+
+The metrics-service uses a dual naming convention for API keys:
+
+**Client Side** (registry, auth-server):
+- Environment variable: `METRICS_API_KEY`
+- Used to authenticate when sending metrics to metrics-service
+- Set in task definitions from the `MetricsApiKey` CloudFormation parameter
+
+**Server Side** (metrics-service):
+- Environment variable pattern: `METRICS_API_KEY_<SERVICE>`
+- The `setup_preshared_api_keys()` function in `metrics-service/app/main.py` discovers all environment variables matching `METRICS_API_KEY_*` on startup
+- Each key is automatically registered with the service name derived from the suffix (e.g., `METRICS_API_KEY_REGISTRY` registers key for service `registry`)
+
+Example auto-registration logic:
+```python
+# From metrics-service/app/main.py:129-159
+for key, value in os.environ.items():
+    if key.startswith('METRICS_API_KEY_') and value:
+        # METRICS_API_KEY_REGISTRY -> service_name = "registry"
+        service_suffix = key.replace('METRICS_API_KEY_', '')
+        service_name = service_suffix.lower().replace('_', '-')
+        # Register API key for this service...
+```
+
+**CloudFormation Parameter**:
+
+The `MetricsApiKey` parameter centralizes API key configuration:
+
+| Property | Value |
+|----------|-------|
+| Location | `services-stack.yaml` Parameters section (line ~294) |
+| Type | String |
+| NoEcho | `true` (masked in console) |
+| Default | `workshop-metrics-key-2026` |
+
+Used in 3 task definitions:
+1. **Registry** (`RegistryTaskDefinition`) - as `METRICS_API_KEY`
+2. **Auth-server** (`AuthServerTaskDefinition`) - as `METRICS_API_KEY`
+3. **Metrics-service** (`MetricsServiceTaskDefinition`) - as `METRICS_API_KEY_REGISTRY`
+
+To rotate the API key, update the `MetricsApiKey` parameter and redeploy the services stack.
+
 ### metrics-service
 
 The metrics-service is deployed as an ECS Fargate task:
@@ -286,6 +347,7 @@ OTEL_PROMETHEUS_ENABLED=true
 OTEL_PROMETHEUS_PORT=9465
 METRICS_RATE_LIMIT=5000
 SQLITE_DB_PATH=/tmp/metrics.db  # Ephemeral, not persisted
+METRICS_API_KEY_REGISTRY=<from MetricsApiKey parameter>  # API key for registry/auth-server authentication
 ```
 
 ### ADOT Collector
@@ -322,12 +384,25 @@ Pre-configured Grafana container:
 
 | Configuration | Value |
 |--------------|-------|
-| Image | `grafana/grafana:12.3.1` |
-| CPU | 256 |
-| Memory | 512 |
+| Image | `${ECR}/mcp-gateway-grafana:latest` |
+| CPU | 512 |
+| Memory | 1024 |
 | Port | 3000 |
 | Root URL | `/grafana/` |
 | Auth | Anonymous (Admin role) |
+
+**Critical Environment Variables for SigV4 Authentication:**
+
+For Grafana to authenticate to Amazon Managed Prometheus (AMP), these environment variables are required:
+
+| Variable | Value | Purpose |
+|----------|-------|---------|
+| `AWS_REGION` | `${AWS::Region}` | AWS region for SDK |
+| `AWS_DEFAULT_REGION` | `${AWS::Region}` | Fallback region for SDK |
+| `AWS_SDK_LOAD_CONFIG` | `1` | Enables AWS SDK config loading for ECS credential discovery |
+| `GF_AUTH_SIGV4_AUTH_ENABLED` | `true` | **Required** - Enables SigV4 signing for AWS datasources |
+
+**Important**: Without `GF_AUTH_SIGV4_AUTH_ENABLED=true`, Grafana will not sign requests to AMP even if `sigV4Auth: true` is set in the datasource configuration. This is per [AWS documentation](https://docs.aws.amazon.com/prometheus/latest/userguide/AMP-onboard-query-standalone-grafana.html).
 
 Datasources (provisioned):
 1. **Amazon Managed Prometheus** - Default, SigV4 auth
@@ -438,9 +513,10 @@ Note: Amazon Managed Grafana (AMG) was considered but requires SAML/SSO configur
 - [x] Add Grafana build to CodeBuild buildspec
 - [x] Update observability-stack.yaml with Grafana ECS resources
 - [x] Add CloudFront cache behavior for /grafana/*
-- [ ] Add metrics-service to CloudFormation deployment
-- [ ] Configure ADOT to scrape metrics-service
-- [ ] Add METRICS_SERVICE_URL to registry/auth-server task definitions
+- [x] Add metrics-service to CloudFormation deployment
+- [x] Configure ADOT to scrape metrics-service
+- [x] Add METRICS_SERVICE_URL to registry/auth-server task definitions
+- [x] Configure API key authentication for metrics-service
 - [ ] Test end-to-end metrics flow
 - [ ] Validate dashboards show data from AMP
 

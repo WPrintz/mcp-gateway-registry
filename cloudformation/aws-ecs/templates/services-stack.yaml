@@ -2924,6 +2924,9 @@ Resources:
             # Enable AWS SDK config loading for credential discovery
             - Name: AWS_SDK_LOAD_CONFIG
               Value: '1'
+            # Enable SigV4 authentication for AWS datasources (required for AMP)
+            - Name: GF_AUTH_SIGV4_AUTH_ENABLED
+              Value: 'true'
             # AMP endpoint for Prometheus datasource (auto-configured)
             - Name: AMP_ENDPOINT
               Value: !ImportValue
@@ -2947,16 +2950,11 @@ Resources:
             # Embedding settings
             - Name: GF_SECURITY_ALLOW_EMBEDDING
               Value: 'true'
-            # AWS plugin configuration - use ECS container credentials
-            - Name: GF_AWS_ALLOWED_AUTH_PROVIDERS
-              Value: 'default,ec2_iam_role'
-            - Name: GF_AWS_ASSUME_ROLE_ENABLED
-              Value: 'false'
-            # Logging - debug to diagnose credential issues
+            # Logging
             - Name: GF_LOG_MODE
               Value: 'console'
             - Name: GF_LOG_LEVEL
-              Value: 'debug'
+              Value: 'info'
             # Performance settings
             - Name: GF_DASHBOARDS_MIN_REFRESH_INTERVAL
               Value: '10s'
