@@ -2440,7 +2440,7 @@ Resources:
                   'name': 'Current Time API',
                   'description': 'A simple API that returns the current server time in various formats.',
                   'path': '/currenttime/',
-                  'proxy_pass_url': 'http://currenttime.{namespace}.local:8000/',
+                  'proxy_pass_url': 'http://currenttime-server.{namespace}.local:8000/',
                   'tags': 'time,timezone,datetime,api,utility',
                   'num_tools': '1',
                   'is_python': 'true',
@@ -2450,7 +2450,7 @@ Resources:
                   'name': 'MCP Gateway Tools',
                   'description': 'Provides tools to interact with the MCP Gateway Registry API.',
                   'path': '/mcpgw/',
-                  'proxy_pass_url': 'http://mcpgw.{namespace}.local:8003/',
+                  'proxy_pass_url': 'http://mcpgw-server.{namespace}.local:8003/',
                   'tags': 'registry,management,admin,gateway,mcp-tools',
                   'num_tools': '11',
                   'is_python': 'true',
@@ -2460,7 +2460,7 @@ Resources:
                   'name': 'Real Server Fake Tools',
                   'description': 'A collection of fake tools with interesting names for testing.',
                   'path': '/realserverfaketools/',
-                  'proxy_pass_url': 'http://realserverfaketools.{namespace}.local:8002/',
+                  'proxy_pass_url': 'http://realserverfaketools-server.{namespace}.local:8002/',
                   'tags': 'demo,fake,tools,testing',
                   'num_tools': '6',
                   'is_python': 'true',
@@ -2547,14 +2547,52 @@ Resources:
                       return {'success': True}
               except urllib.error.HTTPError as e:
                   if e.code == 409:
-                      return {'exists': True, 'success': True}
+                      return {'exists': True, 'success': False}
                   if e.code in [400, 422]:
                       body = e.read().decode('utf-8')
                       if 'already' in body.lower() or 'exists' in body.lower():
-                          return {'exists': True, 'success': True}
+                          return {'exists': True, 'success': False}
                       print(f"API error {e.code}: {body}")
                       return {'success': False, 'error': body}
                   raise
+
+          def delete_server(registry_url, token, server_name):
+              """Delete a server from the registry by name."""
+              url = f"{registry_url}/api/v1/servers/remove?name={urllib.parse.quote(server_name)}"
+              req = urllib.request.Request(url, method='DELETE')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      print(f"    Deleted existing server: {server_name}")
+                      return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return True  # Already gone
+                  print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
+                  return False
+              except Exception as e:
+                  print(f"    Delete error: {str(e)}")
+                  return False
+
+          def delete_agent(registry_url, token, agent_name):
+              """Delete an agent from the registry by name."""
+              url = f"{registry_url}/api/agents/remove?name={urllib.parse.quote(agent_name)}"
+              req = urllib.request.Request(url, method='DELETE')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      print(f"    Deleted existing agent: {agent_name}")
+                      return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return True  # Already gone
+                  print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
+                  return False
+              except Exception as e:
+                  print(f"    Delete error: {str(e)}")
+                  return False
 
           def api_request_json(url, token, json_data):
               """Make authenticated POST request with JSON data to Registry API."""
@@ -2573,11 +2611,11 @@ Resources:
                       return {'success': True}
               except urllib.error.HTTPError as e:
                   if e.code == 409:
-                      return {'exists': True, 'success': True}
+                      return {'exists': True, 'success': False}
                   if e.code in [400, 422]:
                       body = e.read().decode('utf-8')
                       if 'already' in body.lower() or 'exists' in body.lower():
-                          return {'exists': True, 'success': True}
+                          return {'exists': True, 'success': False}
                       print(f"API error {e.code}: {body}")
                       return {'success': False, 'error': body}
                   raise
@@ -2634,6 +2672,7 @@ Resources:
                       raise Exception("Registry not ready after maximum attempts")
 
                   # Register MCP Servers (uses form data)
+                  # Uses delete-then-create pattern to ensure config updates are applied
                   print("Registering MCP Servers...")
                   servers_registered = 0
                   for server in MCP_SERVERS:
@@ -2647,13 +2686,31 @@ Resources:
                           token,
                           server_data
                       )
-                      if result.get('success') or result.get('exists'):
-                          print(f"    OK (exists={result.get('exists', False)})")
+                      if result.get('success'):
+                          print(f"    OK (created)")
                           servers_registered += 1
+                      elif result.get('exists'):
+                          # Server exists - delete and re-create with updated config
+                          print(f"    Server exists, updating...")
+                          if delete_server(registry_url, token, server_data['name']):
+                              # Re-register with new config
+                              result = api_request_form(
+                                  f"{registry_url}/api/servers/register",
+                                  token,
+                                  server_data
+                              )
+                              if result.get('success'):
+                                  print(f"    OK (updated)")
+                                  servers_registered += 1
+                              else:
+                                  print(f"    Re-register failed: {result}")
+                          else:
+                              print(f"    Delete failed, skipping update")
                       else:
                           print(f"    Failed: {result}")
 
                   # Register A2A Agents (uses JSON data)
+                  # Uses delete-then-create pattern to ensure config updates are applied
                   print("Registering A2A Agents...")
                   agents_registered = 0
                   for agent in A2A_AGENTS:
@@ -2667,9 +2724,26 @@ Resources:
                           token,
                           agent_data
                       )
-                      if result.get('success') or result.get('exists'):
-                          print(f"    OK (exists={result.get('exists', False)})")
+                      if result.get('success'):
+                          print(f"    OK (created)")
                           agents_registered += 1
+                      elif result.get('exists'):
+                          # Agent exists - delete and re-create with updated config
+                          print(f"    Agent exists, updating...")
+                          if delete_agent(registry_url, token, agent_data['name']):
+                              # Re-register with new config
+                              result = api_request_json(
+                                  f"{registry_url}/api/agents/register",
+                                  token,
+                                  agent_data
+                              )
+                              if result.get('success'):
+                                  print(f"    OK (updated)")
+                                  agents_registered += 1
+                              else:
+                                  print(f"    Re-register failed: {result}")
+                          else:
+                              print(f"    Delete failed, skipping update")
                       else:
                           print(f"    Failed: {result}")
 
@@ -2711,7 +2785,9 @@ Resources:
       EnvironmentName: !Ref EnvironmentName
       # Increment to force re-registration on stack updates
       # v1.3: Fixed to use form data instead of JSON for server registration
-      Version: '1.3'
+      # v1.4: Fixed proxy_pass_url to use -server suffix matching CloudMap DNS
+      # v1.5: Added upsert support - delete-then-create to update existing registrations
+      Version: '1.5'
 
   #============================================================================
   # ADOT Collector for Prometheus Metrics (Optional)
@@ -2950,6 +3026,9 @@ Resources:
             # Embedding settings
             - Name: GF_SECURITY_ALLOW_EMBEDDING
               Value: 'true'
+            # AWS auth provider for SigV4 datasources (ec2_iam_role uses ECS task credentials)
+            - Name: GF_AWS_ALLOWED_AUTH_PROVIDERS
+              Value: 'default,ec2_iam_role'
             # Logging
             - Name: GF_LOG_MODE
               Value: 'console'
