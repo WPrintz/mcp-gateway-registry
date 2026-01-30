@@ -334,14 +334,14 @@
     },
     {
       "id": 10,
-      "title": "ECS Running Task Count",
+      "title": "ECS Task Count",
       "type": "stat",
       "datasource": "CloudWatch",
       "targets": [
         {
           "refId": "A",
           "namespace": "ECS/ContainerInsights",
-          "metricName": "RunningTaskCount",
+          "metricName": "TaskCount",
           "statistics": ["Average"],
           "dimensions": {
             "ClusterName": "${cluster_name}"
@@ -416,6 +416,7 @@
         "query": {
           "queryType": "dimensionValues",
           "namespace": "ECS/ContainerInsights",
+          "metricName": "TaskCount",
           "dimensionKey": "ClusterName",
           "region": "default"
         },
@@ -431,6 +432,7 @@
         "query": {
           "queryType": "dimensionValues",
           "namespace": "AWS/ECS",
+          "metricName": "CPUUtilization",
           "dimensionKey": "ServiceName",
           "dimensionFilters": {
             "ClusterName": "$cluster_name"
@@ -450,6 +452,7 @@
         "query": {
           "queryType": "dimensionValues",
           "namespace": "AWS/ApplicationELB",
+          "metricName": "RequestCount",
           "dimensionKey": "LoadBalancer",
           "region": "default"
         },
@@ -465,6 +468,7 @@
         "query": {
           "queryType": "dimensionValues",
           "namespace": "AWS/ApplicationELB",
+          "metricName": "HealthyHostCount",
           "dimensionKey": "TargetGroup",
           "region": "default"
         },
@@ -482,6 +486,7 @@
         "query": {
           "queryType": "dimensionValues",
           "namespace": "AWS/DocDB",
+          "metricName": "DatabaseConnections",
           "dimensionKey": "DBClusterIdentifier",
           "region": "default"
         },
@@ -497,6 +502,7 @@
         "query": {
           "queryType": "dimensionValues",
           "namespace": "AWS/RDS",
+          "metricName": "ServerlessDatabaseCapacity",
           "dimensionKey": "DBClusterIdentifier",
           "region": "default"
         },
