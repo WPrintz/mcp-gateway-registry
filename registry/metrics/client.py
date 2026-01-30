@@ -137,11 +137,26 @@ class MetricsClient:
         server_name: str,
         success: bool,
         duration_ms: float,
+        method: Optional[str] = None,
+        client_name: Optional[str] = None,
         input_size_bytes: Optional[int] = None,
         output_size_bytes: Optional[int] = None,
         error_code: Optional[str] = None
     ) -> bool:
-        """Emit tool execution metric."""
+        """Emit tool execution metric.
+
+        Args:
+            tool_name: Name of the tool being called (for tools/call) or method name
+            server_path: Full path to the server (e.g., /mcp/currenttime/)
+            server_name: Short server name (e.g., currenttime)
+            success: Whether the call succeeded
+            duration_ms: Duration in milliseconds
+            method: MCP protocol method (initialize, tools/list, tools/call)
+            client_name: Name of the client making the request
+            input_size_bytes: Size of input payload
+            output_size_bytes: Size of output payload
+            error_code: Error code if failed
+        """
         return await self._emit_metric(
             metric_type="tool_execution",
             value=1.0,
@@ -150,7 +165,9 @@ class MetricsClient:
                 "tool_name": tool_name,
                 "server_path": server_path,
                 "server_name": server_name,
-                "success": success
+                "success": success,
+                "method": method or tool_name,
+                "client_name": client_name or "unknown"
             },
             metadata={
                 "error_code": error_code,
@@ -326,6 +343,8 @@ class _ToolDiscoveryTracker:
                 server_name=self.server_name,
                 success=self.success,
                 duration_ms=duration_ms,
+                method="tools/list",
+                client_name="registry-internal",
                 output_size_bytes=self.tools_count * 100 if self.success else 0,
                 error_code=self.error_code
             )
