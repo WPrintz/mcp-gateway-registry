@@ -314,22 +314,22 @@ class TestOTelEmission:
         
         # Verify counter was called
         processor.otel.auth_counter.add.assert_called_once_with(
-            1.0, 
+            1.0,
             {
                 "service": "test-service",
-                "metric_type": "auth_request", 
-                "success": "True",
+                "metric_type": "auth_request",
+                "success": "true",
                 "method": "oauth"
             }
         )
-        
+
         # Verify histogram was called (duration converted to seconds)
         processor.otel.auth_histogram.record.assert_called_once_with(
             0.15,  # 150ms converted to seconds
             {
                 "service": "test-service",
                 "metric_type": "auth_request",
-                "success": "True", 
+                "success": "true",
                 "method": "oauth"
             }
         )

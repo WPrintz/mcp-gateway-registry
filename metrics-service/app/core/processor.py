@@ -9,6 +9,16 @@ from ..core.validator import validator
 logger = logging.getLogger(__name__)
 
 
+def _normalize_label_value(value: Any) -> str:
+    """Normalize label values for Prometheus compatibility.
+
+    Converts Python booleans to lowercase strings (Prometheus convention).
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 class ProcessingResult:
     def __init__(self):
         self.accepted = 0
@@ -98,7 +108,7 @@ class MetricsProcessor:
         labels = {
             "service": service,
             "metric_type": metric.type.value,
-            **{k: str(v) for k, v in metric.dimensions.items()}
+            **{k: _normalize_label_value(v) for k, v in metric.dimensions.items()}
         }
         
         # Route to appropriate OTel instrument
