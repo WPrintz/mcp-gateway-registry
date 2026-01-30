@@ -2966,6 +2966,8 @@ Resources:
                   - ec2:DescribeInstances
                   - ec2:DescribeRegions
                   - tag:GetResources
+                  - oam:ListSinks
+                  - oam:ListAttachedLinks
                 Resource: '*'
       Tags:
         - Key: Name
