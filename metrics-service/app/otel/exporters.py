@@ -4,11 +4,35 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from prometheus_client import start_http_server
+from prometheus_client import (
+    start_http_server,
+    REGISTRY,
+    PROCESS_COLLECTOR,
+    PLATFORM_COLLECTOR,
+    GC_COLLECTOR,
+)
 import logging
 from ..config import settings
 
 logger = logging.getLogger(__name__)
+
+# Unregister default collectors that cause "out of order sample" issues on restart.
+# These process/platform/gc metrics have timestamps that conflict with AMP's stored
+# data when the service restarts, causing the entire metrics batch to be dropped.
+try:
+    REGISTRY.unregister(PROCESS_COLLECTOR)
+except Exception:
+    pass
+
+try:
+    REGISTRY.unregister(PLATFORM_COLLECTOR)
+except Exception:
+    pass
+
+try:
+    REGISTRY.unregister(GC_COLLECTOR)
+except Exception:
+    pass
 
 
 def setup_otel():
