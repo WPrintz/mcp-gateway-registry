@@ -15,19 +15,19 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_tool_executions_total{method=\"initialize\", success=\"True\"}[1m]))",
+          "expr": "sum(rate(mcp_tool_executions_total{method=\"initialize\", success=\"true\"}[1m]))",
           "legendFormat": "Initialize Rate"
         },
         {
-          "expr": "sum(rate(mcp_tool_executions_total{method=\"tools/list\", success=\"True\"}[1m]))",
+          "expr": "sum(rate(mcp_tool_executions_total{method=\"tools/list\", success=\"true\"}[1m]))",
           "legendFormat": "Tools List Rate"
         },
         {
-          "expr": "sum(rate(mcp_tool_executions_total{method=\"tools/call\", success=\"True\"}[1m]))",
+          "expr": "sum(rate(mcp_tool_executions_total{method=\"tools/call\", success=\"true\"}[1m]))",
           "legendFormat": "Tool Call Rate"
         },
         {
-          "expr": "sum(rate(mcp_auth_requests_total{success=\"True\"}[1m]))",
+          "expr": "sum(rate(mcp_auth_requests_total{success=\"true\"}[1m]))",
           "legendFormat": "Auth Success Rate"
         }
       ],
@@ -51,11 +51,11 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_auth_requests_total{success=\"True\"}[5m]))",
+          "expr": "sum(rate(mcp_auth_requests_total{success=\"true\"}[5m]))",
           "legendFormat": "Successful Auth"
         },
         {
-          "expr": "sum(rate(mcp_auth_requests_total{success=\"False\"}[5m]))",
+          "expr": "sum(rate(mcp_auth_requests_total{success=\"false\"}[5m]))",
           "legendFormat": "Failed Auth"
         }
       ],
@@ -79,7 +79,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(mcp_auth_requests_total{success=\"True\"}) / sum(mcp_auth_requests_total) * 100",
+          "expr": "sum(mcp_auth_requests_total{success=\"true\"}) / sum(mcp_auth_requests_total) * 100",
           "legendFormat": "Success Rate %"
         }
       ],
@@ -251,11 +251,11 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_auth_requests_total{success=\"False\"}[5m])) / sum(rate(mcp_auth_requests_total[5m])) * 100",
+          "expr": "sum(rate(mcp_auth_requests_total{success=\"false\"}[5m])) / sum(rate(mcp_auth_requests_total[5m])) * 100",
           "legendFormat": "Auth Error Rate"
         },
         {
-          "expr": "sum(rate(mcp_tool_executions_total{success=\"False\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
+          "expr": "sum(rate(mcp_tool_executions_total{success=\"false\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
           "legendFormat": "Tool Execution Error Rate"
         }
       ],

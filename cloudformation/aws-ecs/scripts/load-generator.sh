@@ -206,23 +206,26 @@ mcp_initialize() {
 
     debug "MCP initialize: $server (client: $client_name)"
 
+    local body='{
+        "jsonrpc": "2.0",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "'"$client_name"'",
+                "version": "1.0.0"
+            }
+        },
+        "id": 1
+    }'
+
     curl -s -X POST "${REGISTRY_URL}/mcp/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "X-Client-Name: $client_name" \
-        -d '{
-            "jsonrpc": "2.0",
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "'"$client_name"'",
-                    "version": "1.0.0"
-                }
-            },
-            "id": 1
-        }' > /dev/null 2>&1 || true
+        -H "X-Body: $(echo "$body" | tr -d '\n' | tr -s ' ')" \
+        -d "$body" > /dev/null 2>&1 || true
 }
 
 mcp_list_tools() {
@@ -233,15 +236,18 @@ mcp_list_tools() {
 
     debug "MCP tools/list: $server (client: $client_name)"
 
+    local body='{
+        "jsonrpc": "2.0",
+        "method": "tools/list",
+        "id": 2
+    }'
+
     curl -s -X POST "${REGISTRY_URL}/mcp/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "X-Client-Name: $client_name" \
-        -d '{
-            "jsonrpc": "2.0",
-            "method": "tools/list",
-            "id": 2
-        }' > /dev/null 2>&1 || true
+        -H "X-Body: $(echo "$body" | tr -d '\n' | tr -s ' ')" \
+        -d "$body" > /dev/null 2>&1 || true
 }
 
 mcp_call_tool() {
@@ -261,19 +267,22 @@ mcp_call_tool() {
             ;;
     esac
 
+    local body='{
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": "'"$tool_name"'",
+            "arguments": '"$args"'
+        },
+        "id": 3
+    }'
+
     curl -s -X POST "${REGISTRY_URL}/mcp/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "X-Client-Name: $client_name" \
-        -d '{
-            "jsonrpc": "2.0",
-            "method": "tools/call",
-            "params": {
-                "name": "'"$tool_name"'",
-                "arguments": '"$args"'
-            },
-            "id": 3
-        }' > /dev/null 2>&1 || true
+        -H "X-Body: $(echo "$body" | tr -d '\n' | tr -s ' ')" \
+        -d "$body" > /dev/null 2>&1 || true
 }
 
 # =============================================================================
