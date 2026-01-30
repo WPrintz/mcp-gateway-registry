@@ -2966,8 +2966,6 @@ Resources:
                   - ec2:DescribeInstances
                   - ec2:DescribeRegions
                   - tag:GetResources
-                  - oam:ListSinks
-                  - oam:ListAttachedLinks
                 Resource: '*'
       Tags:
         - Key: Name
@@ -3039,9 +3037,6 @@ Resources:
             # Performance settings
             - Name: GF_DASHBOARDS_MIN_REFRESH_INTERVAL
               Value: '10s'
-            # Disable CloudWatch cross-account querying (requires OAM permissions blocked by SCP)
-            - Name: GF_FEATURE_TOGGLES_DISABLE
-              Value: 'cloudWatchCrossAccountQuerying'
           LogConfiguration:
             LogDriver: awslogs
             Options:
