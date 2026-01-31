@@ -516,7 +516,9 @@ class NginxConfigService:
         # Prepend /mcp prefix to create the nginx location path
         # This ensures MCP protocol requests use the /mcp/{server}/ URL pattern
         # which aligns with the metrics middleware and load generator expectations
-        location_path = f"/mcp{path}" if not path.startswith('/mcp') else path
+        # Note: Use '/mcp/' (with trailing slash) to avoid false matches on server
+        # names that happen to start with 'mcp' (e.g., /mcpgw/ should become /mcp/mcpgw/)
+        location_path = f"/mcp{path}" if not path.startswith('/mcp/') else path
         logger.info(f"Creating location block for {location_path} with {transport_type} transport")
         
         return f"""
