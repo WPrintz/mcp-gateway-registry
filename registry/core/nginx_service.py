@@ -513,9 +513,10 @@ class NginxConfigService:
         proxy_set_header Upgrade $http_upgrade;
         chunked_transfer_encoding off;"""
         
-        # Use the location path exactly as specified in the server configuration
-        # Users have full control over the location path format (with or without trailing slash)
-        location_path = path
+        # Prepend /mcp prefix to create the nginx location path
+        # This ensures MCP protocol requests use the /mcp/{server}/ URL pattern
+        # which aligns with the metrics middleware and load generator expectations
+        location_path = f"/mcp{path}" if not path.startswith('/mcp') else path
         logger.info(f"Creating location block for {location_path} with {transport_type} transport")
         
         return f"""
