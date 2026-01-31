@@ -2787,7 +2787,8 @@ Resources:
       # v1.3: Fixed to use form data instead of JSON for server registration
       # v1.4: Fixed proxy_pass_url to use -server suffix matching CloudMap DNS
       # v1.5: Added upsert support - delete-then-create to update existing registrations
-      Version: '1.5'
+      # v1.6: Fixed proxy_pass_url to include /mcp path for MCP server routing
+      Version: '1.6'
 
   #============================================================================
   # ADOT Collector for Prometheus Metrics (Optional)
