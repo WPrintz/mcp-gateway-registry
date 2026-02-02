@@ -2530,31 +2530,52 @@ Resources:
                   result = json.loads(response.read().decode('utf-8'))
                   return result.get('access_token')
 
-          def api_request_form(url, token, form_data):
+          def api_request_form(url, token, form_data, max_retries=5):
               """Make authenticated POST request with form data to Registry API."""
               encoded_data = urllib.parse.urlencode(form_data).encode('utf-8')
-              req = urllib.request.Request(url, data=encoded_data, method='POST')
-              req.add_header('Authorization', f'Bearer {token}')
-              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
               ctx = ssl.create_default_context()
-              try:
-                  with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
-                      if response.status in [200, 201, 204]:
-                          try:
-                              return json.loads(response.read().decode('utf-8'))
-                          except:
-                              return {'success': True}
-                      return {'success': True}
-              except urllib.error.HTTPError as e:
-                  if e.code == 409:
-                      return {'exists': True, 'success': False}
-                  if e.code in [400, 422]:
-                      body = e.read().decode('utf-8')
-                      if 'already' in body.lower() or 'exists' in body.lower():
+              last_error = None
+
+              for attempt in range(max_retries):
+                  req = urllib.request.Request(url, data=encoded_data, method='POST')
+                  req.add_header('Authorization', f'Bearer {token}')
+                  req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+                  try:
+                      with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                          if response.status in [200, 201, 204]:
+                              try:
+                                  return json.loads(response.read().decode('utf-8'))
+                              except:
+                                  return {'success': True}
+                          return {'success': True}
+                  except urllib.error.HTTPError as e:
+                      if e.code == 409:
                           return {'exists': True, 'success': False}
-                      print(f"API error {e.code}: {body}")
-                      return {'success': False, 'error': body}
-                  raise
+                      if e.code in [400, 422]:
+                          body = e.read().decode('utf-8')
+                          if 'already' in body.lower() or 'exists' in body.lower():
+                              return {'exists': True, 'success': False}
+                          print(f"API error {e.code}: {body}")
+                          return {'success': False, 'error': body}
+                      # Retry on transient errors (502, 503, 504)
+                      if e.code in [502, 503, 504]:
+                          last_error = e
+                          wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8, 16 seconds
+                          print(f"    Transient error {e.code}, retry {attempt + 1}/{max_retries} in {wait_time}s...")
+                          time.sleep(wait_time)
+                          continue
+                      raise
+                  except (urllib.error.URLError, TimeoutError) as e:
+                      last_error = e
+                      wait_time = 2 ** attempt
+                      print(f"    Connection error, retry {attempt + 1}/{max_retries} in {wait_time}s: {str(e)}")
+                      time.sleep(wait_time)
+                      continue
+
+              # All retries exhausted
+              if last_error:
+                  raise last_error
+              raise Exception(f"Request failed after {max_retries} attempts")
 
           def delete_server(registry_url, token, server_name):
               """Delete a server from the registry by name."""
@@ -2594,31 +2615,53 @@ Resources:
                   print(f"    Delete error: {str(e)}")
                   return False
 
-          def api_request_json(url, token, json_data):
+          def api_request_json(url, token, json_data, max_retries=5):
               """Make authenticated POST request with JSON data to Registry API."""
-              req = urllib.request.Request(url, method='POST')
-              req.add_header('Authorization', f'Bearer {token}')
-              req.add_header('Content-Type', 'application/json')
-              req.data = json.dumps(json_data).encode('utf-8')
               ctx = ssl.create_default_context()
-              try:
-                  with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
-                      if response.status in [200, 201, 204]:
-                          try:
-                              return json.loads(response.read().decode('utf-8'))
-                          except:
-                              return {'success': True}
-                      return {'success': True}
-              except urllib.error.HTTPError as e:
-                  if e.code == 409:
-                      return {'exists': True, 'success': False}
-                  if e.code in [400, 422]:
-                      body = e.read().decode('utf-8')
-                      if 'already' in body.lower() or 'exists' in body.lower():
+              data = json.dumps(json_data).encode('utf-8')
+              last_error = None
+
+              for attempt in range(max_retries):
+                  req = urllib.request.Request(url, method='POST')
+                  req.add_header('Authorization', f'Bearer {token}')
+                  req.add_header('Content-Type', 'application/json')
+                  req.data = data
+                  try:
+                      with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                          if response.status in [200, 201, 204]:
+                              try:
+                                  return json.loads(response.read().decode('utf-8'))
+                              except:
+                                  return {'success': True}
+                          return {'success': True}
+                  except urllib.error.HTTPError as e:
+                      if e.code == 409:
                           return {'exists': True, 'success': False}
-                      print(f"API error {e.code}: {body}")
-                      return {'success': False, 'error': body}
-                  raise
+                      if e.code in [400, 422]:
+                          body = e.read().decode('utf-8')
+                          if 'already' in body.lower() or 'exists' in body.lower():
+                              return {'exists': True, 'success': False}
+                          print(f"API error {e.code}: {body}")
+                          return {'success': False, 'error': body}
+                      # Retry on transient errors (502, 503, 504)
+                      if e.code in [502, 503, 504]:
+                          last_error = e
+                          wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8, 16 seconds
+                          print(f"    Transient error {e.code}, retry {attempt + 1}/{max_retries} in {wait_time}s...")
+                          time.sleep(wait_time)
+                          continue
+                      raise
+                  except (urllib.error.URLError, TimeoutError) as e:
+                      last_error = e
+                      wait_time = 2 ** attempt
+                      print(f"    Connection error, retry {attempt + 1}/{max_retries} in {wait_time}s: {str(e)}")
+                      time.sleep(wait_time)
+                      continue
+
+              # All retries exhausted
+              if last_error:
+                  raise last_error
+              raise Exception(f"Request failed after {max_retries} attempts")
 
           def wait_for_registry(registry_url, max_attempts=30):
               """Wait for Registry API to be ready using health endpoint."""
@@ -2670,6 +2713,10 @@ Resources:
                   # Wait for registry to be ready (uses /health endpoint, no auth needed)
                   if not wait_for_registry(registry_url):
                       raise Exception("Registry not ready after maximum attempts")
+
+                  # Additional warm-up delay to let upstream services stabilize
+                  print("Waiting 10 seconds for services to fully stabilize...")
+                  time.sleep(10)
 
                   # Register MCP Servers (uses form data)
                   # Uses delete-then-create pattern to ensure config updates are applied
@@ -2788,7 +2835,8 @@ Resources:
       # v1.4: Fixed proxy_pass_url to use -server suffix matching CloudMap DNS
       # v1.5: Added upsert support - delete-then-create to update existing registrations
       # v1.6: Fixed proxy_pass_url to include /mcp path for MCP server routing
-      Version: '1.6'
+      # v1.7: Added retry logic with exponential backoff for transient 502/503/504 errors
+      Version: '1.7'
 
   #============================================================================
   # ADOT Collector for Prometheus Metrics (Optional)
