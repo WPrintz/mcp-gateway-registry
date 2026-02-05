@@ -37,6 +37,17 @@ VERBOSE="${VERBOSE:-false}"
 # MCP Servers to exercise
 SERVERS=("currenttime" "mcpgw" "realserverfaketools")
 
+# Semantic search queries for MCP servers
+SERVER_SEARCH_QUERIES=(
+    "time and date operations"
+    "gateway management tools"
+    "registry administration"
+    "fake tools for testing"
+    "quantum analysis"
+    "neural network tools"
+    "timezone conversion"
+)
+
 # A2A Agents to exercise
 AGENTS=("flight-booking-agent" "travel-assistant-agent")
 
@@ -155,6 +166,24 @@ random_element() {
     echo "${arr[$RANDOM % ${#arr[@]}]}"
 }
 
+get_server_tools() {
+    local server="$1"
+    case "$server" in
+        currenttime)
+            echo "current_time_by_timezone"
+            ;;
+        mcpgw)
+            echo "list_services get_http_headers healthcheck intelligent_tool_finder list_groups"
+            ;;
+        realserverfaketools)
+            echo "quantum_flux_analyzer neural_pattern_synthesizer hyper_dimensional_mapper temporal_anomaly_detector user_profile_analyzer synthetic_data_generator"
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
 # =============================================================================
 # Token Management
 # =============================================================================
@@ -262,8 +291,36 @@ mcp_call_tool() {
     # Tool-specific arguments
     local args='{}'
     case "$tool_name" in
-        get_current_time)
-            args='{"timezone": "UTC"}'
+        current_time_by_timezone)
+            local timezones=("America/New_York" "Europe/London" "Asia/Tokyo" "UTC" "America/Los_Angeles")
+            local tz="${timezones[$RANDOM % ${#timezones[@]}]}"
+            args='{"tz_name": "'"$tz"'"}'
+            ;;
+        quantum_flux_analyzer)
+            args='{"energy_level": '$((RANDOM % 10 + 1))'}'
+            ;;
+        neural_pattern_synthesizer)
+            args='{"input_patterns": ["pattern1", "pattern2"]}'
+            ;;
+        hyper_dimensional_mapper)
+            args='{"coordinates": {"latitude": 40.7128, "longitude": -74.0060}}'
+            ;;
+        temporal_anomaly_detector)
+            args='{"timeframe": {"start": "2024-01-01T00:00:00Z", "end": "2024-01-02T00:00:00Z"}}'
+            ;;
+        user_profile_analyzer)
+            args='{"profile": {"user_id": "user123", "name": "Test User", "email": "test@example.com"}}'
+            ;;
+        synthetic_data_generator)
+            args='{"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}'
+            ;;
+        intelligent_tool_finder)
+            local queries=("find time tools" "list all tools" "search for admin tools")
+            local query="${queries[$RANDOM % ${#queries[@]}]}"
+            args='{"query": "'"$query"'"}'
+            ;;
+        list_services|get_http_headers|healthcheck|list_groups)
+            args='{}'
             ;;
     esac
 
@@ -354,6 +411,26 @@ agent_health_check() {
 }
 
 # =============================================================================
+# MCP Server Search Operations
+# =============================================================================
+
+server_search_semantic() {
+    local query="$1"
+    local token
+    token=$(get_token)
+
+    debug "Server: semantic search ($query)"
+
+    curl -s -X POST "${REGISTRY_URL}/api/servers/search" \
+        -H "Authorization: Bearer $token" \
+        -H "Content-Type: application/json" \
+        -d '{
+            "query": "'"$query"'",
+            "max_results": 5
+        }' > /dev/null 2>&1 || true
+}
+
+# =============================================================================
 # Load Generation Scenarios
 # =============================================================================
 
@@ -363,54 +440,75 @@ run_mcp_scenario() {
     local client_name
     client_name=$(random_element "${CLIENT_NAMES[@]}")
 
-    # Run a realistic MCP session flow
-    mcp_initialize "$server" "$client_name"
-    mcp_list_tools "$server" "$client_name"
-
-    # Call a tool based on the server
-    case "$server" in
-        currenttime)
-            mcp_call_tool "$server" "get_current_time" "$client_name"
-            ;;
-        *)
-            # For other servers, just do initialize + list
-            ;;
-    esac
+    # Get available tools for this server
+    local tools_str
+    tools_str=$(get_server_tools "$server")
+    local tools_array=($tools_str)
+    
+    # Randomly choose scenario type
+    local scenario=$((RANDOM % 10))
+    
+    if [[ $scenario -lt 5 ]]; then
+        # 50% - Full flow: initialize -> tools/list -> tools/call
+        mcp_initialize "$server" "$client_name"
+        mcp_list_tools "$server" "$client_name"
+        
+        if [[ ${#tools_array[@]} -gt 0 ]]; then
+            local tool="${tools_array[$RANDOM % ${#tools_array[@]}]}"
+            mcp_call_tool "$server" "$tool" "$client_name"
+        fi
+    elif [[ $scenario -lt 8 ]]; then
+        # 30% - Just call a tool (simulating established session)
+        if [[ ${#tools_array[@]} -gt 0 ]]; then
+            local tool="${tools_array[$RANDOM % ${#tools_array[@]}]}"
+            mcp_call_tool "$server" "$tool" "$client_name"
+        fi
+    else
+        # 20% - Discovery only (initialize + list)
+        mcp_initialize "$server" "$client_name"
+        mcp_list_tools "$server" "$client_name"
+    fi
 }
 
 run_agent_scenario() {
-    local scenario=$((RANDOM % 5))
+    local scenario=$((RANDOM % 10))
 
     case $scenario in
-        0)
+        0|1|2|3)
             # List agents (40% of agent traffic)
             agent_list
             ;;
-        1)
-            # Skill-based discovery (25%)
+        4|5)
+            # Skill-based discovery (20%)
             local skill
             skill=$(random_element "${SKILLS[@]}")
             agent_discover_skills "$skill"
             ;;
-        2)
-            # Semantic discovery (15%)
+        6|7)
+            # Semantic discovery (20%)
             local query
             query=$(random_element "${QUERIES[@]}")
             agent_discover_semantic "$query"
             ;;
-        3)
+        8)
             # Get agent details (10%)
             local agent
             agent=$(random_element "${AGENTS[@]}")
             agent_get "$agent"
             ;;
-        4)
+        9)
             # Health check (10%)
             local agent
             agent=$(random_element "${AGENTS[@]}")
             agent_health_check "$agent"
             ;;
     esac
+}
+
+run_server_search_scenario() {
+    local query
+    query=$(random_element "${SERVER_SEARCH_QUERIES[@]}")
+    server_search_semantic "$query"
 }
 
 # =============================================================================
@@ -444,13 +542,20 @@ main() {
     log "Load generation started..."
 
     while [[ $(date +%s) -lt $end_time ]]; do
-        # 70% MCP operations, 30% Agent operations
-        if [[ $((RANDOM % 10)) -lt 7 ]]; then
+        # Traffic distribution: 60% MCP, 30% Agent, 10% Server Search
+        local rand=$((RANDOM % 10))
+        
+        if [[ $rand -lt 6 ]]; then
+            # 60% MCP operations
             run_mcp_scenario
             ((mcp_count++))
-        else
+        elif [[ $rand -lt 9 ]]; then
+            # 30% Agent operations
             run_agent_scenario
             ((agent_count++))
+        else
+            # 10% Server search operations
+            run_server_search_scenario
         fi
 
         ((request_count++))
