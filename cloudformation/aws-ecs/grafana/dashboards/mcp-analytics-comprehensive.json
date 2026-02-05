@@ -553,7 +553,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_tool_executions_total{status=\"success\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
+          "expr": "sum(rate(mcp_tool_executions_total{success=\"true\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
           "legendFormat": "Success Rate"
         }
       ],
