@@ -549,33 +549,35 @@
     },
     {
       "id": 18,
-      "title": "Request Size Distribution",
+      "title": "Tool Execution Success Rate",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, rate(mcp_tool_executions_total[5m]))",
-          "legendFormat": "P50 Request Size"
-        },
-        {
-          "expr": "histogram_quantile(0.95, rate(mcp_tool_executions_total[5m]))",
-          "legendFormat": "P95 Request Size"
-        },
-        {
-          "expr": "histogram_quantile(0.99, rate(mcp_tool_executions_total[5m]))",
-          "legendFormat": "P99 Request Size"
+          "expr": "sum(rate(mcp_tool_executions_total{status=\"success\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
+          "legendFormat": "Success Rate"
         }
       ],
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 52},
       "options": {
-        "legend": {"displayMode": "table", "placement": "bottom"}
+        "legend": {"displayMode": "list", "placement": "bottom"}
       },
       "fieldConfig": {
         "defaults": {
           "custom": {
-            "axisLabel": "Request Size (bytes)",
+            "axisLabel": "Success Rate (%)",
             "axisPlacement": "left"
           },
-          "unit": "bytes"
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"value": 0, "color": "red"},
+              {"value": 90, "color": "yellow"},
+              {"value": 95, "color": "green"}
+            ]
+          }
         }
       }
     },
