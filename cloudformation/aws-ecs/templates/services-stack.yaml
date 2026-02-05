@@ -2940,6 +2940,7 @@ Resources:
   ADOTCollectorService:
     Type: AWS::ECS::Service
     Condition: EnableADOTCondition
+    DependsOn: MetricsServiceEcsService
     Properties:
       ServiceName: !Sub '${EnvironmentName}-adot-collector'
       Cluster: !ImportValue
