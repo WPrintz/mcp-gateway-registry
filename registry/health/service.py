@@ -9,6 +9,7 @@ from collections import defaultdict, deque
 from time import time
 
 from ..core.config import settings
+from ..core.endpoint_utils import get_endpoint_url_from_server_info
 from registry.constants import HealthStatus
 
 logger = logging.getLogger(__name__)
@@ -637,20 +638,17 @@ class HealthMonitoringService:
         # Try endpoints based on supported transports, prioritizing streamable-http
         logger.info(f"[TRACE] No transport endpoint in URL: {proxy_pass_url}")
         logger.info(f"[TRACE] Supported transports: {supported_transports}")
-        base_url = proxy_pass_url.rstrip('/')
-        
+
         # Try streamable-http first (default preference)
         if "streamable-http" in supported_transports:
             logger.info(f"[TRACE] Trying streamable-http transport")
             # Build base headers without session ID
             headers = self._build_headers_for_server(server_info, include_session_id=False)
 
-            # Only try /mcp endpoint for streamable-http transport
-            # Don't append /mcp if URL already has a transport endpoint (/mcp or /sse)
-            if base_url.endswith('/mcp') or base_url.endswith('/sse') or '/mcp/' in base_url or '/sse/' in base_url:
-                endpoint = f"{base_url}"
-            else:
-                endpoint = f"{base_url}/mcp"
+            # Resolve endpoint URL using centralized utility
+            # Priority: explicit mcp_endpoint > URL detection > append /mcp
+            endpoint = get_endpoint_url_from_server_info(server_info, transport_type="streamable-http")
+            logger.info(f"[TRACE] Resolved streamable-http endpoint: {endpoint}")
 
             try:
                 # Step 1: Initialize session to get session ID
@@ -719,10 +717,10 @@ class HealthMonitoringService:
         if "sse" in supported_transports:
             logger.info(f"[TRACE] Trying SSE transport")
             try:
-                if base_url.endswith('/sse'):
-                    sse_endpoint = f"{base_url}"
-                else:
-                    sse_endpoint = f"{base_url}/sse"
+                # Resolve SSE endpoint URL using centralized utility
+                # Priority: explicit sse_endpoint > URL detection > append /sse
+                sse_endpoint = get_endpoint_url_from_server_info(server_info, transport_type="sse")
+                logger.info(f"[TRACE] Resolved SSE endpoint: {sse_endpoint}")
                 # Build headers including server-specific headers
                 headers = self._build_headers_for_server(server_info)
                 # Use shorter timeout for SSE since it starts streaming immediately
@@ -747,11 +745,12 @@ class HealthMonitoringService:
         if not supported_transports or supported_transports == []:
             logger.info(f"[TRACE] No specific transports defined, trying defaults")
             headers = self._build_headers_for_server(server_info)
-            
-            # Only try /mcp endpoint for default streamable-http transport
-            endpoint = f"{base_url}/mcp"
+
+            # Resolve default streamable-http endpoint using centralized utility
+            endpoint = get_endpoint_url_from_server_info(server_info, transport_type="streamable-http")
+            logger.info(f"[TRACE] Resolved default streamable-http endpoint: {endpoint}")
             ping_payload = '{ "jsonrpc": "2.0", "id": "0", "method": "ping" }'
-            
+
             try:
                 logger.info(f"[TRACE] Trying default endpoint: {endpoint}")
                 logger.info(f"[TRACE] Headers being sent: {headers}")
@@ -765,9 +764,11 @@ class HealthMonitoringService:
                     return False, f"unhealthy: status {response.status_code}"
             except Exception as e:
                 logger.warning(f"Health check failed for {endpoint}: {type(e).__name__} - {e}")
-                
+
             try:
-                sse_endpoint = f"{base_url}/sse"
+                # Resolve default SSE endpoint using centralized utility
+                sse_endpoint = get_endpoint_url_from_server_info(server_info, transport_type="sse")
+                logger.info(f"[TRACE] Resolved default SSE endpoint: {sse_endpoint}")
                 # Build headers including server-specific headers
                 headers = self._build_headers_for_server(server_info)
                 # Use shorter timeout for SSE since it starts streaming immediately
@@ -899,21 +900,76 @@ class HealthMonitoringService:
             # Get server info to pass transport configuration
             server_info = await server_service.get_server_info(service_path)
             logger.info(f"Fetching tools from {proxy_pass_url} for {service_path}")
-            tool_list = await mcp_client_service.get_tools_from_server_with_server_info(proxy_pass_url, server_info)
-            logger.info(f"Tool fetch result for {service_path}: {len(tool_list) if tool_list else 'None'} tools")
-            
+
+            # Use the new connection result function to get both tools and server info
+            connection_result = await mcp_client_service.get_mcp_connection_result(
+                proxy_pass_url,
+                server_info
+            )
+
+            tool_list = connection_result.get("tools") if connection_result else None
+            mcp_server_info = connection_result.get("server_info") if connection_result else None
+
+            logger.info(
+                f"Tool fetch result for {service_path}: "
+                f"{len(tool_list) if tool_list else 'None'} tools"
+            )
+
             if tool_list is not None:
                 new_tool_count = len(tool_list)
                 current_server_info = await server_service.get_server_info(service_path)
                 if current_server_info:
                     current_tool_count = current_server_info.get("num_tools", 0)
-                    
+
                     # Update if count changed OR if we have no tool details yet
                     current_tool_list = current_server_info.get("tool_list", [])
-                    if current_tool_count != new_tool_count or not current_tool_list:
+
+                    # Check if MCP server version changed
+                    current_mcp_version = current_server_info.get("mcp_server_version")
+                    new_mcp_version = mcp_server_info.get("version") if mcp_server_info else None
+
+                    # Log warning if version changed
+                    if (
+                        current_mcp_version
+                        and new_mcp_version
+                        and current_mcp_version != new_mcp_version
+                    ):
+                        logger.warning(
+                            f"MCP server version change detected for {service_path}: "
+                            f"{current_mcp_version} -> {new_mcp_version}"
+                        )
+
+                    needs_update = (
+                        current_tool_count != new_tool_count
+                        or not current_tool_list
+                        or current_mcp_version != new_mcp_version
+                    )
+
+                    if needs_update:
                         updated_server_info = current_server_info.copy()
                         updated_server_info["tool_list"] = tool_list
                         updated_server_info["num_tools"] = new_tool_count
+
+                        # Store MCP server info if available
+                        if mcp_server_info:
+                            if mcp_server_info.get("version"):
+                                new_ver = mcp_server_info["version"]
+                                # Track previous version and change timestamp
+                                if (
+                                    current_mcp_version
+                                    and current_mcp_version != new_ver
+                                ):
+                                    updated_server_info["mcp_server_version_previous"] = current_mcp_version
+                                    updated_server_info["mcp_server_version_updated_at"] = (
+                                        datetime.now(timezone.utc).isoformat()
+                                    )
+                                updated_server_info["mcp_server_version"] = new_ver
+                                logger.info(
+                                    f"Storing MCP server version for {service_path}: "
+                                    f"{new_ver}"
+                                )
+                            if mcp_server_info.get("name"):
+                                updated_server_info["mcp_server_name"] = mcp_server_info["name"]
 
                         await server_service.update_server(service_path, updated_server_info)
 

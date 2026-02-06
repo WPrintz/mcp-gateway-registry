@@ -1269,6 +1269,14 @@
         // =====================================================================
         // == Registration Modal Logic
         // =====================================================================
+        function toggleRegAllowedGroups() {
+            var visibility = document.getElementById('reg-visibility').value;
+            var container = document.getElementById('reg-allowed-groups-container');
+            if (container) {
+                container.style.display = visibility === 'group-restricted' ? 'block' : 'none';
+            }
+        }
+
         function showRegisterModal() {
             const modal = document.getElementById('register-server-modal');
             if (modal) {
@@ -1285,6 +1293,9 @@
                 if (pasteArea) pasteArea.value = ''; // Clear text area
                 const regForm = document.getElementById('register-server-form');
                 if (regForm) regForm.reset(); // Reset the form
+
+                // Reset visibility field
+                toggleRegAllowedGroups();
             }
         }
 
@@ -1426,7 +1437,23 @@
             formData.append('num_stars', jsonData.num_stars !== undefined ? jsonData.num_stars.toString() : '0');
             formData.append('is_python', jsonData.is_python ? 'true' : ''); // FastAPI expects 'true' or empty for bool
             formData.append('license', jsonData.license || 'N/A');
-            
+            // Custom endpoint fields (optional)
+            if (jsonData.mcp_endpoint) {
+                formData.append('mcp_endpoint', jsonData.mcp_endpoint);
+            }
+            if (jsonData.sse_endpoint) {
+                formData.append('sse_endpoint', jsonData.sse_endpoint);
+            }
+            // Custom metadata field (optional) - send as JSON string
+            if (jsonData.metadata && Object.keys(jsonData.metadata).length > 0) {
+                formData.append('metadata', JSON.stringify(jsonData.metadata));
+            }
+            // Federation visibility fields (optional)
+            formData.append('visibility', jsonData.visibility || 'public');
+            if (jsonData.allowed_groups) {
+                formData.append('allowed_groups', Array.isArray(jsonData.allowed_groups) ? jsonData.allowed_groups.join(',') : (jsonData.allowed_groups || ''));
+            }
+
             handleRegistrationSubmit(formData);
         }
 
@@ -2417,6 +2444,16 @@
                         <input type="url" id="reg-proxy-pass-url" name="proxy_pass_url" class="form-input" required>
                     </div>
                     <div class="form-group">
+                        <label for="reg-mcp-endpoint">MCP Endpoint (optional, for custom endpoint paths)</label>
+                        <input type="url" id="reg-mcp-endpoint" name="mcp_endpoint" class="form-input" placeholder="e.g., http://server.com/custom-path">
+                        <small style="color: #666;">If set, health checks will use this URL instead of appending /mcp to the Proxy Pass URL</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-sse-endpoint">SSE Endpoint (optional, for custom SSE paths)</label>
+                        <input type="url" id="reg-sse-endpoint" name="sse_endpoint" class="form-input" placeholder="e.g., http://server.com/events">
+                        <small style="color: #666;">If set, SSE connections will use this URL instead of appending /sse to the Proxy Pass URL</small>
+                    </div>
+                    <div class="form-group">
                         <label for="reg-description">Description</label>
                         <textarea id="reg-description" name="description" class="form-input" rows="3"></textarea>
                     </div>
@@ -2435,6 +2472,25 @@
                     <div class="form-group">
                         <input type="checkbox" id="reg-is-python" name="is_python" value="true"> <!-- Value 'true' is important for FastAPI -->
                         <label for="reg-is-python" style="display: inline; font-weight: normal;">Is Python based?</label>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-metadata">Metadata (optional, JSON object)</label>
+                        <textarea id="reg-metadata" name="metadata" class="form-input" rows="4" placeholder='{"team": "platform", "owner": "alice@example.com", "cost_center": "CC-1001"}'></textarea>
+                        <small style="color: #666;">Custom key-value pairs for organization, compliance, or integration purposes</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-visibility">Federation Visibility</label>
+                        <select id="reg-visibility" name="visibility" class="form-input" onchange="toggleRegAllowedGroups()">
+                            <option value="public" selected>Public (shared with all peers)</option>
+                            <option value="group-restricted">Group Restricted (shared with specific groups)</option>
+                            <option value="internal">Internal (never shared)</option>
+                        </select>
+                        <small style="color: #666;">Controls whether this server is shared with peer registries via federation</small>
+                    </div>
+                    <div class="form-group" id="reg-allowed-groups-container" style="display: none;">
+                        <label for="reg-allowed-groups">Allowed Groups (comma-separated)</label>
+                        <input type="text" id="reg-allowed-groups" name="allowed_groups" class="form-input" placeholder="e.g., engineering, devops">
+                        <small style="color: #666;">Groups that can access this server when visibility is group-restricted</small>
                     </div>
                     <button type="submit" class="edit-button">Register Server</button>
                 </form>
@@ -2458,7 +2514,7 @@
                 <form id="paste-json-form">
                     <div class="form-group">
                         <label for="json-paste-area">Paste JSON content here</label>
-                        <textarea id="json-paste-area" class="form-input" rows="10" required placeholder='''{
+                        <textarea id="json-paste-area" class="form-input" rows="15" required placeholder='''{
     "server_name": "My Awesome Service",
     "path": "/my-awesome-service",
     "proxy_pass_url": "http://localhost:8080",
@@ -2466,8 +2522,18 @@
     "tags": ["awesome", "example"],
     "num_stars": 5,
     "is_python": true,
-    "license": "MIT"
+    "license": "MIT",
+    "mcp_endpoint": "http://localhost:8080/custom-path",
+    "sse_endpoint": "http://localhost:8080/events",
+    "metadata": {
+        "team": "platform",
+        "owner": "alice@example.com",
+        "cost_center": "CC-1001"
+    },
+    "visibility": "public",
+    "allowed_groups": []
 }'''></textarea>
+                        <small style="color: #666;">Note: mcp_endpoint, sse_endpoint, metadata, visibility, and allowed_groups are optional.</small>
                     </div>
                     <button type="submit" class="edit-button">Paste and Register</button>
                 </form>

@@ -1,10 +1,11 @@
 import logging
 from typing import Annotated, List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from ..auth.dependencies import nginx_proxied_auth
+from ..audit import set_audit_action
 from ..repositories.factory import get_search_repository
 from ..repositories.interfaces import SearchRepositoryBase
 from ..services.server_service import server_service
@@ -35,6 +36,18 @@ class MatchingToolResult(BaseModel):
     match_context: Optional[str] = None
 
 
+class SyncMetadata(BaseModel):
+    """Metadata for items synced from peer registries."""
+
+    is_federated: bool = False
+    source_peer_id: Optional[str] = None
+    synced_at: Optional[str] = None
+    original_path: Optional[str] = None
+    is_orphaned: bool = False
+    orphaned_at: Optional[str] = None
+    is_read_only: bool = True
+
+
 class ServerSearchResult(BaseModel):
     path: str
     server_name: str
@@ -45,6 +58,7 @@ class ServerSearchResult(BaseModel):
     relevance_score: float = Field(..., ge=0.0, le=1.0)
     match_context: Optional[str] = None
     matching_tools: List[MatchingToolResult] = Field(default_factory=list)
+    sync_metadata: Optional[SyncMetadata] = None
 
 
 class ToolSearchResult(BaseModel):
@@ -68,6 +82,7 @@ class AgentSearchResult(BaseModel):
     is_enabled: bool = False
     relevance_score: float = Field(..., ge=0.0, le=1.0)
     match_context: Optional[str] = None
+    sync_metadata: Optional[SyncMetadata] = None
 
 
 class SemanticSearchRequest(BaseModel):
@@ -82,6 +97,10 @@ class SemanticSearchRequest(BaseModel):
 
 class SemanticSearchResponse(BaseModel):
     query: str
+    search_mode: str = Field(
+        default="hybrid",
+        description="Search mode: 'hybrid' (semantic+lexical) or 'lexical-only'"
+    )
     servers: List[ServerSearchResult] = Field(default_factory=list)
     tools: List[ToolSearchResult] = Field(default_factory=list)
     agents: List[AgentSearchResult] = Field(default_factory=list)
@@ -132,7 +151,7 @@ async def _user_can_access_agent(agent_path: str, user_context: dict) -> bool:
     if agent_card.visibility == "public":
         return True
 
-    if agent_card.visibility == "private":
+    if agent_card.visibility == "internal":
         return agent_card.registered_by == user_context.get("username")
 
     if agent_card.visibility == "group-restricted":
@@ -149,6 +168,7 @@ async def _user_can_access_agent(agent_path: str, user_context: dict) -> bool:
     summary="Unified semantic search for MCP servers and tools",
 )
 async def semantic_search(
+    http_request: Request,
     request: SemanticSearchRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
     search_repo: SearchRepositoryBase = Depends(get_search_repo),
@@ -156,6 +176,9 @@ async def semantic_search(
     """
     Run a semantic search against MCP servers (and their tools) using FAISS embeddings.
     """
+    # Set audit action for search
+    set_audit_action(http_request, "search", "search", description=f"Semantic search: {request.query[:50]}...")
+    
     logger.info(
         "Semantic search requested by %s (entities=%s, max=%s)",
         user_context.get("username"),
@@ -199,6 +222,10 @@ async def semantic_search(
             for tool in server.get("matching_tools", [])
         ]
 
+        # Parse sync_metadata if present
+        raw_sync = server.get("sync_metadata")
+        sync_meta = SyncMetadata(**raw_sync) if raw_sync else None
+
         filtered_servers.append(
             ServerSearchResult(
                 path=server.get("path", ""),
@@ -210,6 +237,7 @@ async def semantic_search(
                 relevance_score=server.get("relevance_score", 0.0),
                 match_context=server.get("match_context"),
                 matching_tools=matching_tools,
+                sync_metadata=sync_meta,
             )
         )
 
@@ -257,6 +285,10 @@ async def semantic_search(
             for skill in raw_skills
         ]
 
+        # Parse sync_metadata from search result or agent card
+        raw_agent_sync = agent.get("sync_metadata") or agent_card_dict.get("sync_metadata")
+        agent_sync_meta = SyncMetadata(**raw_agent_sync) if raw_agent_sync else None
+
         filtered_agents.append(
             AgentSearchResult(
                 path=agent_path,
@@ -274,6 +306,7 @@ async def semantic_search(
                 relevance_score=agent.get("relevance_score", 0.0),
                 match_context=agent.get("match_context")
                 or agent_card_dict.get("description"),
+                sync_metadata=agent_sync_meta,
             )
         )
 

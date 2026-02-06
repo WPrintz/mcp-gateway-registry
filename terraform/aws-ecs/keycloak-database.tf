@@ -8,8 +8,10 @@ resource "aws_db_proxy" "keycloak" {
   engine_family = "MYSQL"
 
   auth {
-    auth_scheme = "SECRETS"
-    secret_arn  = aws_secretsmanager_secret.keycloak_db_secret.arn
+    auth_scheme               = "SECRETS"
+    secret_arn                = aws_secretsmanager_secret.keycloak_db_secret.arn
+    client_password_auth_type = "MYSQL_CACHING_SHA2_PASSWORD"
+    iam_auth                  = "DISABLED"
   }
 
   role_arn               = aws_iam_role.rds_proxy_role.arn
@@ -173,7 +175,7 @@ resource "aws_iam_role_policy" "rds_proxy_policy" {
 resource "aws_secretsmanager_secret" "keycloak_db_secret" {
   name                    = "keycloak/database"
   description             = "Keycloak database credentials"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 
   tags = local.common_tags
 }

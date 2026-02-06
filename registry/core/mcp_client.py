@@ -8,7 +8,12 @@ Copied directly from main_old.py working implementation.
 import asyncio
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import (
+    List,
+    Dict,
+    Optional,
+    TypedDict,
+)
 import re
 from urllib.parse import urlparse
 
@@ -18,6 +23,20 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 
 logger = logging.getLogger(__name__)
+
+
+class MCPServerInfo(TypedDict, total=False):
+    """Server info returned from MCP initialize response."""
+
+    name: str
+    version: str
+
+
+class MCPConnectionResult(TypedDict, total=False):
+    """Result of connecting to an MCP server."""
+
+    tools: List[dict]
+    server_info: MCPServerInfo
 
 
 def normalize_sse_endpoint_url(endpoint_url: str) -> str:
@@ -228,13 +247,39 @@ async def _get_tools_streamable_http(base_url: str, server_info: dict = None) ->
     """Get tools using streamable-http transport"""
     # Build headers for the server
     headers = _build_headers_for_server(server_info)
-    
+
+    # Check if server_info has explicit mcp_endpoint
+    explicit_endpoint = server_info.get("mcp_endpoint") if server_info else None
+
+    # If explicit endpoint is provided, use it directly (single attempt)
+    if explicit_endpoint:
+        mcp_url = explicit_endpoint
+        logger.info(f"MCP Client: Using explicit mcp_endpoint: {mcp_url}")
+
+        # Handle servers imported from anthropic by adding required query parameter
+        if server_info and 'tags' in server_info and 'anthropic-registry' in server_info.get('tags', []):
+            if '?' not in mcp_url:
+                mcp_url += '?instance_id=default'
+            elif 'instance_id=' not in mcp_url:
+                mcp_url += '&instance_id=default'
+
+        try:
+            async with streamablehttp_client(url=mcp_url, headers=headers) as (read, write, get_session_id):
+                async with ClientSession(read, write) as session:
+                    await asyncio.wait_for(session.initialize(), timeout=10.0)
+                    tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
+                    result = _extract_tool_details(tools_response)
+                    return result
+        except Exception as e:
+            logger.error(f"MCP Check Error: Streamable-HTTP connection failed to {mcp_url}: {e}")
+            return None
+
     # If URL already has MCP endpoint, use it directly
     if base_url.endswith('/mcp') or '/mcp/' in base_url:
         mcp_url = base_url
         # Don't add trailing slash - some servers like Cloudflare reject it
 
-        # Handle streamable-http and sse servers imported from anthropinc by adding required query parameter
+        # Handle streamable-http and sse servers imported from anthropic by adding required query parameter
         if server_info and 'tags' in server_info and 'anthropic-registry' in server_info.get('tags', []):
             if '?' not in mcp_url:
                 mcp_url += '?instance_id=default'
@@ -242,14 +287,14 @@ async def _get_tools_streamable_http(base_url: str, server_info: dict = None) ->
                 mcp_url += '&instance_id=default'
         else:
             logger.info(f"DEBUG: Not a Strata server, URL unchanged: {mcp_url}")
-        
+
         logger.info(f"DEBUG: About to connect to: {mcp_url}")
         try:
             async with streamablehttp_client(url=mcp_url, headers=headers) as (read, write, get_session_id):
                 async with ClientSession(read, write) as session:
                     await asyncio.wait_for(session.initialize(), timeout=10.0)
                     tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
-                    
+
                     result = _extract_tool_details(tools_response)
                     return result
         except Exception as e:
@@ -262,7 +307,7 @@ async def _get_tools_streamable_http(base_url: str, server_info: dict = None) ->
             base_url.rstrip('/') + "/mcp/",
             base_url.rstrip('/') + "/"
         ]
-        
+
         for mcp_url in endpoints_to_try:
             try:
                 logger.info(f"MCP Client: Trying streamable-http endpoint: {mcp_url}")
@@ -270,10 +315,10 @@ async def _get_tools_streamable_http(base_url: str, server_info: dict = None) ->
                     async with ClientSession(read, write) as session:
                         await asyncio.wait_for(session.initialize(), timeout=10.0)
                         tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
-                        
+
                         logger.info(f"MCP Client: Successfully connected to {mcp_url}")
                         return _extract_tool_details(tools_response)
-                        
+
             except asyncio.TimeoutError:
                 logger.error(f"MCP Check Error: Timeout during streamable-http session with {mcp_url}.")
                 if mcp_url == endpoints_to_try[0]:
@@ -284,18 +329,24 @@ async def _get_tools_streamable_http(base_url: str, server_info: dict = None) ->
                 if mcp_url == endpoints_to_try[0]:
                     continue
                 return None
-    
+
     return None
 
 
 async def _get_tools_sse(base_url: str, server_info: dict = None) -> List[dict] | None:
     """Get tools using SSE transport (legacy method with patches)"""
-    # If URL already has SSE endpoint, use it directly
-    if base_url.endswith('/sse') or '/sse/' in base_url:
+    # Check if server_info has explicit sse_endpoint
+    explicit_endpoint = server_info.get("sse_endpoint") if server_info else None
+
+    # Resolve SSE endpoint URL
+    if explicit_endpoint:
+        sse_url = explicit_endpoint
+        logger.info(f"MCP Client: Using explicit sse_endpoint: {sse_url}")
+    elif base_url.endswith('/sse') or '/sse/' in base_url:
         sse_url = base_url
     else:
         sse_url = base_url.rstrip('/') + "/sse"
-    
+
     secure_prefix = "s" if sse_url.startswith("https://") else ""
     mcp_server_url = f"http{secure_prefix}://{sse_url[len(f'http{secure_prefix}://'):]}"
     
@@ -447,14 +498,153 @@ async def get_tools_from_server_with_server_info(base_url: str, server_info: dic
         return None
 
 
+async def get_mcp_connection_result(
+    base_url: str,
+    server_info: dict = None
+) -> MCPConnectionResult | None:
+    """
+    Connect to MCP server and return both tools and server info.
+
+    This function performs the MCP initialize handshake and extracts
+    the serverInfo (name, version) from the response along with tools.
+
+    Args:
+        base_url: The base URL of the MCP server
+        server_info: Optional server configuration dict
+
+    Returns:
+        MCPConnectionResult with tools and server_info, or None on failure
+    """
+    if not base_url:
+        logger.error("MCP Check Error: Base URL is empty.")
+        return None
+
+    # Use transport-aware detection
+    transport = await detect_server_transport_aware(base_url, server_info)
+
+    logger.info(
+        f"Getting MCP connection result from {base_url} using {transport} transport..."
+    )
+
+    # Build headers for the server
+    headers = _build_headers_for_server(server_info)
+
+    # Determine the MCP endpoint URL
+    explicit_endpoint = server_info.get("mcp_endpoint") if server_info else None
+
+    if explicit_endpoint:
+        mcp_url = explicit_endpoint
+    elif base_url.endswith('/mcp') or '/mcp/' in base_url:
+        mcp_url = base_url
+    else:
+        mcp_url = base_url.rstrip('/') + "/mcp/"
+
+    # Handle anthropic-registry servers
+    if server_info and 'tags' in server_info and 'anthropic-registry' in server_info.get('tags', []):
+        if '?' not in mcp_url:
+            mcp_url += '?instance_id=default'
+        elif 'instance_id=' not in mcp_url:
+            mcp_url += '&instance_id=default'
+
+    try:
+        if transport == "streamable-http":
+            async with streamablehttp_client(url=mcp_url, headers=headers) as (read, write, get_session_id):
+                async with ClientSession(read, write) as session:
+                    # Capture the initialize result which contains serverInfo
+                    init_result = await asyncio.wait_for(session.initialize(), timeout=10.0)
+                    tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
+
+                    tools = _extract_tool_details(tools_response)
+
+                    # Extract server info from initialize result
+                    mcp_server_info: MCPServerInfo = {}
+                    if init_result and hasattr(init_result, 'serverInfo') and init_result.serverInfo:
+                        if hasattr(init_result.serverInfo, 'name'):
+                            mcp_server_info['name'] = init_result.serverInfo.name
+                        if hasattr(init_result.serverInfo, 'version'):
+                            mcp_server_info['version'] = init_result.serverInfo.version
+
+                    if mcp_server_info:
+                        logger.info(
+                            f"MCP Server Info from {base_url}: "
+                            f"name={mcp_server_info.get('name')}, "
+                            f"version={mcp_server_info.get('version')}"
+                        )
+
+                    return MCPConnectionResult(
+                        tools=tools or [],
+                        server_info=mcp_server_info
+                    )
+
+        elif transport == "sse":
+            # For SSE transport
+            sse_endpoint = server_info.get("sse_endpoint") if server_info else None
+            if sse_endpoint:
+                sse_url = sse_endpoint
+            else:
+                sse_url = base_url.rstrip('/') + "/sse"
+
+            async with sse_client(url=sse_url, headers=headers) as (read, write):
+                async with ClientSession(read, write) as session:
+                    # Capture the initialize result which contains serverInfo
+                    init_result = await asyncio.wait_for(session.initialize(), timeout=10.0)
+                    tools_response = await asyncio.wait_for(session.list_tools(), timeout=15.0)
+
+                    tools = _extract_tool_details(tools_response)
+
+                    # Extract server info from initialize result
+                    mcp_server_info: MCPServerInfo = {}
+                    if init_result and hasattr(init_result, 'serverInfo') and init_result.serverInfo:
+                        if hasattr(init_result.serverInfo, 'name'):
+                            mcp_server_info['name'] = init_result.serverInfo.name
+                        if hasattr(init_result.serverInfo, 'version'):
+                            mcp_server_info['version'] = init_result.serverInfo.version
+
+                    if mcp_server_info:
+                        logger.info(
+                            f"MCP Server Info from {base_url}: "
+                            f"name={mcp_server_info.get('name')}, "
+                            f"version={mcp_server_info.get('version')}"
+                        )
+
+                    return MCPConnectionResult(
+                        tools=tools or [],
+                        server_info=mcp_server_info
+                    )
+
+        else:
+            logger.error(f"Unsupported transport type: {transport}")
+            return None
+
+    except asyncio.TimeoutError:
+        logger.error(f"MCP Check Error: Timeout connecting to {mcp_url}")
+        return None
+    except Exception as e:
+        logger.error(
+            f"MCP Check Error: Failed to get connection result from {base_url}: "
+            f"{type(e).__name__} - {e}"
+        )
+        return None
 
 
 class MCPClientService:
     """Service wrapper for the MCP client function to maintain compatibility."""
-    
-    async def get_tools_from_server_with_server_info(self, base_url: str, server_info: dict = None) -> Optional[List[Dict]]:
+
+    async def get_tools_from_server_with_server_info(
+        self,
+        base_url: str,
+        server_info: dict = None
+    ) -> Optional[List[Dict]]:
         """Wrapper method that uses server configuration for transport selection."""
         return await get_tools_from_server_with_server_info(base_url, server_info)
+
+    async def get_mcp_connection_result(
+        self,
+        base_url: str,
+        server_info: dict = None
+    ) -> Optional[MCPConnectionResult]:
+        """Get both tools and server info from MCP server."""
+        return await get_mcp_connection_result(base_url, server_info)
 
 
 # Global MCP client service instance  

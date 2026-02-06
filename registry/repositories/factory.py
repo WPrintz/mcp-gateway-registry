@@ -13,7 +13,9 @@ from .interfaces import (
     SecurityScanRepositoryBase,
     SearchRepositoryBase,
     FederationConfigRepositoryBase,
+    PeerFederationRepositoryBase,
 )
+from .audit_repository import AuditRepositoryBase
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,8 @@ _scope_repo: Optional[ScopeRepositoryBase] = None
 _security_scan_repo: Optional[SecurityScanRepositoryBase] = None
 _search_repo: Optional[SearchRepositoryBase] = None
 _federation_config_repo: Optional[FederationConfigRepositoryBase] = None
+_peer_federation_repo: Optional[PeerFederationRepositoryBase] = None
+_audit_repo: Optional[AuditRepositoryBase] = None
 
 
 def get_server_repository() -> ServerRepositoryBase:
@@ -146,12 +150,59 @@ def get_federation_config_repository() -> FederationConfigRepositoryBase:
     return _federation_config_repo
 
 
+def get_peer_federation_repository() -> PeerFederationRepositoryBase:
+    """Get peer federation repository singleton."""
+    global _peer_federation_repo
+
+    if _peer_federation_repo is not None:
+        return _peer_federation_repo
+
+    backend = settings.storage_backend
+    logger.info(f"Creating peer federation repository with backend: {backend}")
+
+    if backend in ("documentdb", "mongodb-ce"):
+        from .documentdb.peer_federation_repository import DocumentDBPeerFederationRepository
+        _peer_federation_repo = DocumentDBPeerFederationRepository()
+    else:
+        from .file.peer_federation_repository import FilePeerFederationRepository
+        _peer_federation_repo = FilePeerFederationRepository()
+
+    return _peer_federation_repo
+
+
+def get_audit_repository() -> AuditRepositoryBase:
+    """Get audit repository singleton.
+    
+    Note: Audit repository only supports DocumentDB/MongoDB backends.
+    Returns None if storage backend is 'file'.
+    """
+    global _audit_repo
+
+    if _audit_repo is not None:
+        return _audit_repo
+
+    backend = settings.storage_backend
+    logger.info(f"Creating audit repository with backend: {backend}")
+
+    if backend in ("documentdb", "mongodb-ce"):
+        from .audit_repository import DocumentDBAuditRepository
+        _audit_repo = DocumentDBAuditRepository()
+    else:
+        # Audit repository requires MongoDB - return None for file backend
+        logger.warning("Audit repository requires MongoDB backend. File backend not supported.")
+        return None
+
+    return _audit_repo
+
+
 def reset_repositories() -> None:
     """Reset all repository singletons. USE ONLY IN TESTS."""
-    global _server_repo, _agent_repo, _scope_repo, _security_scan_repo, _search_repo, _federation_config_repo
+    global _server_repo, _agent_repo, _scope_repo, _security_scan_repo, _search_repo, _federation_config_repo, _peer_federation_repo, _audit_repo
     _server_repo = None
     _agent_repo = None
     _scope_repo = None
     _security_scan_repo = None
     _search_repo = None
     _federation_config_repo = None
+    _peer_federation_repo = None
+    _audit_repo = None

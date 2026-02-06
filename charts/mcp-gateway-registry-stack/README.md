@@ -52,7 +52,7 @@ The `values.yaml` file needs to be updated for your setup, specifically:
   `subdomain.example.com`, `DOMAIN` should be replaced with `subdomain.example.com`
 - `secretKey`: the registry and auth-server both have a placeholder for `secretKey`, this should be updated to the same
   random, secure key that is used in both locations
-- `global.authProvider.type`: Choose your authentication provider - either `keycloak` (default) or `entra`
+- `routingMode`: choose between `subdomain` (default) or `path` based routing (see Routing Modes section below)
 
 ### Authentication Provider Selection
 
@@ -118,6 +118,56 @@ auth-server:
 
 See the [Entra ID documentation](../../docs/entra.md) for details on setting up your Entra ID app registration.
 
+
+### Routing Modes
+
+The stack supports two routing modes for accessing services:
+
+#### Subdomain-Based Routing (Default)
+
+Services are accessed via subdomains:
+- `keycloak.{domain}` - Keycloak authentication server
+- `auth-server.{domain}` - MCP Gateway auth server
+- `mcpregistry.{domain}` - MCP server registry
+
+**Configuration:**
+```yaml
+global:
+  domain: "yourdomain.com"
+  ingress:
+    routingMode: subdomain
+```
+
+**DNS Requirements:** Configure A/CNAME records for each subdomain pointing to your ingress load balancer.
+
+#### Path-Based Routing
+
+Services are accessed via paths on a single domain:
+- `{domain}/keycloak` - Keycloak authentication server (default, configurable)
+- `{domain}/auth-server` - MCP Gateway auth server (default, configurable)
+- `{domain}/registry` - MCP server registry (default, configurable)
+- `{domain}/` - MCP server registry (root path)
+
+**Configuration:**
+```yaml
+global:
+  domain: "yourdomain.com"
+  ingress:
+    routingMode: path
+    paths:
+      authServer: /auth-server    # Customize as needed (e.g., /api/auth)
+      registry: /registry          # Customize as needed (e.g., /api)
+      keycloak: /keycloak         # Customize as needed (e.g., /auth/keycloak)
+```
+
+**Important:** If you customize the Keycloak path, update the helm variable:
+```yaml
+keycloak:
+  httpRelativePath: /keycloak/
+```
+
+**DNS Requirements:** Configure a single A/CNAME record for your domain pointing to your ingress load balancer.
+
 ## Install
 
 Once the `values.yaml` file is updated and saved, run (substitute MYNAMESPACE for the namespace in which this should be
@@ -151,10 +201,14 @@ This will deploy the necessary resources for a Kubernetes deployment of the MCP 
 
 ## Use
 
-### With Keycloak:
+Navigate to the registry based on your routing mode:
 
-Navigate to https://mcpregistry.DOMAIN to log in. The username/password are displayed in the output of the
-`keycloak-configure job`
+**Subdomain mode:** https://mcpregistry.DOMAIN
+
+**Path mode:** https://DOMAIN/registry or https://DOMAIN/
+
+### With Keycloak
+The username/password are displayed in the output of the `keycloak-configure job`
 
 ```bash
 kubectl get pods -l job-name=setup-keycloak -n MYNAMESPACE     
@@ -185,3 +239,106 @@ Navigate to https://mcpregistry.DOMAIN to log in. Users will authenticate using 
 3. Group mappings are configured in your scopes.yml or MongoDB
 
 See the [Entra ID documentation](../../docs/entra.md) for complete setup instructions.
+
+## Scaling and High Availability
+
+### Replica Configuration
+
+Both the auth-server and registry deployments support configuring the number of replicas via `values.yaml`:
+
+```yaml
+auth-server:
+  replicaCount: 2
+
+registry:
+  replicaCount: 2
+```
+
+For production environments, we recommend running at least 2 replicas of each service to ensure high availability.
+
+### Topology Spread Constraints
+
+By default, neither the auth-server nor registry deployments include `topologySpreadConstraints`. This is intentional for several reasons:
+
+1. **Routing Complexity**: Routing is complex and handled differently between deployments  
+2. **Development Flexibility**: Single-node or small clusters (common in dev/test) would fail to schedule pods with strict spread constraints
+3. **Custom Requirements**: Organizations often have specific topology requirements that vary by environment
+
+For production deployments on multi-AZ clusters, we recommend adding topology spread constraints to both deployments to distribute pods across availability zones and nodes. This improves fault tolerance and ensures service availability during zone or node failures.
+
+#### Adding Topology Spread Constraints
+
+To add topology spread constraints, patch the deployments after installation:
+
+```bash
+# Patch auth-server deployment
+kubectl patch deployment auth-server -n MYNAMESPACE --type='json' -p='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/topologySpreadConstraints",
+    "value": [
+      {
+        "maxSkew": 1,
+        "topologyKey": "topology.kubernetes.io/zone",
+        "whenUnsatisfiable": "ScheduleAnyway",
+        "labelSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "auth-server",
+            "app.kubernetes.io/component": "auth-server"
+          }
+        }
+      },
+      {
+        "maxSkew": 1,
+        "topologyKey": "kubernetes.io/hostname",
+        "whenUnsatisfiable": "ScheduleAnyway",
+        "labelSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "auth-server",
+            "app.kubernetes.io/component": "auth-server"
+          }
+        }
+      }
+    ]
+  }
+]'
+
+# Patch registry deployment
+kubectl patch deployment registry -n MYNAMESPACE --type='json' -p='[
+  {
+    "op": "add",
+    "path": "/spec/template/spec/topologySpreadConstraints",
+    "value": [
+      {
+        "maxSkew": 1,
+        "topologyKey": "topology.kubernetes.io/zone",
+        "whenUnsatisfiable": "ScheduleAnyway",
+        "labelSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "registry",
+            "app.kubernetes.io/component": "registry"
+          }
+        }
+      },
+      {
+        "maxSkew": 1,
+        "topologyKey": "kubernetes.io/hostname",
+        "whenUnsatisfiable": "ScheduleAnyway",
+        "labelSelector": {
+          "matchLabels": {
+            "app.kubernetes.io/name": "registry",
+            "app.kubernetes.io/component": "registry"
+          }
+        }
+      }
+    ]
+  }
+]'
+```
+
+#### Constraint Explanation
+
+- **`topology.kubernetes.io/zone`**: Spreads pods across availability zones for zone-level fault tolerance
+- **`kubernetes.io/hostname`**: Spreads pods across different nodes within each zone for node-level fault tolerance
+- **`maxSkew: 1`**: Ensures pods are distributed as evenly as possible (difference between zones/nodes is at most 1)
+- **`whenUnsatisfiable: ScheduleAnyway`**: Uses soft constraints that prefer even distribution but won't block scheduling if perfect distribution isn't possible. Change to `DoNotSchedule` for strict enforcement

@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
+interface ServerVersion {
+  version: string;
+  proxy_pass_url: string;
+  status: string;
+  is_default: boolean;
+}
+
+interface SyncMetadata {
+  is_federated?: boolean;
+  source_peer_id?: string;
+  upstream_path?: string;
+  last_synced_at?: string;
+  is_read_only?: boolean;
+}
+
 interface Server {
   name: string;
   path: string;
@@ -14,6 +29,15 @@ interface Server {
   status?: 'healthy' | 'healthy-auth-expired' | 'unhealthy' | 'unknown';
   num_tools?: number;
   type: 'server' | 'agent';
+  proxy_pass_url?: string;
+  version?: string;
+  versions?: ServerVersion[];
+  default_version?: string;
+  mcp_server_version?: string;
+  mcp_server_version_previous?: string;
+  mcp_server_version_updated_at?: string;
+  sync_metadata?: SyncMetadata;
+  registered_by?: string | null;
 }
 
 interface ServerStats {
@@ -111,6 +135,14 @@ export const useServerStats = (): UseServerStatsReturn => {
           status: mapHealthStatus(serverInfo.health_status || 'unknown'),
           num_tools: serverInfo.num_tools || 0,
           type: 'server' as const,
+          proxy_pass_url: serverInfo.proxy_pass_url || '',
+          version: serverInfo.version,
+          versions: serverInfo.versions,
+          default_version: serverInfo.default_version,
+          mcp_server_version: serverInfo.mcp_server_version,
+          mcp_server_version_previous: serverInfo.mcp_server_version_previous,
+          mcp_server_version_updated_at: serverInfo.mcp_server_version_updated_at,
+          sync_metadata: serverInfo.sync_metadata,
         };
         
         // Debug log the transformed server
@@ -138,6 +170,8 @@ export const useServerStats = (): UseServerStatsReturn => {
           status: 'unknown' as const, // Agents don't have health status yet
           num_tools: agentInfo.num_skills || 0, // Use num_skills for agents
           type: 'agent' as const,
+          sync_metadata: agentInfo.sync_metadata,
+          registered_by: agentInfo.registered_by || agentInfo.registeredBy || null,
         };
         
         console.log(`🔄 Transformed agent ${transformed.name}:`, {

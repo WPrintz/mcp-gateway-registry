@@ -59,6 +59,8 @@ class InternalServiceRegistration(BaseModel):
     name: Optional[str] = Field(None, description="Service name")
     description: Optional[str] = Field(None, description="Service description")
     proxy_pass_url: Optional[str] = Field(None, description="Proxy pass URL")
+    version: Optional[str] = Field(None, description="Server version (e.g., v1.0.0, v2.0.0)")
+    status: Optional[str] = Field(None, description="Version status (stable, beta, deprecated)")
     auth_provider: Optional[str] = Field(None, description="Authentication provider")
     auth_type: Optional[str] = Field(None, description="Authentication type")
     supported_transports: Optional[List[str]] = Field(None, description="Supported transports")
@@ -66,6 +68,18 @@ class InternalServiceRegistration(BaseModel):
     tool_list_json: Optional[str] = Field(None, description="Tool list as JSON string")
     tags: Optional[List[str]] = Field(None, description="Categorization tags")
     overwrite: Optional[bool] = Field(False, description="Overwrite if exists")
+    mcp_endpoint: Optional[str] = Field(
+        None,
+        description="Full URL for the MCP streamable-http endpoint (overrides proxy_pass_url + /mcp)"
+    )
+    sse_endpoint: Optional[str] = Field(
+        None,
+        description="Full URL for the SSE endpoint (overrides proxy_pass_url + /sse)"
+    )
+    metadata: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Additional custom metadata for organization, compliance, or integration purposes"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -423,6 +437,11 @@ class AgentListItem(BaseModel):
     provider: Optional[str] = Field(None, description="Agent provider")
     streaming: bool = Field(default=False, description="Supports streaming")
     trust_level: str = Field(default="unverified", alias="trustLevel", description="Trust level")
+    sync_metadata: Optional[Dict[str, Any]] = Field(
+        default=None,
+        alias="syncMetadata",
+        description="Federation sync metadata for items from peer registries",
+    )
 
     class Config:
         populate_by_name = True  # Allow both snake_case and camelCase on input
@@ -812,12 +831,15 @@ class RegistryClient:
         logger.debug(f"{method} {url}")
 
         # Determine content type based on endpoint
-        # Agent, Management, Search, Federation, and group import endpoints use JSON, server registration uses form data
+        # Agent, Management, Search, Federation, version, and group import endpoints use JSON
+        # Server registration uses form data
         if (endpoint.startswith("/api/agents") or
             endpoint.startswith("/api/management") or
             endpoint.startswith("/api/search") or
             endpoint.startswith("/api/federation") or
-            endpoint == "/api/servers/groups/import"):
+            endpoint.startswith("/api/peers") or
+            endpoint == "/api/servers/groups/import" or
+            "/versions" in endpoint):
             # Send as JSON for agent, management, search, federation, and import endpoints
             response = requests.request(
                 method=method,
@@ -875,6 +897,10 @@ class RegistryClient:
         # Convert tags list to comma-separated string for form encoding
         if "tags" in data and isinstance(data["tags"], list):
             data["tags"] = ",".join(data["tags"])
+
+        # Convert metadata dict to JSON string for form encoding
+        if "metadata" in data and isinstance(data["metadata"], dict):
+            data["metadata"] = json.dumps(data["metadata"])
 
         response = self._make_request(
             method="POST",
@@ -1896,6 +1922,99 @@ class RegistryClient:
         return result
 
 
+    # Local Server Version Management Methods
+
+
+    def remove_server_version(
+        self,
+        path: str,
+        version: str
+    ) -> dict:
+        """
+        Remove a version from a server.
+
+        Args:
+            path: Server path (e.g., "/context7")
+            version: Version to remove
+
+        Returns:
+            Response dict with status and message
+
+        Raises:
+            requests.HTTPError: If server not found or cannot remove default
+        """
+        logger.info(f"Removing version {version} from server {path}")
+
+        encoded_path = quote(path.lstrip('/'), safe='')
+        encoded_version = quote(version, safe='')
+
+        response = self._make_request(
+            method="DELETE",
+            endpoint=f"/api/servers/{encoded_path}/versions/{encoded_version}"
+        )
+
+        return response.json()
+
+
+    def set_default_version(
+        self,
+        path: str,
+        version: str
+    ) -> dict:
+        """
+        Set the default (latest) version for a server.
+
+        Args:
+            path: Server path (e.g., "/context7")
+            version: Version to set as default
+
+        Returns:
+            Response dict with status and message
+
+        Raises:
+            requests.HTTPError: If server or version not found
+        """
+        logger.info(f"Setting default version to {version} for server {path}")
+
+        encoded_path = quote(path.lstrip('/'), safe='')
+
+        response = self._make_request(
+            method="PUT",
+            endpoint=f"/api/servers/{encoded_path}/versions/default",
+            data={"version": version}
+        )
+
+        return response.json()
+
+
+    def get_server_versions(
+        self,
+        path: str
+    ) -> dict:
+        """
+        Get all versions for a server.
+
+        Args:
+            path: Server path (e.g., "/context7")
+
+        Returns:
+            Dict with path, default_version, and versions list
+
+        Raises:
+            requests.HTTPError: If server not found
+        """
+        logger.info(f"Getting versions for server {path}")
+
+        encoded_path = quote(path.lstrip('/'), safe='')
+
+        response = self._make_request(
+            method="GET",
+            endpoint=f"/api/servers/{encoded_path}/versions"
+        )
+
+        return response.json()
+
+
     # Management API Methods (IAM/User Management)
 
 
@@ -2423,4 +2542,341 @@ class RegistryClient:
 
         result = response.json()
         logger.info(f"Federation sync completed: {result.get('total_synced', 0)} items synced")
+        return result
+
+
+    # ==========================================
+    # Peer Federation Management Methods
+    # ==========================================
+
+    def list_peers(
+        self,
+        enabled: Optional[bool] = None
+    ) -> Dict[str, Any]:
+        """
+        List all configured peer registries.
+
+        Args:
+            enabled: Optional filter by enabled status
+
+        Returns:
+            Dictionary with peers list
+
+        Raises:
+            requests.HTTPError: If request fails
+        """
+        logger.info("Listing peer registries")
+
+        params = {}
+        if enabled is not None:
+            params["enabled"] = str(enabled).lower()
+
+        response = self._make_request(
+            method="GET",
+            endpoint="/api/peers",
+            params=params if params else None
+        )
+
+        result = response.json()
+        logger.info(f"Retrieved {len(result) if isinstance(result, list) else 0} peers")
+        return result
+
+
+    def add_peer(
+        self,
+        config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Add a new peer registry.
+
+        Args:
+            config: Peer configuration dictionary with peer_id, name, endpoint, etc.
+
+        Returns:
+            Created peer configuration
+
+        Raises:
+            requests.HTTPError: If peer already exists (409) or request fails
+        """
+        peer_id = config.get("peer_id", "unknown")
+        logger.info(f"Adding peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="POST",
+            endpoint="/api/peers",
+            data=config
+        )
+
+        result = response.json()
+        logger.info(f"Peer registry added successfully: {peer_id}")
+        return result
+
+
+    def get_peer(
+        self,
+        peer_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get details of a specific peer registry.
+
+        Args:
+            peer_id: Peer registry identifier
+
+        Returns:
+            Peer configuration details
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Getting peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="GET",
+            endpoint=f"/api/peers/{peer_id}"
+        )
+
+        result = response.json()
+        logger.info(f"Retrieved peer registry: {peer_id}")
+        return result
+
+
+    def update_peer(
+        self,
+        peer_id: str,
+        config: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Update an existing peer registry configuration.
+
+        Args:
+            peer_id: Peer registry identifier
+            config: Updated peer configuration
+
+        Returns:
+            Updated peer configuration
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Updating peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="PUT",
+            endpoint=f"/api/peers/{peer_id}",
+            data=config
+        )
+
+        result = response.json()
+        logger.info(f"Peer registry updated successfully: {peer_id}")
+        return result
+
+
+    def remove_peer(
+        self,
+        peer_id: str
+    ) -> Dict[str, Any]:
+        """
+        Remove a peer registry.
+
+        Args:
+            peer_id: Peer registry identifier
+
+        Returns:
+            Deletion confirmation
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Removing peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="DELETE",
+            endpoint=f"/api/peers/{peer_id}"
+        )
+
+        # Handle 204 No Content response
+        if response.status_code == 204:
+            logger.info(f"Peer registry removed successfully: {peer_id}")
+            return {"status": "deleted", "peer_id": peer_id}
+
+        result = response.json()
+        logger.info(f"Peer registry removed successfully: {peer_id}")
+        return result
+
+
+    def sync_peer(
+        self,
+        peer_id: str
+    ) -> Dict[str, Any]:
+        """
+        Trigger sync from a specific peer registry.
+
+        Args:
+            peer_id: Peer registry identifier
+
+        Returns:
+            Sync result with statistics
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Syncing from peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="POST",
+            endpoint=f"/api/peers/{peer_id}/sync"
+        )
+
+        result = response.json()
+        logger.info(f"Peer sync completed: {peer_id}")
+        return result
+
+
+    def sync_all_peers(self) -> Dict[str, Any]:
+        """
+        Trigger sync from all enabled peer registries.
+
+        Returns:
+            Sync results for all peers
+
+        Raises:
+            requests.HTTPError: If request fails
+        """
+        logger.info("Syncing from all peer registries")
+
+        response = self._make_request(
+            method="POST",
+            endpoint="/api/peers/sync"
+        )
+
+        result = response.json()
+        logger.info("All peer sync completed")
+        return result
+
+
+    def get_peer_status(
+        self,
+        peer_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get sync status for a specific peer registry.
+
+        Args:
+            peer_id: Peer registry identifier
+
+        Returns:
+            Sync status with history
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Getting sync status for peer: {peer_id}")
+
+        response = self._make_request(
+            method="GET",
+            endpoint=f"/api/peers/{peer_id}/status"
+        )
+
+        result = response.json()
+        logger.info(f"Retrieved sync status for peer: {peer_id}")
+        return result
+
+
+    def enable_peer(
+        self,
+        peer_id: str
+    ) -> Dict[str, Any]:
+        """
+        Enable a peer registry.
+
+        Args:
+            peer_id: Peer registry identifier
+
+        Returns:
+            Updated peer configuration
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Enabling peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="POST",
+            endpoint=f"/api/peers/{peer_id}/enable"
+        )
+
+        result = response.json()
+        logger.info(f"Peer registry enabled: {peer_id}")
+        return result
+
+
+    def disable_peer(
+        self,
+        peer_id: str
+    ) -> Dict[str, Any]:
+        """
+        Disable a peer registry.
+
+        Args:
+            peer_id: Peer registry identifier
+
+        Returns:
+            Updated peer configuration
+
+        Raises:
+            requests.HTTPError: If peer not found (404) or request fails
+        """
+        logger.info(f"Disabling peer registry: {peer_id}")
+
+        response = self._make_request(
+            method="POST",
+            endpoint=f"/api/peers/{peer_id}/disable"
+        )
+
+        result = response.json()
+        logger.info(f"Peer registry disabled: {peer_id}")
+        return result
+
+
+    def get_peer_connections(self) -> Dict[str, Any]:
+        """
+        Get all federation connections across all peers.
+
+        Returns:
+            Dictionary with connection details
+
+        Raises:
+            requests.HTTPError: If request fails
+        """
+        logger.info("Getting all peer connections")
+
+        response = self._make_request(
+            method="GET",
+            endpoint="/api/peers/connections/all"
+        )
+
+        result = response.json()
+        logger.info("Retrieved peer connections")
+        return result
+
+
+    def get_shared_resources(self) -> Dict[str, Any]:
+        """
+        Get resource sharing summary across all peers.
+
+        Returns:
+            Dictionary with shared resource details
+
+        Raises:
+            requests.HTTPError: If request fails
+        """
+        logger.info("Getting shared resources summary")
+
+        response = self._make_request(
+            method="GET",
+            endpoint="/api/peers/shared-resources"
+        )
+
+        result = response.json()
+        logger.info("Retrieved shared resources summary")
         return result

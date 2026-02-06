@@ -54,6 +54,10 @@ spec:
             {{- end }}
             - secretRef:
                 name: mongo-credentials
+            {{- if .Values.global.sharedSecretName }}
+            - secretRef:
+                name: {{ .Values.global.sharedSecretName }}
+            {{- end }}
       volumes:
         - name: script
           configMap:

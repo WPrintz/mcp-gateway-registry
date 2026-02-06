@@ -1,4 +1,3 @@
-import os
 import secrets
 from pathlib import Path
 from typing import Optional
@@ -30,8 +29,12 @@ class Settings(BaseSettings):
     # Embeddings settings [Default]
     embeddings_provider: str = "sentence-transformers"  # 'sentence-transformers' or 'litellm'
     embeddings_model_name: str = "all-MiniLM-L6-v2"
-    embeddings_model_dimensions: int = 384 # 384 for default and 1024 for bedrock titan v2
-    print(embeddings_provider, embeddings_model_name, embeddings_model_dimensions)
+    embeddings_model_dimensions: int = 384  # 384 for default and 1024 for bedrock titan v2
+
+    # HNSW vector search tuning (only used with DocumentDB backend)
+    # Higher efSearch improves recall at the cost of query latency.
+    # Default 40 may miss documents in small collections; 100 gives near-exact recall.
+    vector_search_ef_search: int = 100
 
     # LiteLLM-specific settings (only used when embeddings_provider='litellm')
     # For Bedrock: Set to None and configure AWS credentials via standard methods
@@ -73,6 +76,22 @@ class Settings(BaseSettings):
     agent_security_scan_timeout: int = 60  # 1 minute
     agent_security_add_pending_tag: bool = True
     a2a_scanner_llm_api_key: str = ""  # Optional Azure OpenAI API key for LLM-based analysis
+    
+    # Federation settings
+    registry_id: Optional[str] = None  # Unique identifier for this registry instance in federation
+
+    # Audit Logging Configuration
+    audit_log_enabled: bool = True  # Enable/disable audit logging globally
+    audit_log_dir: str = "logs/audit"  # Directory for local audit log files
+    audit_log_rotation_hours: int = 1  # Hours between time-based file rotations
+    audit_log_rotation_max_mb: int = 100  # Maximum file size in MB before rotation
+    audit_log_local_retention_hours: int = 1  # Hours to retain local files (default 1 hour, configurable)
+    audit_log_health_checks: bool = False  # Whether to log health check requests
+    audit_log_static_assets: bool = False  # Whether to log static asset requests
+    
+    # Audit Logging MongoDB Configuration
+    audit_log_mongodb_enabled: bool = True  # Enable/disable MongoDB storage for audit logs
+    audit_log_mongodb_ttl_days: int = 7  # Days to retain audit events in MongoDB (default 7 days)
     
     # Storage Backend Configuration
     storage_backend: str = "file"  # Options: "file", "documentdb"
@@ -180,6 +199,25 @@ class Settings(BaseSettings):
     def agent_state_file_path(self) -> Path:
         """Path to agent state file (enabled/disabled tracking)."""
         return self.agents_dir / "agent_state.json"
+
+    @property
+    def peers_dir(self) -> Path:
+        """Directory for peer federation config storage."""
+        home_dir = Path.home()
+        return home_dir / "mcp-gateway" / "peers"
+
+    @property
+    def peer_sync_state_file_path(self) -> Path:
+        """Path to peer sync state file."""
+        home_dir = Path.home()
+        return home_dir / "mcp-gateway" / "peer_sync_state.json"
+
+    @property
+    def audit_log_path(self) -> Path:
+        """Get audit log directory based on environment."""
+        if self.is_local_dev:
+            return Path.cwd() / self.audit_log_dir
+        return self.container_log_dir / "audit"
 
 
 class EmbeddingConfig:

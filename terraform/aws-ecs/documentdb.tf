@@ -144,7 +144,7 @@ resource "aws_kms_alias" "documentdb" {
 resource "aws_secretsmanager_secret" "documentdb_credentials" {
   name                    = "${var.name}/documentdb/credentials"
   description             = "DocumentDB Cluster admin credentials"
-  recovery_window_in_days = 7
+  recovery_window_in_days = 0
 
   tags = merge(
     local.common_tags,
@@ -238,7 +238,7 @@ resource "aws_docdb_cluster" "registry" {
   preferred_backup_window      = "02:00-04:00"
   preferred_maintenance_window = "sun:04:00-sun:05:00"
   skip_final_snapshot          = false
-  final_snapshot_identifier    = "${var.name}-registry-final-snapshot-${formatdate("YYYY-MM-DD-hhmm", timestamp())}"
+  final_snapshot_identifier    = "${var.name}-registry-final-snapshot"
 
   # Encryption
   storage_encrypted = true

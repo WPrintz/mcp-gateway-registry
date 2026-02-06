@@ -260,7 +260,7 @@ variable "documentdb_admin_password" {
   description = "DocumentDB Elastic Cluster admin password (minimum 8 characters). Only required when storage_backend is 'documentdb'."
   type        = string
   sensitive   = true
-  default     = ""  # Not required when using file storage backend
+  default     = "" # Not required when using file storage backend
 }
 
 variable "documentdb_shard_capacity" {
@@ -357,7 +357,7 @@ variable "enable_cloudfront" {
 variable "cloudfront_prefix_list_name" {
   description = "Name of the managed prefix list for ALB ingress (e.g., CloudFront origin-facing IPs). Leave empty to disable prefix list rule. Default is AWS CloudFront prefix list."
   type        = string
-  default     = ""  # Set to "com.amazonaws.global.cloudfront.origin-facing" when enable_cloudfront=true
+  default     = "" # Set to "com.amazonaws.global.cloudfront.origin-facing" when enable_cloudfront=true
 }
 
 variable "enable_route53_dns" {
@@ -433,4 +433,72 @@ variable "entra_client_secret" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+# =============================================================================
+# REGISTRY STATIC TOKEN AUTH (IdP-independent API access)
+# =============================================================================
+
+variable "registry_static_token_auth_enabled" {
+  description = "Enable static token auth for Registry API endpoints (/api/*, /v0.1/*). MCP Gateway endpoints still require full IdP authentication."
+  type        = bool
+  default     = false
+}
+
+variable "registry_api_token" {
+  description = "Static API key for Registry API. Clients send: Authorization: Bearer <token>. Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# =============================================================================
+# FEDERATION CONFIGURATION (Peer-to-Peer Registry Sync)
+# =============================================================================
+
+variable "registry_id" {
+  description = "Unique identifier for this registry instance in federation. Used to identify the source of synced items."
+  type        = string
+  default     = ""
+}
+
+variable "federation_static_token_auth_enabled" {
+  description = "Enable static token auth for Federation API endpoints (/api/federation/*, /api/peers/*). When enabled, peer registries can authenticate using FEDERATION_STATIC_TOKEN."
+  type        = bool
+  default     = false
+}
+
+variable "federation_static_token" {
+  description = "Static token for Federation API access. Peer registries use this as Bearer token. Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "federation_encryption_key" {
+  description = "Fernet encryption key for storing federation tokens in MongoDB. Required on importing registry. Generate with: python3 -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# =============================================================================
+# AUDIT LOGGING CONFIGURATION
+# =============================================================================
+
+variable "audit_log_enabled" {
+  description = "Enable audit logging for all API and MCP requests. Logs are stored in DocumentDB with automatic TTL-based retention."
+  type        = bool
+  default     = true
+}
+
+variable "audit_log_ttl_days" {
+  description = "Audit log retention period in days. Logs older than this are automatically deleted via DocumentDB TTL index. Common values: 7 (dev), 30 (standard), 90 (compliance)."
+  type        = number
+  default     = 7
+
+  validation {
+    condition     = var.audit_log_ttl_days >= 1 && var.audit_log_ttl_days <= 365
+    error_message = "Audit log TTL must be between 1 and 365 days"
+  }
 }
