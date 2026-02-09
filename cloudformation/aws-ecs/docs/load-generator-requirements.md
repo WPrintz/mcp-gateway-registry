@@ -1,8 +1,10 @@
 # Load Generator Requirements
 
 *Created: 2026-01-26*
-*Updated: 2026-01-26*
+*Updated: 2026-02-04*
 *Purpose: Define load generation strategy to populate Grafana dashboards*
+
+**Status: ✅ IMPLEMENTED** - Enhanced load generator deployed with comprehensive tool coverage and semantic search.
 
 ---
 
@@ -168,75 +170,107 @@ a2a_agent_discovery_duration_seconds_bucket{query_type, le}
 
 ## Load Generation Strategy
 
-### 1. MCP Protocol Operations
+### Implementation Status: ✅ COMPLETE (2026-02-04)
 
-The primary workload should exercise MCP protocol methods:
+**Location:** `cloudformation/aws-ecs/scripts/load-generator.sh`
 
-| Method | Description | Dashboard Panels |
-|--------|-------------|------------------|
-| `initialize` | Establish MCP connection | 1, 8, 13, 16 |
-| `tools/list` | List available tools | 1, 8, 13, 16 |
-| `tools/call` | Execute specific tools | 1, 5, 6, 8, 12, 13, 14, 16 |
+The load generator has been implemented as a bash script with the following capabilities:
+
+### 1. MCP Protocol Operations ✅
+
+Exercises all MCP protocol methods with comprehensive tool coverage:
+
+| Method | Implementation | Coverage |
+|--------|----------------|----------|
+| `initialize` | ✅ Implemented | All 3 servers |
+| `tools/list` | ✅ Implemented | All 3 servers |
+| `tools/call` | ✅ Implemented | 12 unique tools across servers |
+
+**Tool Coverage by Server:**
+
+| Server | Tools Exercised | Arguments |
+|--------|-----------------|-----------|
+| `currenttime` | `current_time_by_timezone` | 5 timezone variations |
+| `mcpgw` | `list_services`, `get_http_headers`, `healthcheck`, `intelligent_tool_finder`, `list_groups` | Realistic queries |
+| `realserverfaketools` | `quantum_flux_analyzer`, `neural_pattern_synthesizer`, `hyper_dimensional_mapper`, `temporal_anomaly_detector`, `user_profile_analyzer`, `synthetic_data_generator` | Test data with proper schemas |
 
 **Traffic Distribution:**
-- 60% `tools/call` (main workload)
-- 20% `tools/list` (discovery)
-- 15% `initialize` (session setup)
-- 5% Management API calls
+- 50% Full flow (initialize → tools/list → tools/call)
+- 30% Direct tool calls (established sessions)
+- 20% Discovery only (initialize + list)
 
-### 2. Target MCP Servers
+### 2. MCP Server Search ✅
 
-Exercise all deployed MCP servers to populate the `server_name` dimension:
+Semantic search functionality implemented via `/api/servers/search`:
 
-| Server | Endpoint | Tools |
-|--------|----------|-------|
-| `currenttime` | `/mcp/currenttime/` | `get_current_time` |
-| `mcpgw` | `/mcp/mcpgw/` | Various gateway tools |
-| `realserverfaketools` | `/mcp/realserverfaketools/` | Simulated tools |
+**Search Queries:**
+- "time and date operations"
+- "gateway management tools"
+- "registry administration"
+- "fake tools for testing"
+- "quantum analysis"
+- "neural network tools"
+- "timezone conversion"
 
-### 3. Client Identity Variation
+**Traffic:** 10% of total load
 
-Use multiple `client_name` values to populate client distribution panels (15, 16, 19):
+### 3. A2A Agent Operations ✅
 
-```
-client_names:
-  - load-generator-primary
-  - load-generator-secondary
-  - workshop-demo-client
-  - automated-test-client
-```
+Agent API endpoints exercised:
 
-### 4. Authentication Load
+| Operation | Endpoint | Traffic % |
+|-----------|----------|-----------|
+| List agents | `GET /api/agents` | 40% |
+| Skill discovery | `POST /api/agents/discover` | 20% |
+| Semantic discovery | `POST /api/agents/discover/semantic` | 20% |
+| Get details | `GET /api/agents/{path}` | 10% |
+| Health check | `POST /api/agents/{path}/health` | 10% |
 
-Generate auth metrics for panels 2, 3, 7, 9, 10, 17:
+### 4. Overall Traffic Distribution
 
-| Auth Type | Flow | Purpose |
-|-----------|------|---------|
-| M2M | Client credentials grant | Service-to-service auth |
-| Human | Authorization code flow | User login simulation |
-| Failed | Invalid credentials | Error rate metrics |
+- **60% MCP operations** (initialize, tools/list, tools/call)
+- **30% Agent operations** (list, discover, health)
+- **10% Server search** (semantic search)
 
-**Auth Distribution:**
-- 90% M2M token requests (primary)
-- 5% Token refresh
-- 5% Intentional failures (invalid tokens)
+### 5. Client Identity Variation ✅
 
-### 5. Success/Failure Mix
+Multiple client names for metrics dimension:
+- `load-generator-primary`
+- `load-generator-secondary`
+- `workshop-demo-client`
 
-To populate error rate panels effectively:
+### 6. Authentication ✅
 
-| Outcome | Percentage | How to Generate |
-|---------|------------|-----------------|
-| Success | 95% | Valid requests |
-| Auth Failure | 2% | Expired/invalid tokens |
-| Tool Failure | 2% | Invalid tool names |
-| Server Error | 1% | Malformed requests |
+- M2M OAuth2 flow via Keycloak
+- Automatic token refresh (before 5min expiry)
+- Client credentials grant
+
+---
+
+## Load Generation Strategy (Original Requirements)
 
 ---
 
 ## A2A Agent Load Generation
 
-### Agent API Endpoints
+### Implementation Status: ✅ COMPLETE (2026-02-04)
+
+The load generator exercises the following agent endpoints:
+
+| Endpoint | Method | Implemented | Traffic % |
+|----------|--------|-------------|-----------|
+| `/api/agents` | GET | ✅ | 40% |
+| `/api/agents/{path}` | GET | ✅ | 10% |
+| `/api/agents/{path}/health` | POST | ✅ | 10% |
+| `/api/agents/discover` | POST | ✅ | 20% |
+| `/api/agents/discover/semantic` | POST | ✅ | 20% |
+| `/api/agents/register` | POST | ❌ Not implemented | - |
+| `/api/agents/{path}/toggle` | POST | ❌ Not implemented | - |
+| `/api/agents/{path}/rate` | POST | ❌ Not implemented | - |
+
+**Note:** Registration, toggle, and rating operations not included to avoid modifying registry state during load testing.
+
+### Agent API Endpoints (Original Requirements)
 
 The load generator should exercise these agent management endpoints:
 
@@ -312,6 +346,62 @@ Every 60 seconds:
 ---
 
 ## Load Generator Implementation
+
+### Status: ✅ DEPLOYED (2026-02-04)
+
+**Implementation:** Bash script at `cloudformation/aws-ecs/scripts/load-generator.sh`
+
+### Usage
+
+```bash
+# Set environment variables
+export REGISTRY_URL="https://d27uyeutt0mz5g.cloudfront.net"
+export KEYCLOAK_URL="https://d2cruktwq9x7li.cloudfront.net"
+export CLIENT_ID="mcp-gateway-m2m"
+export CLIENT_SECRET="<from-secrets-manager>"
+export DURATION=300  # seconds
+export RATE=5        # requests per second
+
+# Run load generator
+./cloudformation/aws-ecs/scripts/load-generator.sh
+```
+
+### Key Features
+
+- **OAuth2 M2M Authentication:** Automatic token management with refresh
+- **MCP Protocol Support:** JSON-RPC over HTTP with proper headers
+- **Configurable Traffic Patterns:** Adjustable rate and duration
+- **Multiple Client Identities:** Rotates through 3 client names
+- **Comprehensive Tool Coverage:** 12 unique tools across 3 servers
+- **Semantic Search:** Tests both server and agent search endpoints
+
+### Architecture
+
+```
+load-generator.sh
+├── Token Management (OAuth2 M2M)
+├── MCP Operations (60%)
+│   ├── initialize (20%)
+│   ├── tools/list (20%)
+│   └── tools/call (60%)
+├── Agent Operations (30%)
+│   ├── list (40%)
+│   ├── discover/skills (20%)
+│   ├── discover/semantic (20%)
+│   ├── get details (10%)
+│   └── health check (10%)
+└── Server Search (10%)
+    └── semantic search
+```
+
+### Deployment Options
+
+**Current:** Local/bastion execution (implemented)
+**Future:** ECS Fargate task for continuous load (not implemented)
+
+---
+
+## Load Generator Implementation (Original Requirements)
 
 ### Recommended Approach
 
@@ -653,30 +743,69 @@ As of 2026-01-26, the metrics-service is not yet deployed to CloudFormation. The
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Deploy metrics-service | TODO | Required for metrics collection |
-| Configure ADOT to scrape metrics-service | TODO | Remote write to AMP |
-| Add agent metrics instrumentation | TODO | New Prometheus metrics in registry |
-| Extend Grafana dashboard with agent panels | TODO | Add panels A1-A10 |
+| Deploy metrics-service | ✅ DONE | Deployed and receiving metrics |
+| Configure ADOT to scrape metrics-service | ✅ DONE | Scraping every 15s, remote write to AMP |
+| Add agent metrics instrumentation | ⚠️ PARTIAL | Basic metrics exist, A2A-specific metrics TODO |
+| Extend Grafana dashboard with agent panels | ❌ TODO | Add panels A1-A10 |
 
 ### Load Generator Tasks
 
-| Item | Priority | Notes |
-|------|----------|-------|
-| Create load generator script/service | High | Python recommended |
-| Add MCP protocol scenarios | High | initialize, tools/list, tools/call |
-| Add Agent API scenarios | High | discover, list, health check |
-| Deploy as ECS task (optional) | Medium | For continuous load |
-| Add to workshop deployment automation | Low | For demo purposes |
+| Item | Priority | Status | Notes |
+|------|----------|--------|-------|
+| Create load generator script/service | High | ✅ DONE | Bash implementation complete |
+| Add MCP protocol scenarios | High | ✅ DONE | All 3 methods implemented |
+| Add Agent API scenarios | High | ✅ DONE | 5 endpoints covered |
+| Add MCP server search | Medium | ✅ DONE | Semantic search implemented |
+| Deploy as ECS task (optional) | Medium | ❌ TODO | For continuous load |
+| Add to workshop deployment automation | Low | ❌ TODO | For demo purposes |
 
 ### Dashboard Tasks
 
-| Item | Priority | Notes |
-|------|----------|-------|
-| Add agent discovery rate panel | High | Panel A1 |
-| Add agent invocations panel | High | Panel A2 |
-| Add agent health check panel | Medium | Panel A4 |
-| Add skill usage distribution | Medium | Panel A8 |
-| Add agent security scan panel | Low | Panel A10 |
+| Item | Priority | Status | Notes |
+|------|----------|--------|-------|
+| Add agent discovery rate panel | High | ❌ TODO | Panel A1 |
+| Add agent invocations panel | High | ❌ TODO | Panel A2 |
+| Add agent health check panel | Medium | ❌ TODO | Panel A4 |
+| Add skill usage distribution | Medium | ❌ TODO | Panel A8 |
+| Add agent security scan panel | Low | ❌ TODO | Panel A10 |
+
+---
+
+## Testing and Validation
+
+### Initial Testing (2026-02-04)
+
+**Test Run:** 30 seconds at 5 req/s
+- Total requests: 52
+- MCP operations: 24 (46%)
+- Agent operations: 26 (50%)
+- Server search: 2 (4%)
+- Status: ✅ Success, no errors
+
+### Recommended Testing Plan
+
+1. **Short Validation (5 minutes)**
+   - Verify all endpoints responding
+   - Check token refresh working
+   - Confirm metrics appearing in Grafana
+
+2. **Extended Load (30-60 minutes)**
+   - Populate dashboard with sufficient data
+   - Test at higher rates (10+ req/s)
+   - Monitor for any errors or failures
+
+3. **Dashboard Validation**
+   - Verify all 3 MCP servers visible
+   - Confirm tool variety in metrics
+   - Check client name distribution
+   - Validate agent operations recorded
+
+### Known Limitations
+
+- Actual rate lower than configured (due to curl latency)
+- No error injection scenarios
+- No state-modifying operations (register, toggle, rate)
+- Sequential execution (no parallelism)
 
 ---
 
@@ -686,4 +815,5 @@ As of 2026-01-26, the metrics-service is not yet deployed to CloudFormation. The
 - [Agent API Routes](../../../registry/api/agent_routes.py) - A2A agent endpoint definitions
 - [E2E Test Scripts](../../../api/test-management-api-e2e.sh) - Example API calls
 - [MCP Client Test](../../../api/test-mcp-client.sh) - MCP protocol examples
-- [Steering Log](../../../.scratchpad/cloudformation-steering-log.md) - Phase 1.5 tasks
+- [Load Generator Script](../scripts/load-generator.sh) - Implementation
+- [Session Handoff](../../../.scratchpad/session-handoff.md) - Current deployment status

@@ -558,7 +558,7 @@ Outputs:
 
   GrafanaUrl:
     Description: Grafana Dashboard URL (HTTPS via CloudFront, anonymous access enabled)
-    Value: !Sub '${ComputeStack.Outputs.MainCloudFrontUrl}/grafana/'
+    Value: !Sub '${ComputeStack.Outputs.MainCloudFrontUrl}/grafana/dashboards/f/mcp-gateway/?orgId=1'
 
   # Admin Credentials (SSM/Secrets Manager Console URLs)
   MCPGatewayAdminPassword:
