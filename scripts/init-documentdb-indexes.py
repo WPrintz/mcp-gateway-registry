@@ -360,7 +360,7 @@ async def _load_default_scopes(
     namespace: str,
     entra_group_id: Optional[str] = None,
 ) -> None:
-    """Load default admin scope from JSON file into scopes collection.
+    """Load default scope definitions from JSON files into scopes collection.
 
     Args:
         db: Database connection
@@ -371,46 +371,54 @@ async def _load_default_scopes(
     collection_name = f"{COLLECTION_SCOPES}_{namespace}"
     collection = db[collection_name]
 
-    # Find the registry-admins.json file in the same directory as this script
     script_dir = Path(__file__).parent
-    admin_scope_file = script_dir / "registry-admins.json"
+    
+    # List of scope files to load (order matters - admin first, then LOB users)
+    scope_files = [
+        "registry-admins.json",
+        "registry-users-lob1.json",
+        "registry-users-lob2.json"
+    ]
 
-    if not admin_scope_file.exists():
-        logger.warning(f"Default admin scope file not found: {admin_scope_file}")
-        return
+    for scope_filename in scope_files:
+        scope_file = script_dir / scope_filename
+        
+        if not scope_file.exists():
+            logger.warning(f"Scope file not found: {scope_file}")
+            continue
 
-    try:
-        with open(admin_scope_file, "r") as f:
-            admin_scope = json.load(f)
+        try:
+            with open(scope_file, "r") as f:
+                scope_doc = json.load(f)
 
-        logger.info(f"Loading default admin scope from {admin_scope_file}")
+            logger.info(f"Loading scope from {scope_file}")
 
-        # Add Entra ID Group Object ID if provided
-        if entra_group_id:
-            if entra_group_id not in admin_scope.get("group_mappings", []):
-                admin_scope["group_mappings"].append(entra_group_id)
-                logger.info(f"Added Entra ID Group Object ID: {entra_group_id}")
+            # Add Entra ID Group Object ID if provided (only for admin scope)
+            if entra_group_id and scope_doc.get("_id") == "registry-admins":
+                if entra_group_id not in scope_doc.get("group_mappings", []):
+                    scope_doc["group_mappings"].append(entra_group_id)
+                    logger.info(f"Added Entra ID Group Object ID: {entra_group_id}")
 
-        # Upsert the admin scope document
-        result = await collection.update_one(
-            {"_id": admin_scope["_id"]},
-            {"$set": admin_scope},
-            upsert=True
-        )
+            # Upsert the scope document
+            result = await collection.update_one(
+                {"_id": scope_doc["_id"]},
+                {"$set": scope_doc},
+                upsert=True
+            )
 
-        if result.upserted_id:
-            logger.info(f"Inserted admin scope: {admin_scope['_id']}")
-        elif result.modified_count > 0:
-            logger.info(f"Updated admin scope: {admin_scope['_id']}")
-        else:
-            logger.info(f"Admin scope already up-to-date: {admin_scope['_id']}")
+            if result.upserted_id:
+                logger.info(f"Inserted scope: {scope_doc['_id']}")
+            elif result.modified_count > 0:
+                logger.info(f"Updated scope: {scope_doc['_id']}")
+            else:
+                logger.info(f"Scope already up-to-date: {scope_doc['_id']}")
 
-        logger.info(
-            f"Admin scope group_mappings: {admin_scope.get('group_mappings', [])}"
-        )
+            logger.info(
+                f"Scope '{scope_doc['_id']}' group_mappings: {scope_doc.get('group_mappings', [])}"
+            )
 
-    except Exception as e:
-        logger.error(f"Failed to load default admin scope: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Failed to load scope from {scope_file}: {e}", exc_info=True)
 
 
 async def _create_security_scans_indexes(

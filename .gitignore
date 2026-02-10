@@ -349,5 +349,6 @@ agent_security_scans/
 # Scratchpad documents
 .scrathpad/
 
-# Workshop content (managed separately in Workshop Studio)
-cloudformation/aws-ecs/content/
+# Workshop authoring materials
+cloudformation/aws-ecs/content/*
+cloudformation/aws-ecs/static/*
