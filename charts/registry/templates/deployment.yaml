@@ -52,8 +52,10 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ .Values.app.envSecretName }}
+            {{- if eq (.Values.global.authProvider.type | default "keycloak") "keycloak" }}
             - secretRef:
                 name: keycloak-client-secret
+            {{- end }}
             - secretRef:
                 name: mongo-credentials
             {{- if .Values.global.sharedSecretName }}

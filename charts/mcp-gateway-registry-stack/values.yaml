@@ -14,6 +14,14 @@ global:
   # Both auth-server and registry will use this secret for SECRET_KEY
   sharedSecretName: "shared-secret"
 
+  # Authentication Provider Configuration
+  # Choose ONE provider: keycloak or entra
+  authProvider:
+    # Provider type: "keycloak" or "entra"
+    type: keycloak
+    entra:
+      adminGroupId: # UUID of Entra admin group
+
   # Common ingress settings
   ingress:
     inboundCidrs: # optional comma separated list of allowed inbound CIDR ranges
@@ -42,7 +50,10 @@ mongodb:
   password: CHANGEME # Set the password for the MongoDB user
 
 # Keycloak configuration
+# Set create: true to deploy Keycloak as part of this stack
+# Set create: false to use an external Keycloak instance
 keycloak:
+  create: true  # Deploy Keycloak in this stack (set to false to use external Keycloak)
   image:
     repository: bitnamilegacy/keycloak
 
@@ -106,7 +117,10 @@ keycloak:
             ) > /tmp/poststart-config.log 2>&1 &
 
 # Keycloak configuration job
+# Automatically enabled when global.authProvider.type = "keycloak"
+# Set to false to skip configuration (e.g., when using pre-configured Keycloak)
 keycloak-configure:
+  enabled: true  # Set to false to skip Keycloak configuration
   keycloak:
     realm: mcp-gateway
     adminUser: user
@@ -128,10 +142,17 @@ registry:
 auth-server:
   app:
     replicas: 2 # set to > 1 replica for high availability
+
   keycloak:
     enabled: true
     realm: mcp-gateway
     # externalUrl will be templated in the subchart using global.domain
+
+  # Entra ID settings (used when global.authProvider.type = "entra")
+  entra:
+    clientId: ""
+    clientSecret: ""
+    tenantId: ""
 
   ingress:
     enabled: true
