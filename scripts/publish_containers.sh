@@ -138,14 +138,6 @@ generate_tags() {
     # Add version tag if not "latest"
     if [ "$VERSION" != "latest" ]; then
         tags="$tags --tag $registry/$base_name:$VERSION"
-
-        # Add major.minor tag if version is semver
-        if [[ "$VERSION" =~ ^v?([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-            major="${BASH_REMATCH[1]}"
-            minor="${BASH_REMATCH[2]}"
-            tags="$tags --tag $registry/$base_name:$major.$minor"
-            tags="$tags --tag $registry/$base_name:$major"
-        fi
     fi
 
     # Add branch tag if not main/master
