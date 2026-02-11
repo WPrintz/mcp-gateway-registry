@@ -36,13 +36,44 @@ Once your EKS cluster is provisioned, return to this directory to deploy the MCP
 
 ### Individual Charts
 
-- **auth-server**: Authentication service for the MCP Gateway
+- **auth-server**: Authentication service for the MCP Gateway (supports Keycloak and Entra ID)
 - **registry**: MCP server registry service
 - **keycloak-configure**: Job to configure Keycloak realms and clients
+- **mongodb-configure**: Job to configure MongoDB and scopes
 
 ### Stack Chart
 
-- **mcp-gateway-registry-stack**: Complete stack deployment including Keycloak, auth-server, registry, and configuration
+- **mcp-gateway-registry-stack**: Complete stack deployment including identity provider, auth-server, registry, and configuration
+
+## Authentication Providers
+
+The charts support two authentication providers:
+
+- **Keycloak** (default): Open-source identity and access management
+- **Microsoft Entra ID**: Azure Active Directory / Microsoft Entra ID
+
+### Selecting a Provider
+
+Set the authentication provider in your values file:
+
+```yaml
+global:
+  authProvider:
+    type: keycloak  # or "entra"
+
+# For Keycloak in stack
+keycloak:
+  create: true
+
+# For external Keycloak
+keycloak:
+  create: false
+  externalUrl: https://your-keycloak.com
+
+# For Entra ID
+keycloak:
+  create: false
+```
 
 ## Improved Values Structure
 

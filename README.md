@@ -11,7 +11,7 @@
 
 [🚀 Get Running Now](#option-a-pre-built-images-instant-setup) | [Production Deployment](terraform/aws-ecs/README.md) | [Quick Start](#quick-start) | [Documentation](docs/) | [Enterprise Features](#enterprise-features) | [Community](#community)
 
-**Demo Videos:** ⭐ [MCP Registry CLI Demo](https://github.com/user-attachments/assets/98200866-e8bd-4ac3-bad6-c6d42b261dbe) | [Full End-to-End Functionality](https://github.com/user-attachments/assets/5ffd8e81-8885-4412-a4d4-3339bbdba4fb) | [OAuth 3-Legged Authentication](https://github.com/user-attachments/assets/3c3a570b-29e6-4dd3-b213-4175884396cc) | [Dynamic Tool Discovery](https://github.com/user-attachments/assets/cee25b31-61e4-4089-918c-c3757f84518c)
+**Demo Videos:** ⭐ [MCP Registry CLI Demo](https://github.com/user-attachments/assets/98200866-e8bd-4ac3-bad6-c6d42b261dbe) | [Full End-to-End Functionality](https://github.com/user-attachments/assets/5ffd8e81-8885-4412-a4d4-3339bbdba4fb) | [OAuth 3-Legged Authentication](https://github.com/user-attachments/assets/3c3a570b-29e6-4dd3-b213-4175884396cc) | [Dynamic Tool Discovery](https://github.com/user-attachments/assets/cee25b31-61e4-4089-918c-c3757f84518c) | [Agent Skills](https://github.com/user-attachments/assets/5d1f227a-25f8-480d-9ff9-acba2498844b)
 
 </div>
 
@@ -129,11 +129,17 @@ Interactive terminal interface for chatting with AI models and discovering MCP t
 
 ## What's New
 
-- **Static Token Auth for Registry API** - Access Registry API endpoints (`/api/*`, `/v0.1/*`) using a static API key instead of IdP-based JWT validation. Designed for trusted network environments, CI/CD pipelines, and CLI tooling where configuring a full identity provider may not be practical. MCP Gateway endpoints continue to require full IdP authentication. Includes startup validation that disables the feature if no token is configured. [Static Token Auth Guide](docs/static-token-auth.md)
+- **📚 Agent Skills Registry** - Register, discover, and manage reusable instruction sets (SKILL.md files) that enhance AI coding assistants with specialized workflows. Skills are hosted on GitHub, GitLab, or Bitbucket and registered in the MCP Gateway Registry for discovery and access control. Features include YAML frontmatter parsing for metadata extraction, health monitoring with URL accessibility checks, visibility controls (public/private/group), star ratings, semantic search integration, tool dependency validation, and a rich UI with SKILL.md content modals. Security includes SSRF protection with redirect validation. [Agent Skills Guide](docs/agent-skills-operational-guide.md) | [Architecture](docs/design/agent-skills-architecture.md)
 
-- **MCP Server Version Routing** - Run multiple versions of the same MCP server simultaneously behind a single gateway endpoint. Register new versions as inactive, test them with the `X-MCP-Server-Version` header, then promote to active with a single API call or UI click. Features include instant rollback, version pinning for clients, deprecation lifecycle with sunset dates, automatic nginx map-based O(1) routing, cascade deletion of all versions, and post-swap health checks. The dashboard displays both the admin-controlled routing version and the MCP server-reported software version independently. Only the active version appears in search results and health checks. [Design Document](docs/design/server-versioning.md) | [Operations Guide](docs/server-versioning-operations.md)
-- **Multi-Provider IAM with Harmonized API** - Full Identity and Access Management support for both Keycloak and Microsoft Entra ID. The registry API provides a unified experience for user and group management regardless of which IdP you use. Human users can log in via the UI and generate self-signed JWT tokens (with the same permissions as their session) for CLI tools and AI coding assistants. Service accounts (M2M) enable AI agent identity with OAuth2 Client Credentials flow. Fine-grained access control through scopes defines exactly which MCP servers, methods, tools, and agents each user can access. [Authentication Design](docs/design/authentication-design.md) | [IdP Provider Architecture](docs/design/idp-provider-support.md) | [Scopes Management](docs/scopes-mgmt.md) | [Entra ID Setup](docs/entra-id-setup.md)
-- **Custom Metadata for Servers & Agents** - Add rich custom metadata to MCP servers and agents for organization, compliance, and integration tracking. Metadata is fully searchable via semantic search, enabling queries like "team:data-platform", "PCI-DSS compliant", or "owner:alice@example.com". Use cases include team ownership, compliance tracking (PCI-DSS, HIPAA), cost center allocation, deployment regions, JIRA tickets, and custom tags. Backward compatible with existing registrations. [Metadata Usage Guide](#custom-metadata-for-servers--agents)
+- **📋 Compliance Audit Logging** - Comprehensive audit logging for security monitoring and compliance. Captures all Registry API and MCP Gateway access events with user identity, operation details, and timing. Features include automatic credential masking (tokens, cookies, passwords are never logged), TTL-based log retention (default 7 days, configurable), admin-only audit viewer UI with filtering and export (JSONL/CSV), and non-blocking async design. Supports SOC 2 and GDPR requirements with who/what/when/where/outcome tracking. [Audit Logging Guide](docs/audit-logging.md)
+
+- **🌐 Peer-to-Peer Registry Federation** - Connect multiple MCP Gateway Registry instances for bidirectional server and agent synchronization. Central IT teams can aggregate visibility across Line of Business registries, or LOBs can inherit shared tools from a central hub. Features include configurable sync modes (all, whitelist, tag filter), scheduled and on-demand sync, static token authentication for IdP-agnostic deployments, Fernet-encrypted credential storage, generation-based orphan detection, and path namespacing to prevent collisions. Synced items are read-only and display their source registry. A VS Code-style Settings UI provides peer management, sync triggering, and status monitoring. [Architecture Design](docs/design/federation-architecture.md) | [Operational Guide](docs/federation-operational-guide.md)
+
+- **🔑 Static Token Auth for Registry API** - Access Registry API endpoints (`/api/*`, `/v0.1/*`) using a static API key instead of IdP-based JWT validation. Designed for trusted network environments, CI/CD pipelines, and CLI tooling where configuring a full identity provider may not be practical. MCP Gateway endpoints continue to require full IdP authentication. Includes startup validation that disables the feature if no token is configured. [Static Token Auth Guide](docs/static-token-auth.md)
+
+- **🔀 MCP Server Version Routing** - Run multiple versions of the same MCP server simultaneously behind a single gateway endpoint. Register new versions as inactive, test them with the `X-MCP-Server-Version` header, then promote to active with a single API call or UI click. Features include instant rollback, version pinning for clients, deprecation lifecycle with sunset dates, automatic nginx map-based O(1) routing, cascade deletion of all versions, and post-swap health checks. The dashboard displays both the admin-controlled routing version and the MCP server-reported software version independently. Only the active version appears in search results and health checks. [Design Document](docs/design/server-versioning.md) | [Operations Guide](docs/server-versioning-operations.md)
+- **👥 Multi-Provider IAM with Harmonized API** - Full Identity and Access Management support for both Keycloak and Microsoft Entra ID. The registry API provides a unified experience for user and group management regardless of which IdP you use. Human users can log in via the UI and generate self-signed JWT tokens (with the same permissions as their session) for CLI tools and AI coding assistants. Service accounts (M2M) enable AI agent identity with OAuth2 Client Credentials flow. Fine-grained access control through scopes defines exactly which MCP servers, methods, tools, and agents each user can access. [Authentication Design](docs/design/authentication-design.md) | [IdP Provider Architecture](docs/design/idp-provider-support.md) | [Scopes Management](docs/scopes-mgmt.md) | [Entra ID Setup](docs/entra-id-setup.md)
+- **🏷️ Custom Metadata for Servers & Agents** - Add rich custom metadata to MCP servers and agents for organization, compliance, and integration tracking. Metadata is fully searchable via semantic search, enabling queries like "team:data-platform", "PCI-DSS compliant", or "owner:alice@example.com". Use cases include team ownership, compliance tracking (PCI-DSS, HIPAA), cost center allocation, deployment regions, JIRA tickets, and custom tags. Backward compatible with existing registrations. [Metadata Usage Guide](docs/custom-metadata.md)
 - **🔎 Enhanced Hybrid Search** - Improved semantic search combining vector similarity with tokenized keyword matching for servers, tools, and agents. Explicit name references now boost relevance scores, ensuring exact matches appear first. [Hybrid Search Architecture](docs/design/hybrid-search-architecture.md)
 - **🛡️ Security Scan Results in UI** - Security scan results are now displayed directly on Server and Agent cards with color-coded shield icons (gray/green/red). Click the shield icon to view detailed scan results and trigger rescans from the UI. [Security Scanner Documentation](docs/security-scanner.md)
 - **🧪 Comprehensive Test Suite & Updated LLM Documentation** - Full pytest test suite with 701+ passing tests (unit, integration, E2E) running automatically on all PRs via GitHub Actions. 35% minimum coverage (targeting 80%), ~30 second execution with 8 parallel workers. Updated llms.txt provides comprehensive documentation for LLM coding assistants covering storage backend migration (file → DocumentDB/MongoDB), repository patterns, AWS ECS deployment, Microsoft Entra ID integration, dual security scanning, federation architecture, rating system, testing standards, and critical code organization antipatterns. [Testing Guide](docs/testing/README.md) | [docs/llms.txt](docs/llms.txt)
@@ -143,8 +149,8 @@ Interactive terminal interface for chatting with AI models and discovering MCP t
 - **⭐ Server & Agent Rating System** - Rate and review agents with an interactive 5-star rating widget. Users can submit ratings via the UI or CLI, view aggregate ratings with individual rating details, and update their existing ratings. Features include a rotating buffer (max 100 ratings per agent), one rating per user, float average calculations, and full OpenAPI documentation. Enables community-driven agent quality assessment and discovery.
 - **🧠 Flexible Embeddings Support** - Choose from three embedding provider options for semantic search: local sentence-transformers, OpenAI, or any LiteLLM-supported provider including Amazon Bedrock Titan, Cohere, and 100+ other models. Switch providers with simple configuration changes. [Embeddings Guide](docs/embeddings.md)
 - **☁️ AWS ECS Production Deployment** - Production-ready deployment on Amazon ECS Fargate with multi-AZ architecture, Application Load Balancer with HTTPS, auto-scaling, CloudWatch monitoring, and NAT Gateway high availability. Complete Terraform configuration for deploying the entire stack. [ECS Deployment Guide](terraform/aws-ecs/README.md)
-- **Flexible Deployment Modes** - Three deployment options to match your requirements: (1) CloudFront Only for quick setup without custom domains, (2) Custom Domain with Route53/ACM for branded URLs, or (3) CloudFront + Custom Domain for production with CDN benefits. [Deployment Modes Guide](docs/deployment-modes.md)
-- **Federated Registry** - MCP Gateway registry now supports federation of servers and agents from other registries. [Federation Guide](docs/federation.md)
+- **📦 Flexible Deployment Modes** - Three deployment options to match your requirements: (1) CloudFront Only for quick setup without custom domains, (2) Custom Domain with Route53/ACM for branded URLs, or (3) CloudFront + Custom Domain for production with CDN benefits. [Deployment Modes Guide](docs/deployment-modes.md)
+- **🔗 Federated Registry** - MCP Gateway registry now supports federation of servers and agents from other registries. [Federation Guide](docs/federation.md)
 - **🔗 Agent-to-Agent (A2A) Protocol Support** - Agents can now register, discover, and communicate with other agents through a secure, centralized registry. Enable autonomous agent ecosystems with Keycloak-based access control and fine-grained permissions. [A2A Guide](docs/a2a.md)
 - **🏢 Microsoft Entra ID Integration** - Enterprise SSO with Microsoft Entra ID (Azure AD) authentication. Group-based access control, conditional access policies, and seamless integration with existing Microsoft 365 environments. [Entra ID Setup Guide](docs/entra-id-setup.md)
 - **🤖 Agentic CLI for MCP Registry** - Talk to the Registry in natural language using a Claude Code-like interface. Discover tools, ask questions, and execute MCP commands conversationally. [Learn more](docs/mcp-registry-cli.md)
@@ -155,7 +161,7 @@ Interactive terminal interface for chatting with AI models and discovering MCP t
 - **🚀 Pre-built Images** - Deploy instantly with pre-built Docker images. [Get Started](#option-a-pre-built-images-instant-setup) | [macOS Guide](docs/macos-setup-guide.md)
 - **🔐 Keycloak Integration** - Enterprise authentication with AI agent audit trails and group-based authorization. [Learn more](docs/keycloak-integration.md)
 - **📊 Real-Time Metrics & Observability** - Grafana dashboards with SQLite and OpenTelemetry integration. [Observability Guide](docs/OBSERVABILITY.md)
-- **Amazon Bedrock AgentCore Integration** - AgentCore Gateway support with dual authentication. [Integration Guide](docs/agentcore.md)
+- **⚡ Amazon Bedrock AgentCore Integration** - AgentCore Gateway support with dual authentication. [Integration Guide](docs/agentcore.md)
 
 
 ---
@@ -563,116 +569,6 @@ pre-commit run --all-files
 
 ---
 
-## Custom Metadata for Servers & Agents
-
-Enrich your MCP servers and agents with custom metadata for organization, compliance tracking, and integration purposes. All metadata is fully searchable via semantic search.
-
-### Use Cases
-
-**Organization & Team Management:**
-```json
-{
-  "team": "data-platform",
-  "owner": "alice@example.com",
-  "department": "engineering"
-}
-```
-*Search by: "team:data-platform servers", "alice@example.com owned services"*
-
-**Compliance & Governance:**
-```json
-{
-  "compliance_level": "PCI-DSS",
-  "data_classification": "confidential",
-  "regulatory_requirements": ["GDPR", "HIPAA"],
-  "audit_logging": true
-}
-```
-*Search by: "PCI-DSS compliant servers", "HIPAA regulated services"*
-
-**Cost & Project Tracking:**
-```json
-{
-  "cost_center": "analytics-dept",
-  "project_code": "AI-2024-Q1",
-  "budget_allocation": "R&D"
-}
-```
-*Search by: "cost center analytics", "project AI-2024-Q1"*
-
-**Deployment & Integration:**
-```json
-{
-  "deployment_region": "us-east-1",
-  "environment": "production",
-  "jira_ticket": "MCPGW-123",
-  "version": "2.1.0"
-}
-```
-*Search by: "us-east-1 deployed services", "JIRA MCPGW-123", "version 2.1.0"*
-
-### API Usage
-
-**Register MCP Server with Metadata:**
-```bash
-curl -X POST https://registry.example.com/api/services/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "payment-processor",
-    "description": "Payment processing service",
-    "path": "/payment-processor",
-    "proxy_pass_url": "http://payment:8080",
-    "metadata": {
-      "team": "finance-platform",
-      "owner": "alice@example.com",
-      "compliance_level": "PCI-DSS",
-      "cost_center": "finance-ops",
-      "deployment_region": "us-east-1"
-    }
-  }'
-```
-
-**Register A2A Agent with Metadata:**
-```bash
-curl -X POST https://registry.example.com/api/agents/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "analytics-agent",
-    "description": "Data analytics agent",
-    "metadata": {
-      "team": "data-science",
-      "owner": "bob@example.com",
-      "version": "3.2.1",
-      "cost_center": "analytics-dept"
-    }
-  }'
-```
-
-**Search by Metadata:**
-```bash
-# Find servers by team
-curl "https://registry.example.com/api/search?q=team:finance-platform"
-
-# Find PCI-DSS compliant services
-curl "https://registry.example.com/api/search?q=PCI-DSS compliant services"
-
-# Find services by owner
-curl "https://registry.example.com/api/search?q=alice@example.com owned"
-
-# Find services in specific region
-curl "https://registry.example.com/api/search?q=us-east-1 deployed"
-```
-
-### Key Features
-
-- **Flexible Schema:** Store any JSON-serializable data (strings, numbers, booleans, nested objects, arrays)
-- **Fully Searchable:** All metadata included in semantic search embeddings
-- **Backward Compatible:** Optional field - existing registrations work without modification
-- **Type-Safe:** Pydantic validation ensures data integrity
-- **REST API:** Full CRUD support via standard API endpoints
-
----
-
 ## Enterprise Features
 
 ### AI Agents & Coding Assistants Integration
@@ -797,7 +693,8 @@ echo 'ASOR_ACCESS_TOKEN=your_token' >> .env
 | [Installation Guide](docs/installation.md)<br/>Complete setup instructions for EC2 and EKS | [AWS ECS Deployment](terraform/aws-ecs/README.md)<br/>Production-ready deployment on AWS ECS Fargate | [API Reference](docs/registry_api.md)<br/>Programmatic registry management |
 | [Keycloak Integration](docs/keycloak-integration.md)<br/>Enterprise identity with agent audit trails | [Token Refresh Service](docs/token-refresh-service.md)<br/>Automated token refresh and lifecycle management | [MCP Registry CLI](docs/mcp-registry-cli.md)<br/>Command-line client for registry management |
 | [Configuration Reference](docs/configuration.md)<br/>Environment variables and settings | [Amazon Cognito Setup](docs/cognito.md)<br/>Step-by-step IdP configuration | [Observability Guide](docs/OBSERVABILITY.md)<br/>**NEW!** Metrics, monitoring, and OpenTelemetry setup |
-| | [Anthropic Registry Import](docs/anthropic-registry-import.md)<br/>**NEW!** Import servers from Anthropic MCP Registry | [Federation Guide](docs/federation.md)<br/>**NEW!** External registry integration (Anthropic, ASOR) |
+| | [Anthropic Registry Import](docs/anthropic-registry-import.md)<br/>**NEW!** Import servers from Anthropic MCP Registry | [Federation Guide](docs/federation.md)<br/>External registry integration (Anthropic, ASOR) |
+| | | [P2P Federation Guide](docs/federation-operational-guide.md)<br/>**NEW!** Peer-to-peer registry federation |
 | | [Service Management](docs/service-management.md)<br/>Server lifecycle and operations | [Anthropic Registry API](docs/anthropic_registry_api.md)<br/>**NEW!** REST API compatibility |
 | | | [Fine-Grained Access Control](docs/scopes.md)<br/>Permission management and security |
 | | | [Dynamic Tool Discovery](docs/dynamic-tool-discovery.md)<br/>Autonomous agent capabilities |
@@ -829,9 +726,11 @@ Our development roadmap is organized into weekly milestones with clear deliverab
 
 | Milestone | Due Date | Progress | Status | Key Issues |
 |-----------|----------|----------|--------|------------|
-| **January 2026 Week 3** | 2026-01-23 | 50% (1/2) | 🚧 In Progress | **Open:** [#295 - Multi-Level Rate Limiting](https://github.com/agentic-community/mcp-gateway-registry/issues/295)<br/>**Closed:** [#316 - Entra ID IAM APIs](https://github.com/agentic-community/mcp-gateway-registry/issues/316) |
-| **January 2026 Week 4** | 2026-01-30 | 0% (0/3) | 📅 Planned | **Open:** [#269 - AgentCore IAM Authentication](https://github.com/agentic-community/mcp-gateway-registry/issues/269), [#260 - Federation Between Registries](https://github.com/agentic-community/mcp-gateway-registry/issues/260), [#129 - Virtual MCP Server Support](https://github.com/agentic-community/mcp-gateway-registry/issues/129) |
-| **Parking Lot** | — | 100% (2/2) | 🗂️ Backlog | **Closed:** [#316 - Entra ID IAM APIs](https://github.com/agentic-community/mcp-gateway-registry/issues/316), [#315 - Distroless Docker Images](https://github.com/agentic-community/mcp-gateway-registry/issues/315) |
+| **February 2026 Week 1** | 2026-02-06 | 83% (5/6) | 🚧 In Progress | **Open:** [#358 - Custom Authorizer Endpoint](https://github.com/agentic-community/mcp-gateway-registry/issues/358)<br/>**Closed:** [#443](https://github.com/agentic-community/mcp-gateway-registry/issues/443), [#419](https://github.com/agentic-community/mcp-gateway-registry/issues/419), [#391](https://github.com/agentic-community/mcp-gateway-registry/issues/391), [#370](https://github.com/agentic-community/mcp-gateway-registry/issues/370), [#357](https://github.com/agentic-community/mcp-gateway-registry/issues/357) |
+| **February 2026 Week 2** | 2026-02-12 | 67% (2/3) | 🚧 In Progress | **Open:** [#416 - Settings Page with IAM Management](https://github.com/agentic-community/mcp-gateway-registry/issues/416)<br/>**Closed:** [#418](https://github.com/agentic-community/mcp-gateway-registry/issues/418), [#413](https://github.com/agentic-community/mcp-gateway-registry/issues/413) |
+| **February 2026 Week 3** | 2026-02-18 | 0% (0/1) | 📅 Planned | **Open:** [#129 - Virtual MCP Server Support](https://github.com/agentic-community/mcp-gateway-registry/issues/129) |
+| **February 2026 Week 4** | 2026-02-25 | 0% (0/1) | 📅 Planned | **Open:** [#295 - Multi-Level Rate Limiting](https://github.com/agentic-community/mcp-gateway-registry/issues/295) |
+| **Parking Lot** | — | 25% (2/8) | 🗂️ Backlog | 6 open issues, 2 closed |
 
 **Status Legend:** 🚧 In Progress • 📅 Planned • 🗂️ Backlog • ✅ Complete
 
@@ -841,16 +740,16 @@ Our development roadmap is organized into weekly milestones with clear deliverab
 
 The following major features span multiple milestones and represent significant architectural improvements:
 
-- **[#129 - Virtual MCP Server Support](https://github.com/agentic-community/mcp-gateway-registry/issues/129)** 🚧 **IN PROGRESS** (Jan 2026 Week 3)
+- **[#129 - Virtual MCP Server Support](https://github.com/agentic-community/mcp-gateway-registry/issues/129)** 📅 **PLANNED** (Feb 2026 Week 3)
   Dynamic tool aggregation and intelligent routing using Lua/JavaScript scripting. Enables logical grouping of tools from multiple backend servers.
 
 - **[#232 - A2A Curated Registry Discovery](https://github.com/agentic-community/mcp-gateway-registry/issues/232)** ✅ **COMPLETED**
   Enable agent-to-agent discovery and tool invocation through curated registry patterns.
 
-- **[#260 - Federation Between MCP Registry Instances](https://github.com/agentic-community/mcp-gateway-registry/issues/260)** 📅 **PLANNED** (Jan 2026 Week 4)
-  Support for federated registry discovery and access across multiple registry instances.
+- **[#260 - Federation Between MCP Registry Instances](https://github.com/agentic-community/mcp-gateway-registry/issues/260)** ✅ **COMPLETED**
+  Federated registry with bi-directional sync, peer management, chain prevention, orphan detection, and security scan propagation across registries.
 
-- **[#295 - Multi-Level Tool Usage Rate Limiting](https://github.com/agentic-community/mcp-gateway-registry/issues/295)** 📅 **PLANNED** (Jan 2026 Week 3)
+- **[#295 - Multi-Level Tool Usage Rate Limiting](https://github.com/agentic-community/mcp-gateway-registry/issues/295)** 📅 **PLANNED** (Feb 2026 Week 4)
   Comprehensive rate limiting architecture with detailed implementation guide for tool usage control.
 
 - **[#297 - Unified UI Registration Flow](https://github.com/agentic-community/mcp-gateway-registry/issues/297)** ✅ **COMPLETED**
@@ -859,6 +758,9 @@ The following major features span multiple milestones and represent significant 
 ---
 
 #### Recently Completed
+
+- **[#260 - Federation Between MCP Registry Instances](https://github.com/agentic-community/mcp-gateway-registry/issues/260)** ✅ **COMPLETED** (v1.0.13)
+  Federated registry with bi-directional sync between registry instances. Features peer management UI, automatic sync with configurable filters, chain prevention for clean topology, orphan detection, and security scan propagation. [Federation Guide](docs/federation.md) | [Federation Architecture](docs/design/federation-architecture.md)
 
 - **[#316 - Entra ID IAM APIs](https://github.com/agentic-community/mcp-gateway-registry/issues/316)** ✅ **COMPLETED**
   Full IAM support for Microsoft Entra ID with harmonized API for user/group management. Includes M2M service accounts, self-signed JWT tokens, and fine-grained access control through scopes. [Authentication Design](docs/design/authentication-design.md) | [Scopes Management](docs/scopes-mgmt.md)

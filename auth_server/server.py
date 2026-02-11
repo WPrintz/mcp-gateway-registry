@@ -5,6 +5,7 @@ Configuration is passed via headers instead of environment variables.
 
 import argparse
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -18,7 +19,8 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from string import Template
-from typing import Any
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 import boto3
 import httpx
@@ -42,6 +44,12 @@ from pydantic import BaseModel
 sys.path.insert(0, "/app")
 from registry.common.scopes_loader import reload_scopes_config
 from registry.repositories.factory import get_scope_repository
+
+# Import MCP audit logging components
+from registry.audit.mcp_logger import MCPLogger
+from registry.audit.service import AuditLogger
+from registry.audit.models import Identity, MCPServer
+from registry.core.config import settings
 
 # Configure logging
 logging.basicConfig(
@@ -98,6 +106,39 @@ else:
 REGISTRY_API_PATTERNS: list = [
     "/api/",
     "/v0.1/",
+]
+
+# Federation static token auth: scoped token for federation endpoints only
+_federation_static_token_requested: bool = (
+    os.environ.get("FEDERATION_STATIC_TOKEN_AUTH_ENABLED", "false").lower() == "true"
+)
+
+FEDERATION_STATIC_TOKEN: str = os.environ.get("FEDERATION_STATIC_TOKEN", "")
+
+if _federation_static_token_requested and not FEDERATION_STATIC_TOKEN:
+    logging.error(
+        "FEDERATION_STATIC_TOKEN_AUTH_ENABLED=true but FEDERATION_STATIC_TOKEN is not set. "
+        "Federation static token auth is DISABLED. Set FEDERATION_STATIC_TOKEN or disable the feature. "
+        "Falling back to standard IdP JWT validation."
+    )
+    FEDERATION_STATIC_TOKEN_AUTH_ENABLED: bool = False
+else:
+    FEDERATION_STATIC_TOKEN_AUTH_ENABLED: bool = _federation_static_token_requested
+
+# Warn if token is too short (weak entropy)
+MIN_FEDERATION_TOKEN_LENGTH: int = 32
+if FEDERATION_STATIC_TOKEN_AUTH_ENABLED and len(FEDERATION_STATIC_TOKEN) < MIN_FEDERATION_TOKEN_LENGTH:
+    logging.warning(
+        f"FEDERATION_STATIC_TOKEN is only {len(FEDERATION_STATIC_TOKEN)} characters. "
+        f"Recommended minimum is {MIN_FEDERATION_TOKEN_LENGTH} characters. "
+        "Generate a stronger token with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+    )
+
+# Federation endpoint path patterns (scoped access for federation static token)
+FEDERATION_API_PATTERNS: list = [
+    "/api/federation/",
+    "/api/peers/",
+    "/api/peers",  # exact match for list peers (no trailing slash)
 ]
 
 # Utility functions for GDPR/SOX compliance
@@ -164,12 +205,49 @@ def anonymize_ip(ip_address: str) -> str:
 
 
 def mask_token(token: str) -> str:
-    """Mask JWT token showing only last 4 characters."""
+    """Mask JWT token showing only first 4 characters followed by ellipsis."""
     if not token:
         return "***EMPTY***"
-    if len(token) > 20:
-        return f"...{token[-4:]}"
+    if len(token) > 8:
+        return f"{token[:4]}..."
     return "***MASKED***"
+
+
+def _mask_sensitive_dict(
+    data: dict,
+    sensitive_keys: tuple = ("access_token", "refresh_token", "token", "secret", "password")
+) -> dict:
+    """
+    Recursively mask sensitive fields in a dictionary for safe logging.
+
+    Args:
+        data: Dictionary to process
+        sensitive_keys: Tuple of key names to mask
+
+    Returns:
+        New dictionary with sensitive fields masked
+    """
+    if not isinstance(data, dict):
+        return data
+
+    masked = {}
+    for key, value in data.items():
+        key_lower = key.lower()
+        if any(sensitive in key_lower for sensitive in sensitive_keys):
+            if isinstance(value, str) and value:
+                masked[key] = mask_token(value)
+            else:
+                masked[key] = "***MASKED***"
+        elif isinstance(value, dict):
+            masked[key] = _mask_sensitive_dict(value, sensitive_keys)
+        elif isinstance(value, list):
+            masked[key] = [
+                _mask_sensitive_dict(item, sensitive_keys) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            masked[key] = value
+    return masked
 
 
 def mask_headers(headers: dict) -> dict:
@@ -1012,12 +1090,34 @@ def _is_registry_api_request(
     if not original_url:
         return False
 
-    from urllib.parse import urlparse
-
     parsed = urlparse(original_url)
     path = parsed.path
 
     for pattern in REGISTRY_API_PATTERNS:
+        if path.startswith(pattern):
+            return True
+
+    return False
+
+
+def _is_federation_api_request(
+    original_url: str,
+) -> bool:
+    """Check if the request is for federation or peer management APIs.
+
+    Args:
+        original_url: The X-Original-URL header value from nginx.
+
+    Returns:
+        True if this is a federation/peer API request.
+    """
+    if not original_url:
+        return False
+
+    parsed = urlparse(original_url)
+    path = parsed.path
+
+    for pattern in FEDERATION_API_PATTERNS:
         if path.startswith(pattern):
             return True
 
@@ -1049,6 +1149,13 @@ async def validate_request(request: Request):
         HTTPException: If the token is missing, invalid, or configuration is incomplete
     """
 
+    
+    # Capture start time for MCP audit logging
+    import uuid
+    start_time = time.perf_counter()
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    mcp_session_id = request.headers.get("Mcp-Session-Id")
+    
     try:
         # Extract headers
         # Check for X-Authorization first (custom header used by this gateway)
@@ -1068,14 +1175,28 @@ async def validate_request(request: Request):
         endpoint_from_url = None
         if original_url:
             try:
-                from urllib.parse import urlparse
-
                 parsed_url = urlparse(original_url)
                 path = parsed_url.path.strip("/")
                 path_parts = path.split("/") if path else []
-                server_name_from_url = path_parts[0] if path_parts else None
-                # For REST API requests, the second path component is the endpoint/method
-                endpoint_from_url = path_parts[1] if len(path_parts) > 1 else None
+
+                # MCP endpoints that should be treated as endpoints, not server names
+                mcp_endpoints = {"mcp", "sse", "messages"}
+
+                # For peer/federated registries, path is: peer-name/server-name/endpoint
+                # For local servers, path is: server-name/endpoint
+                # We need to capture the full server path, excluding the MCP endpoint
+                if len(path_parts) >= 2 and path_parts[-1] in mcp_endpoints:
+                    # Last part is MCP endpoint, everything before is server path
+                    server_name_from_url = "/".join(path_parts[:-1])
+                    endpoint_from_url = path_parts[-1]
+                elif len(path_parts) >= 1:
+                    # No recognized MCP endpoint at end - use entire path as server name
+                    # This handles MCP server URLs like /peer-registry-lob-1/cloudflare-docs
+                    # BUT exclude /api/ paths - those are Registry API requests, not MCP servers
+                    if path_parts[0] != "api":
+                        server_name_from_url = "/".join(path_parts)
+                        endpoint_from_url = None
+
                 logger.info(
                     f"Extracted server_name '{server_name_from_url}' and endpoint '{endpoint_from_url}' from original_url: {original_url}"
                 )
@@ -1122,9 +1243,78 @@ async def validate_request(request: Request):
         )
         logger.info(f"Server Name from URL: {server_name_from_url}")
 
-        # Static token auth: validate Registry API requests with static API key
-        # Only activate when there is no session cookie (UI uses cookies, CLI uses Bearer)
+        # Only activate static token auth when there is no session cookie
+        # (UI uses cookies, CLI uses Bearer)
         has_session_cookie = cookie_header and "mcp_gateway_session=" in cookie_header
+
+        # Federation static token auth: scoped access to federation/peer endpoints only
+        # Check this BEFORE the full admin static token
+        if (
+            FEDERATION_STATIC_TOKEN_AUTH_ENABLED
+            and _is_federation_api_request(original_url)
+            and not has_session_cookie
+        ):
+            if not authorization:
+                logger.warning(
+                    "Federation static token: Authorization header missing. "
+                    "Hint: Use 'Authorization: Bearer <FEDERATION_STATIC_TOKEN>'."
+                )
+                return JSONResponse(
+                    content={"detail": "Authorization header required"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer", "Connection": "close"},
+                )
+
+            if not authorization.startswith("Bearer "):
+                logger.warning(
+                    "Federation static token: Authorization header must use Bearer scheme"
+                )
+                return JSONResponse(
+                    content={"detail": "Authorization header must use Bearer scheme"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer", "Connection": "close"},
+                )
+
+            bearer_token = authorization[len("Bearer "):].strip()
+
+            # Check federation token first, then fall through to admin token check
+            if hmac.compare_digest(bearer_token, FEDERATION_STATIC_TOKEN):
+                logger.info(
+                    f"Federation static token: Authenticated for {original_url}"
+                )
+
+                federation_scopes = [
+                    "federation/read",
+                    "federation/peers",
+                ]
+                response_data = {
+                    "valid": True,
+                    "username": "federation-peer",
+                    "client_id": "federation-static",
+                    "scopes": federation_scopes,
+                    "method": "federation-static",
+                    "groups": [],
+                    "server_name": None,
+                    "tool_name": None,
+                }
+
+                response = JSONResponse(content=response_data, status_code=200)
+                response.headers["X-User"] = "federation-peer"
+                response.headers["X-Username"] = "federation-peer"
+                response.headers["X-Client-Id"] = "federation-static"
+                response.headers["X-Scopes"] = " ".join(federation_scopes)
+                response.headers["X-Auth-Method"] = "federation-static"
+                response.headers["X-Server-Name"] = ""
+                response.headers["X-Tool-Name"] = ""
+
+                return response
+
+            # If federation token didn't match, DON'T return 403 here.
+            # Fall through to the admin static token check below (if enabled).
+            # If admin token also doesn't match, that block will return 403.
+            # If admin token is NOT enabled, fall through to JWT validation.
+
+        # Static token auth: validate Registry API requests with static API key
         if (
             REGISTRY_STATIC_TOKEN_AUTH_ENABLED
             and _is_registry_api_request(original_url)
@@ -1142,8 +1332,18 @@ async def validate_request(request: Request):
                 )
 
             # Validate static API key (REGISTRY_API_TOKEN is guaranteed to be set here)
-            bearer_token = authorization.replace("Bearer ", "").strip()
-            if bearer_token != REGISTRY_API_TOKEN:
+            if not authorization.startswith("Bearer "):
+                logger.warning(
+                    "Static token auth: Authorization header must use Bearer scheme"
+                )
+                return JSONResponse(
+                    content={"detail": "Authorization header must use Bearer scheme"},
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer", "Connection": "close"},
+                )
+
+            bearer_token = authorization[len("Bearer "):].strip()
+            if not hmac.compare_digest(bearer_token, REGISTRY_API_TOKEN):
                 logger.warning("Static token auth: Invalid API token provided")
                 return JSONResponse(
                     content={"detail": "Invalid API token"},
@@ -1198,8 +1398,8 @@ async def validate_request(request: Request):
             if cookie_value:
                 try:
                     validation_result = await validate_session_cookie(cookie_value)
-                    # Log validation result without exposing username
-                    safe_result = {k: v for k, v in validation_result.items() if k != "username"}
+                    # Log validation result without exposing username or tokens
+                    safe_result = _mask_sensitive_dict(validation_result)
                     safe_result["username"] = hash_username(validation_result.get("username", ""))
                     logger.info(f"Session cookie validation result: {safe_result}")
                     logger.info(
@@ -1382,8 +1582,52 @@ async def validate_request(request: Request):
             "server_name": server_name,
             "tool_name": tool_name,
         }
-        logger.info(f"Full validation result: {json.dumps(validation_result, indent=2)}")
+        logger.info(f"Full validation result: {json.dumps(_mask_sensitive_dict(validation_result), indent=2)}")
         logger.info(f"Response data being sent: {json.dumps(response_data, indent=2)}")
+        
+        # Log MCP server access event if this is an MCP request (has server_name)
+        if server_name:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            mcp_logger = get_mcp_logger()
+            if mcp_logger:
+                try:
+                    # Build identity from validation result
+                    identity = Identity(
+                        username=validation_result.get('username') or 'anonymous',
+                        auth_method=validation_result.get('method') or 'unknown',
+                        provider=validation_result.get('provider'),
+                        groups=validation_result.get('groups', []),
+                        scopes=user_scopes,
+                        is_admin=validation_result.get('is_admin', False),
+                        credential_type='bearer_token' if authorization else 'session_cookie',
+                    )
+                    
+                    # Build MCP server info
+                    mcp_server = MCPServer(
+                        name=server_name,
+                        path=f"/{server_name}" if server_name else "/",
+                        proxy_target=original_url or "",
+                    )
+                    
+                    # Log the MCP access event
+                    await mcp_logger.log_mcp_access(
+                        request_id=request_id,
+                        identity=identity,
+                        mcp_server=mcp_server,
+                        request_body=body.encode('utf-8') if body else b'',
+                        response_status='success',
+                        duration_ms=duration_ms,
+                        mcp_session_id=mcp_session_id,
+                        transport='streamable-http',  # Default, could be extracted from request
+                        client_ip=request.client.host if request.client else 'unknown',
+                        forwarded_for=request.headers.get("X-Forwarded-For"),
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                    logger.debug(f"MCP access logged for {server_name}")
+                except Exception as e:
+                    # Don't fail the request if logging fails
+                    logger.warning(f"Failed to log MCP access event: {e}")
+        
         # Create JSON response with headers that nginx can use
         response = JSONResponse(content=response_data, status_code=200)
 
@@ -1400,6 +1644,38 @@ async def validate_request(request: Request):
 
     except ValueError as e:
         logger.warning(f"Token validation failed: {e}")
+        # Log failed MCP access attempt
+        if server_name_from_url:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            mcp_logger = get_mcp_logger()
+            if mcp_logger:
+                try:
+                    identity = Identity(
+                        username='anonymous',
+                        auth_method='unknown',
+                        credential_type='none',
+                    )
+                    mcp_server = MCPServer(
+                        name=server_name_from_url,
+                        path=f"/{server_name_from_url}",
+                        proxy_target=original_url or "",
+                    )
+                    await mcp_logger.log_mcp_access(
+                        request_id=request_id,
+                        identity=identity,
+                        mcp_server=mcp_server,
+                        request_body=body.encode('utf-8') if body else b'',
+                        response_status='error',
+                        duration_ms=duration_ms,
+                        mcp_session_id=mcp_session_id,
+                        error_code=401,
+                        error_message=str(e),
+                        client_ip=request.client.host if request.client else 'unknown',
+                        forwarded_for=request.headers.get("X-Forwarded-For"),
+                        user_agent=request.headers.get("User-Agent"),
+                    )
+                except Exception as log_err:
+                    logger.warning(f"Failed to log MCP access error: {log_err}")
         raise HTTPException(
             status_code=401,
             detail=str(e),
@@ -1460,6 +1736,71 @@ async def get_auth_config():
             "auth_type": "unknown",
             "description": f"Error getting provider config: {e}",
             "error": str(e),
+        }
+
+
+@app.post("/admin/federation-token")
+async def manage_federation_token(request: Request):
+    """Revoke or rotate federation static token at runtime.
+
+    Requires the admin static token (REGISTRY_API_TOKEN) for authentication.
+    """
+    global FEDERATION_STATIC_TOKEN, FEDERATION_STATIC_TOKEN_AUTH_ENABLED
+
+    # Authenticate with admin token
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return JSONResponse(
+            content={"detail": "Bearer token required"},
+            status_code=401,
+        )
+
+    bearer_token = authorization[len("Bearer "):].strip()
+    if not REGISTRY_API_TOKEN or not hmac.compare_digest(bearer_token, REGISTRY_API_TOKEN):
+        return JSONResponse(
+            content={"detail": "Admin token required"},
+            status_code=403,
+        )
+
+    body = await request.json()
+    new_token = body.get("new_token")
+
+    # Validate minimum token length if a new token is provided
+    if new_token and len(new_token) < MIN_FEDERATION_TOKEN_LENGTH:
+        return JSONResponse(
+            content={
+                "detail": (
+                    f"Token must be at least {MIN_FEDERATION_TOKEN_LENGTH} characters. "
+                    "Generate with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                )
+            },
+            status_code=400,
+        )
+
+    if new_token:
+        FEDERATION_STATIC_TOKEN = new_token
+        FEDERATION_STATIC_TOKEN_AUTH_ENABLED = True
+        logger.info("Federation static token rotated via admin API")
+        return {
+            "action": "rotated",
+            "message": (
+                "Federation static token rotated. "
+                "WARNING: This is an in-memory change only. Update FEDERATION_STATIC_TOKEN "
+                "in your .env file or container environment for persistence across restarts."
+            ),
+        }
+    else:
+        FEDERATION_STATIC_TOKEN = ""
+        FEDERATION_STATIC_TOKEN_AUTH_ENABLED = False
+        logger.info("Federation static token revoked via admin API")
+        return {
+            "action": "revoked",
+            "message": (
+                "Federation static token revoked. Federation endpoints now require OAuth2 JWT. "
+                "WARNING: This is an in-memory change only. Update your .env file or container "
+                "environment to set FEDERATION_STATIC_TOKEN_AUTH_ENABLED=false for persistence "
+                "across restarts."
+            ),
         }
 
 
@@ -1835,6 +2176,51 @@ if not SECRET_KEY:
 
 signer = URLSafeTimedSerializer(SECRET_KEY)
 
+# Initialize MCP audit logger for logging MCP server access events
+# This logs all MCP requests that pass through the auth validation
+_mcp_audit_logger = None
+_mcp_logger = None
+_mcp_audit_repository = None
+
+def get_mcp_logger() -> Optional[MCPLogger]:
+    """Get or initialize the MCP logger instance."""
+    global _mcp_audit_logger, _mcp_logger, _mcp_audit_repository
+    
+    if _mcp_logger is None:
+        try:
+            # Check if MCP audit logging is enabled via settings
+            if settings.audit_log_enabled:
+                # Initialize MongoDB repository if MongoDB is enabled
+                audit_repository = None
+                mongodb_enabled = getattr(settings, 'audit_log_mongodb_enabled', False)
+                if mongodb_enabled:
+                    try:
+                        from registry.repositories.audit_repository import DocumentDBAuditRepository
+                        _mcp_audit_repository = DocumentDBAuditRepository()
+                        audit_repository = _mcp_audit_repository
+                        logger.info("MCP audit MongoDB repository initialized")
+                    except Exception as e:
+                        logger.warning(f"Failed to initialize MCP audit MongoDB repository: {e}")
+                        mongodb_enabled = False
+                
+                _mcp_audit_logger = AuditLogger(
+                    log_dir=settings.audit_log_dir,
+                    rotation_hours=settings.audit_log_rotation_hours,
+                    rotation_max_mb=settings.audit_log_rotation_max_mb,
+                    local_retention_hours=settings.audit_log_local_retention_hours,
+                    stream_name="mcp-server-access",
+                    mongodb_enabled=mongodb_enabled,
+                    audit_repository=audit_repository,
+                )
+                _mcp_logger = MCPLogger(_mcp_audit_logger)
+                logger.info(f"MCP audit logger initialized successfully (MongoDB: {mongodb_enabled})")
+            else:
+                logger.info("MCP audit logging is disabled")
+        except Exception as e:
+            logger.warning(f"Failed to initialize MCP audit logger: {e}")
+            _mcp_logger = None
+    
+    return _mcp_logger
 
 def get_enabled_providers():
     """Get list of enabled OAuth2 providers, filtered by AUTH_PROVIDER env var if set"""

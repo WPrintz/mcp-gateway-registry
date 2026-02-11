@@ -363,16 +363,17 @@ def user_can_modify_servers(user_groups: list[str], user_scopes: list[str]) -> b
     Returns:
         True if user can modify servers, False otherwise
     """
-    # Admin users can always modify
-    if "mcp-registry-admin" in user_groups:
+    # Admin users can always modify (check both groups and scopes)
+    if "mcp-registry-admin" in user_groups or "mcp-registry-admin" in user_scopes:
         return True
 
     # Users with unrestricted execute access can modify
     if "mcp-servers-unrestricted/execute" in user_scopes:
         return True
 
-    # mcp-registry-user group cannot modify servers
-    if "mcp-registry-user" in user_groups and "mcp-registry-admin" not in user_groups:
+    # mcp-registry-user group cannot modify servers (unless they're also admin)
+    is_admin = "mcp-registry-admin" in user_groups or "mcp-registry-admin" in user_scopes
+    if "mcp-registry-user" in user_groups and not is_admin:
         return False
 
     # For other cases, check if they have any execute permissions
@@ -416,11 +417,13 @@ def web_auth(
 
 
 async def enhanced_auth(
+    request: Request,
     session: Annotated[str | None, Cookie(alias=settings.session_cookie_name)] = None,
 ) -> dict[str, Any]:
     """
     Enhanced authentication dependency that returns full user context.
     Returns username, groups, scopes, and permission flags.
+    Also sets request.state.user_context for audit logging middleware.
     """
     session_data = get_user_session_data(session)
 
@@ -479,6 +482,9 @@ async def enhanced_auth(
         "is_admin": await user_has_wildcard_access(scopes),
     }
 
+    # Set user context on request state for audit logging middleware
+    request.state.user_context = user_context
+
     logger.debug(f"Enhanced auth context for {username}: {user_context}")
     return user_context
 
@@ -493,6 +499,9 @@ async def nginx_proxied_auth(
     x_scopes: Annotated[str | None, Header(alias="X-Scopes", include_in_schema=False)] = None,
     x_auth_method: Annotated[
         str | None, Header(alias="X-Auth-Method", include_in_schema=False)
+    ] = None,
+    x_client_id: Annotated[
+        str | None, Header(alias="X-Client-Id", include_in_schema=False)
     ] = None,
 ) -> dict[str, Any]:
     """
@@ -538,7 +547,7 @@ async def nginx_proxied_auth(
 
         # Map scopes to get groups based on auth method
         groups = []
-        if x_auth_method in ["keycloak", "entra", "cognito", "network-trusted"]:
+        if x_auth_method in ["keycloak", "entra", "cognito", "network-trusted", "federation-static"]:
             # User authenticated via OAuth2 JWT (Keycloak, Entra ID, or Cognito)
             # Scopes already contain mapped permissions
             # Check if user has admin scopes
@@ -554,20 +563,10 @@ async def nginx_proxied_auth(
             f"nginx-proxied auth for user: {username}, method: {x_auth_method}, scopes: {scopes}"
         )
 
-        # Get accessible servers based on scopes
-        accessible_servers = await get_user_accessible_servers(scopes)
-
-        # Get UI permissions
-        ui_permissions = await get_ui_permissions_for_user(scopes)
-
-        # Get accessible services
-        accessible_services = get_accessible_services_for_user(ui_permissions)
-
-        # Get accessible agents
-        accessible_agents = get_accessible_agents_for_user(ui_permissions)
-
-        # Network-trusted mode: grant full admin UI permissions
+        # Network-trusted mode: grant full admin access directly
+        # (avoids database lookups that may fail if scope documents are missing)
         if x_auth_method == "network-trusted":
+            accessible_servers = []
             accessible_services = ["all"]
             accessible_agents = ["all"]
             ui_permissions = {
@@ -582,20 +581,38 @@ async def nginx_proxied_auth(
                 "modify_agent": ["all"],
                 "delete_agent": ["all"],
             }
-
-        # Check modification permissions
-        can_modify = user_can_modify_servers(groups, scopes)
-
-        # Network-trusted mode: grant full admin access directly
-        # (avoids database lookup that may fail if scope documents are missing)
-        if x_auth_method == "network-trusted":
-            is_admin = True
             can_modify = True
+            is_admin = True
+        elif x_auth_method == "federation-static":
+            # Federation static token: scoped access to federation/peer endpoints only
+            # No server/agent/service access needed
+            accessible_servers = []
+            accessible_services = []
+            accessible_agents = []
+            ui_permissions = {}
+            can_modify = False
+            is_admin = False
         else:
+            # Get accessible servers based on scopes
+            accessible_servers = await get_user_accessible_servers(scopes)
+
+            # Get UI permissions
+            ui_permissions = await get_ui_permissions_for_user(scopes)
+
+            # Get accessible services
+            accessible_services = get_accessible_services_for_user(ui_permissions)
+
+            # Get accessible agents
+            accessible_agents = get_accessible_agents_for_user(ui_permissions)
+
+            # Check modification permissions
+            can_modify = user_can_modify_servers(groups, scopes)
+
             is_admin = await user_has_wildcard_access(scopes)
 
         user_context = {
             "username": username,
+            "client_id": x_client_id or "",
             "groups": groups,
             "scopes": scopes,
             "auth_method": x_auth_method or "keycloak",
@@ -607,6 +624,9 @@ async def nginx_proxied_auth(
             "can_modify_servers": can_modify,
             "is_admin": is_admin,
         }
+
+        # Set user context on request state for audit logging middleware
+        request.state.user_context = user_context
 
         logger.debug(f"nginx-proxied auth context for {username}: {user_context}")
         return user_context
@@ -620,7 +640,7 @@ async def nginx_proxied_auth(
     )
     logger.info(f"[NGINX_AUTH_FALLBACK] Request path: {request.url.path}")
     try:
-        return await enhanced_auth(session)
+        return await enhanced_auth(request, session)
     except HTTPException as e:
         logger.error(
             f"[NGINX_AUTH_FALLBACK] enhanced_auth raised HTTPException: status={e.status_code}, detail={e.detail}"

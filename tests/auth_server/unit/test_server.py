@@ -57,7 +57,7 @@ class TestMaskingFunctions:
         assert "..." in result
 
     def test_mask_token(self):
-        """Test masking JWT tokens."""
+        """Test masking JWT tokens showing first 4 characters."""
         from auth_server.server import mask_token
 
         # Arrange
@@ -67,8 +67,8 @@ class TestMaskingFunctions:
         result = mask_token(token)
 
         # Assert
-        assert result.startswith("...")
-        assert result.endswith("test")
+        assert result.startswith("eyJh")
+        assert result.endswith("...")
         assert len(result) < len(token)
 
     def test_anonymize_ip_ipv4(self):
@@ -638,11 +638,12 @@ class TestValidateEndpoint:
             client = TestClient(server_module.app)
 
             # Act
+            # URL format: /server-name/mcp-endpoint where endpoint is mcp, sse, or messages
             response = client.get(
                 "/validate",
                 headers={
                     "Authorization": "Bearer test-token",
-                    "X-Original-URL": "https://example.com/test-server/initialize",
+                    "X-Original-URL": "https://example.com/test-server/mcp",
                 },
             )
 
@@ -691,11 +692,12 @@ class TestValidateEndpoint:
                 client = TestClient(server_module.app)
 
                 # Act
+                # URL format: /server-name/mcp-endpoint where endpoint is mcp, sse, or messages
                 response = client.get(
                     "/validate",
                     headers={
                         "Cookie": f"mcp_gateway_session={valid_session_cookie}",
-                        "X-Original-URL": "https://example.com/test-server/initialize",
+                        "X-Original-URL": "https://example.com/test-server/mcp",
                     },
                 )
 
@@ -1163,6 +1165,54 @@ class TestNetworkTrustedMode:
             # It will fail session validation, but not with the bypass 401 message
             if response.status_code == 401:
                 assert "Authorization header required" not in response.json().get("detail", "")
+
+    def test_network_trusted_rejects_non_bearer_scheme(self):
+        """Authorization header with non-Bearer scheme is rejected."""
+        # Arrange
+        import auth_server.server as server_module
+
+        with (
+            patch.object(server_module, "REGISTRY_STATIC_TOKEN_AUTH_ENABLED", True),
+            patch.object(server_module, "REGISTRY_API_TOKEN", "test-api-key"),
+        ):
+            client = TestClient(server_module.app)
+
+            # Act - send Basic auth instead of Bearer
+            response = client.get(
+                "/validate",
+                headers={
+                    "Authorization": "Basic dXNlcjpwYXNz",
+                    "X-Original-URL": "https://example.com/api/servers",
+                },
+            )
+
+            # Assert
+            assert response.status_code == 401
+            assert "Bearer scheme" in response.json()["detail"]
+
+    def test_network_trusted_rejects_empty_bearer_token(self):
+        """Bearer token with empty value is rejected."""
+        # Arrange
+        import auth_server.server as server_module
+
+        with (
+            patch.object(server_module, "REGISTRY_STATIC_TOKEN_AUTH_ENABLED", True),
+            patch.object(server_module, "REGISTRY_API_TOKEN", "test-api-key"),
+        ):
+            client = TestClient(server_module.app)
+
+            # Act - send Bearer with empty token
+            response = client.get(
+                "/validate",
+                headers={
+                    "Authorization": "Bearer ",
+                    "X-Original-URL": "https://example.com/api/servers",
+                },
+            )
+
+            # Assert
+            assert response.status_code == 403
+            assert "Invalid API token" in response.json()["detail"]
 
 
 # =============================================================================

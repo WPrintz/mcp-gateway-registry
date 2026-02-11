@@ -23,6 +23,7 @@ from fastapi.responses import JSONResponse
 import httpx
 
 from ..auth.dependencies import nginx_proxied_auth, SCOPES_CONFIG
+from ..audit import set_audit_action
 from ..services.agent_service import agent_service
 from ..schemas.agent_models import (
     AgentCard,
@@ -212,6 +213,45 @@ def _check_agent_permission(
         )
 
 
+def _has_delete_agent_permission(user_context: Dict[str, Any], agent_path: str) -> bool:
+    """
+    Check if user has permission to delete an agent.
+
+    Permission hierarchy:
+    1. Admin users can delete any agent
+    2. Users with delete_agent UI permission for "all" can delete any agent
+    3. Users with delete_agent UI permission for the specific agent path can delete it
+
+    Note: Agent ownership is checked separately in the delete endpoint.
+
+    Args:
+        user_context: User context from auth containing is_admin and ui_permissions
+        agent_path: Path of the agent to delete (e.g., "/code-reviewer")
+
+    Returns:
+        bool: True if user has delete permission, False otherwise
+    """
+    # Admin users can delete any agent
+    if user_context.get("is_admin", False):
+        return True
+
+    # Check delete_agent UI permission
+    ui_permissions = user_context.get("ui_permissions", {})
+    delete_perms = ui_permissions.get("delete_agent", [])
+
+    # "all" grants permission to delete any agent
+    if "all" in delete_perms:
+        return True
+
+    # Check if user has permission for this specific agent path
+    # Normalize path for comparison (remove leading slash if present)
+    normalized_path = agent_path.lstrip("/")
+    if agent_path in delete_perms or normalized_path in delete_perms:
+        return True
+
+    return False
+
+
 def _filter_agents_by_access(
     agents: List[AgentCard],
     user_context: Dict[str, Any],
@@ -249,7 +289,7 @@ def _filter_agents_by_access(
             accessible.append(agent)
             continue
 
-        if agent.visibility == "private":
+        if agent.visibility == "internal":
             if agent.registered_by == username:
                 accessible.append(agent)
             continue
@@ -265,6 +305,7 @@ def _filter_agents_by_access(
 
 @router.post("/agents/register")
 async def register_agent(
+    http_request: Request,
     request: AgentRegistrationRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
@@ -283,6 +324,9 @@ async def register_agent(
     Raises:
         HTTPException: 409 if path exists, 422 if validation fails, 403 if unauthorized
     """
+    # Set audit action for agent registration
+    set_audit_action(http_request, "create", "agent", resource_id=request.path, description=f"Register agent {request.name}")
+    
     ui_permissions = user_context.get("ui_permissions", {})
     publish_permissions = ui_permissions.get("publish_agent", [])
 
@@ -435,6 +479,9 @@ async def list_agents(
     Returns:
         List of agent info objects
     """
+    # Set audit action for agent list
+    set_audit_action(request, "list", "agent", description="List all agents")
+    
     # CRITICAL DIAGNOSTIC: Log that we reached this endpoint
     logger.info(f"[GET_AGENTS_ENTRY] GET /api/agents called from {request.client.host if request.client else 'unknown'}")
     logger.info(f"[GET_AGENTS_ENTRY] Request headers: {dict(request.headers)}")
@@ -487,6 +534,8 @@ async def list_agents(
                 provider=provider_name,
                 streaming=streaming,
                 trust_level=agent.trust_level,
+                sync_metadata=agent.sync_metadata,
+                registered_by=agent.registered_by,
             )
             filtered_agents.append(agent_info)
 
@@ -585,11 +634,15 @@ async def check_agent_health(
 
 @router.post("/agents/{path:path}/rate")
 async def rate_agent(
+    request: Request,
     path: str,
-    request: RatingRequest,
+    rating_request: RatingRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
     """Save integer ratings to agent card."""
+    # Set audit action for agent rating
+    set_audit_action(request, "rate", "agent", resource_id=path, description=f"Rate agent with {rating_request.rating}")
+    
     path = _normalize_path(path)
 
     agent_card = await agent_service.get_agent_info(path)
@@ -610,7 +663,7 @@ async def rate_agent(
         )
 
     try:
-        avg_rating = await agent_service.update_rating(path, user_context["username"], request.rating)
+        avg_rating = await agent_service.update_rating(path, user_context["username"], rating_request.rating)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -659,6 +712,7 @@ async def get_agent_rating(
 
 @router.post("/agents/{path:path}/toggle")
 async def toggle_agent(
+    request: Request,
     path: str,
     enabled: bool,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
@@ -679,6 +733,9 @@ async def toggle_agent(
     Raises:
         HTTPException: 404 if not found, 403 if unauthorized
     """
+    # Set audit action for agent toggle
+    set_audit_action(request, "toggle", "agent", resource_id=path, description=f"Toggle agent to {enabled}")
+    
     path = _normalize_path(path)
 
     agent_card = await agent_service.get_agent_info(path)
@@ -721,6 +778,7 @@ async def toggle_agent(
 
 @router.get("/agents/{path:path}")
 async def get_agent(
+    request: Request,
     path: str,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
@@ -731,6 +789,7 @@ async def get_agent(
     Private and group-restricted agents require authorization.
 
     Args:
+        request: HTTP request object
         path: Agent path
         user_context: Authenticated user context
 
@@ -741,6 +800,9 @@ async def get_agent(
         HTTPException: 404 if not found, 403 if not authorized
     """
     path = _normalize_path(path)
+    
+    # Set audit action for agent read
+    set_audit_action(request, "read", "agent", resource_id=path, description=f"Read agent {path}")
 
     agent_card = await agent_service.get_agent_info(path)
     if not agent_card:
@@ -772,6 +834,7 @@ async def get_agent(
 
 @router.put("/agents/{path:path}")
 async def update_agent(
+    http_request: Request,
     path: str,
     request: AgentRegistrationRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
@@ -793,6 +856,9 @@ async def update_agent(
     Raises:
         HTTPException: 404 if not found, 403 if unauthorized
     """
+    # Set audit action for agent update
+    set_audit_action(http_request, "update", "agent", resource_id=path, description=f"Update agent {request.name}")
+    
     path = _normalize_path(path)
 
     existing_agent = await agent_service.get_agent_info(path)
@@ -889,13 +955,14 @@ async def update_agent(
 
 @router.delete("/agents/{path:path}")
 async def delete_agent(
+    request: Request,
     path: str,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
     """
     Delete an agent from the registry.
 
-    Requires admin permission or agent ownership.
+    Requires admin permission, delete_agent UI permission, or agent ownership.
 
     Args:
         path: Agent path
@@ -907,6 +974,9 @@ async def delete_agent(
     Raises:
         HTTPException: 404 if not found, 403 if unauthorized
     """
+    # Set audit action for agent deletion
+    set_audit_action(request, "delete", "agent", resource_id=path, description=f"Delete agent at {path}")
+    
     path = _normalize_path(path)
 
     existing_agent = await agent_service.get_agent_info(path)
@@ -916,16 +986,30 @@ async def delete_agent(
             detail=f"Agent not found at path '{path}'",
         )
 
-    if not user_context["is_admin"] and existing_agent.registered_by != user_context[
-        "username"
-    ]:
+    # Block deletion of federated (read-only) agents from peer registries
+    sync_metadata = existing_agent.sync_metadata or {}
+    if sync_metadata.get("is_federated") or sync_metadata.get("is_read_only"):
+        source_peer = sync_metadata.get("source_peer_id", "unknown peer registry")
+        logger.warning(
+            f"User {user_context['username']} attempted to delete federated agent {path} "
+            f"from {source_peer}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Agent '{path}' is synced from {source_peer} and cannot be deleted locally. "
+            f"Delete this agent from its source registry, or remove the peer federation.",
+        )
+
+    # Check delete permission: admin, delete_agent permission, or owner
+    if not _has_delete_agent_permission(user_context, path) and \
+       existing_agent.registered_by != user_context["username"]:
         logger.warning(
             f"User {user_context['username']} attempted to delete agent {path} "
             f"without permission"
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins or agent owners can delete agents",
+            detail="Only admins, agent owners, or users with delete_agent permission can delete agents",
         )
 
     success = await agent_service.remove_agent(path)

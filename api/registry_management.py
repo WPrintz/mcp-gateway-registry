@@ -224,6 +224,14 @@ from registry_client import (
     GroupCreateRequest,
     GroupSummary,
     GroupDeleteResponse,
+    SkillRegistrationRequest,
+    SkillCard,
+    SkillListResponse,
+    SkillHealthResponse,
+    SkillContentResponse,
+    SkillSearchResponse,
+    SkillToggleResponse,
+    SkillRatingResponse,
 )
 
 # Configure logging
@@ -261,6 +269,41 @@ def _get_registry_url(
 
     logger.debug(f"Using registry URL: {registry_url}")
     return registry_url
+
+
+def _mask_sensitive_fields(
+    data: Any,
+    fields_to_mask: Optional[List[str]] = None,
+) -> Any:
+    """
+    Mask sensitive fields in response data for safe logging/printing.
+
+    Args:
+        data: Response data (dict, list, or other)
+        fields_to_mask: List of field names to mask (default: federation_token)
+
+    Returns:
+        Data with sensitive fields masked
+    """
+    if fields_to_mask is None:
+        fields_to_mask = ["federation_token"]
+
+    if isinstance(data, dict):
+        masked = {}
+        for key, value in data.items():
+            if key in fields_to_mask and value:
+                # Show first 3 chars followed by ...
+                if isinstance(value, str) and len(value) > 3:
+                    masked[key] = f"{value[:3]}..."
+                else:
+                    masked[key] = "***"
+            else:
+                masked[key] = _mask_sensitive_fields(value, fields_to_mask)
+        return masked
+    elif isinstance(data, list):
+        return [_mask_sensitive_fields(item, fields_to_mask) for item in data]
+    else:
+        return data
 
 
 def _get_client_name() -> str:
@@ -1814,6 +1857,333 @@ def cmd_agent_rescan(args: argparse.Namespace) -> int:
         return 1
 
 
+# ==========================================
+# Agent Skills Command Handlers
+# ==========================================
+
+
+def cmd_skill_register(args: argparse.Namespace) -> int:
+    """
+    Register a new Agent Skill.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        request = SkillRegistrationRequest(
+            name=args.name,
+            skill_md_url=args.url,
+            description=args.description if hasattr(args, 'description') else None,
+            tags=args.tags.split(",") if hasattr(args, 'tags') and args.tags else [],
+            visibility=args.visibility if hasattr(args, 'visibility') else "public",
+        )
+
+        client = _create_client(args)
+        skill = client.register_skill(request)
+
+        logger.info(f"Skill registered successfully: {skill.name} at {skill.path}")
+        print(json.dumps({
+            "message": "Skill registered successfully",
+            "skill": {
+                "name": skill.name,
+                "path": skill.path,
+                "description": skill.description,
+                "skill_md_url": skill.skill_md_url,
+                "is_enabled": skill.is_enabled,
+            }
+        }, indent=2))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Skill registration failed: {e}")
+        return 1
+
+
+def cmd_skill_list(args: argparse.Namespace) -> int:
+    """
+    List all Agent Skills.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.list_skills(
+            include_disabled=args.include_disabled if hasattr(args, 'include_disabled') else False,
+            tag=args.tag if hasattr(args, 'tag') else None
+        )
+
+        if args.debug:
+            print(json.dumps([s.model_dump() for s in response.skills], indent=2, default=str))
+            return 0
+
+        if not response.skills:
+            logger.info("No skills found")
+            return 0
+
+        logger.info(f"Found {len(response.skills)} skills:\n")
+        for skill in response.skills:
+            status = "[+]" if skill.is_enabled else "[-]"
+            health = f"({skill.health_status})" if skill.health_status else ""
+            print(f"{status} {skill.name} {health}")
+            print(f"    Path: {skill.path}")
+            if skill.description:
+                print(f"    {skill.description[:80]}...")
+            if skill.tags:
+                print(f"    Tags: {', '.join(skill.tags)}")
+            print()
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"List skills failed: {e}")
+        return 1
+
+
+def cmd_skill_get(args: argparse.Namespace) -> int:
+    """
+    Get details for a specific skill.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        skill = client.get_skill(args.path)
+
+        logger.info(f"Retrieved skill: {skill.name}")
+        print(json.dumps({
+            "name": skill.name,
+            "path": skill.path,
+            "description": skill.description,
+            "skill_md_url": skill.skill_md_url,
+            "skill_md_raw_url": skill.skill_md_raw_url,
+            "version": skill.version,
+            "author": skill.author,
+            "visibility": skill.visibility,
+            "is_enabled": skill.is_enabled,
+            "tags": skill.tags,
+            "owner": skill.owner,
+            "num_stars": skill.num_stars,
+            "health_status": skill.health_status,
+            "created_at": skill.created_at,
+            "updated_at": skill.updated_at,
+        }, indent=2, default=str))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get skill failed: {e}")
+        return 1
+
+
+def cmd_skill_delete(args: argparse.Namespace) -> int:
+    """
+    Delete a skill.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        client.delete_skill(args.path)
+
+        logger.info(f"Skill deleted: {args.path}")
+        print(json.dumps({"message": "Skill deleted successfully", "path": args.path}, indent=2))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Delete skill failed: {e}")
+        return 1
+
+
+def cmd_skill_toggle(args: argparse.Namespace) -> int:
+    """
+    Toggle skill enabled/disabled state.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.toggle_skill(args.path, args.enable)
+
+        state = "enabled" if response.is_enabled else "disabled"
+        logger.info(f"Skill {state}: {response.path}")
+        print(json.dumps({"path": response.path, "is_enabled": response.is_enabled}, indent=2))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Toggle skill failed: {e}")
+        return 1
+
+
+def cmd_skill_health(args: argparse.Namespace) -> int:
+    """
+    Check skill health (SKILL.md accessibility).
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.check_skill_health(args.path)
+
+        status = "HEALTHY" if response.healthy else "UNHEALTHY"
+        logger.info(f"Skill health: {status}")
+        print(json.dumps({
+            "path": response.path,
+            "healthy": response.healthy,
+            "status_code": response.status_code,
+            "error": response.error,
+            "response_time_ms": response.response_time_ms,
+        }, indent=2))
+        return 0 if response.healthy else 1
+
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return 1
+
+
+def cmd_skill_content(args: argparse.Namespace) -> int:
+    """
+    Get SKILL.md content for a skill.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.get_skill_content(args.path)
+
+        if hasattr(args, 'raw') and args.raw:
+            # Output raw content only
+            print(response.content)
+        else:
+            logger.info(f"Retrieved content from: {response.url}")
+            print(f"--- SKILL.md ({len(response.content)} chars) ---")
+            print(response.content)
+            print("--- END ---")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get content failed: {e}")
+        return 1
+
+
+def cmd_skill_search(args: argparse.Namespace) -> int:
+    """
+    Search for skills.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.search_skills(
+            query=args.query,
+            tags=args.tags if hasattr(args, 'tags') else None
+        )
+
+        if args.debug:
+            print(json.dumps(response.model_dump(), indent=2, default=str))
+            return 0
+
+        logger.info(f"Found {response.total_count} skills matching '{args.query}':\n")
+        for skill in response.skills:
+            print(f"  {skill.get('name')} ({skill.get('path')})")
+            if skill.get('description'):
+                print(f"      {skill.get('description')[:60]}...")
+            print(f"      Score: {skill.get('relevance_score', 0):.2f}")
+            print()
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Search skills failed: {e}")
+        return 1
+
+
+def cmd_skill_rate(args: argparse.Namespace) -> int:
+    """
+    Rate a skill (1-5 stars).
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        if not 1 <= args.rating <= 5:
+            logger.error("Rating must be between 1 and 5")
+            return 1
+
+        client = _create_client(args)
+        response = client.rate_skill(args.path, args.rating)
+
+        logger.info(f"Skill rated: {args.rating} stars")
+        print(json.dumps({
+            "message": response.get("message"),
+            "average_rating": response.get("average_rating"),
+        }, indent=2))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Rate skill failed: {e}")
+        return 1
+
+
+def cmd_skill_rating(args: argparse.Namespace) -> int:
+    """
+    Get rating information for a skill.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.get_skill_rating(args.path)
+
+        logger.info(f"Skill rating: {response.num_stars} stars")
+        print(json.dumps({
+            "num_stars": response.num_stars,
+            "rating_details": response.rating_details,
+        }, indent=2, default=str))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get rating failed: {e}")
+        return 1
+
+
 def cmd_anthropic_list_servers(args: argparse.Namespace) -> int:
     """
     List all servers using Anthropic Registry API v0.1.
@@ -2474,6 +2844,445 @@ def cmd_federation_sync(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_peer_list(args: argparse.Namespace) -> int:
+    """
+    List all configured peer registries.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+
+        enabled_filter = None
+        if hasattr(args, 'enabled_only') and args.enabled_only:
+            enabled_filter = True
+
+        response = client.list_peers(enabled=enabled_filter)
+
+        if args.json:
+            masked_response = _mask_sensitive_fields(response)
+            print(json.dumps(masked_response, indent=2, default=str))
+            return 0
+
+        peers = response if isinstance(response, list) else response.get('peers', [])
+
+        if not peers:
+            logger.info("No peer registries configured")
+            return 0
+
+        logger.info(f"Found {len(peers)} peer registries:\n")
+
+        for peer in peers:
+            status = "enabled" if peer.get('enabled') else "disabled"
+            print(f"  Peer ID:   {peer.get('peer_id')}")
+            print(f"  Name:      {peer.get('name')}")
+            print(f"  Endpoint:  {peer.get('endpoint')}")
+            print(f"  Status:    {status}")
+            print(f"  Sync Mode: {peer.get('sync_mode', 'all')}")
+            print()
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"List peers failed: {e}")
+        return 1
+
+
+def cmd_peer_add(args: argparse.Namespace) -> int:
+    """
+    Add a new peer registry from a JSON config file.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+
+        with open(args.config, 'r') as f:
+            config_data = json.load(f)
+
+        # Override federation_token from CLI arg if provided
+        if hasattr(args, 'federation_token') and args.federation_token:
+            config_data["federation_token"] = args.federation_token
+
+        response = client.add_peer(config=config_data)
+
+        logger.info(f"Peer registry added successfully: {config_data.get('peer_id')}")
+        masked_response = _mask_sensitive_fields(response)
+        print(json.dumps(masked_response, indent=2, default=str))
+        return 0
+
+    except FileNotFoundError:
+        logger.error(f"Config file not found: {args.config}")
+        return 1
+    except Exception as e:
+        logger.error(f"Add peer failed: {e}")
+        return 1
+
+
+def cmd_peer_get(args: argparse.Namespace) -> int:
+    """
+    Get details of a specific peer registry.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.get_peer(peer_id=args.peer_id)
+
+        if args.json:
+            masked_response = _mask_sensitive_fields(response)
+            print(json.dumps(masked_response, indent=2, default=str))
+            return 0
+
+        print(f"Peer ID:      {response.get('peer_id')}")
+        print(f"Name:         {response.get('name')}")
+        print(f"Endpoint:     {response.get('endpoint')}")
+        print(f"Enabled:      {response.get('enabled')}")
+        print(f"Sync Mode:    {response.get('sync_mode', 'all')}")
+        print(f"Created:      {response.get('created_at')}")
+        print(f"Updated:      {response.get('updated_at')}")
+
+        # Mask federation token in non-JSON output
+        fed_token = response.get('federation_token')
+        if fed_token:
+            masked_token = f"{fed_token[:3]}..." if len(fed_token) > 3 else "***"
+            print(f"Fed Token:    {masked_token}")
+
+        whitelist_servers = response.get('whitelist_servers', [])
+        if whitelist_servers:
+            print(f"Whitelist:    {', '.join(whitelist_servers)}")
+
+        tag_filter = response.get('tag_filter', [])
+        if tag_filter:
+            print(f"Tag Filter:   {', '.join(tag_filter)}")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get peer failed: {e}")
+        return 1
+
+
+def cmd_peer_update(args: argparse.Namespace) -> int:
+    """
+    Update an existing peer registry from a JSON config file.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+
+        with open(args.config, 'r') as f:
+            config_data = json.load(f)
+
+        # Override federation_token from CLI arg if provided
+        if hasattr(args, 'federation_token') and args.federation_token:
+            config_data["federation_token"] = args.federation_token
+
+        response = client.update_peer(
+            peer_id=args.peer_id,
+            config=config_data
+        )
+
+        logger.info(f"Peer registry updated successfully: {args.peer_id}")
+        masked_response = _mask_sensitive_fields(response)
+        print(json.dumps(masked_response, indent=2, default=str))
+        return 0
+
+    except FileNotFoundError:
+        logger.error(f"Config file not found: {args.config}")
+        return 1
+    except Exception as e:
+        logger.error(f"Update peer failed: {e}")
+        return 1
+
+
+def cmd_peer_remove(args: argparse.Namespace) -> int:
+    """
+    Remove a peer registry.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        if not args.force:
+            confirm = input(f"Remove peer registry '{args.peer_id}'? (y/N): ")
+            if confirm.lower() != 'y':
+                logger.info("Cancelled")
+                return 0
+
+        client = _create_client(args)
+        response = client.remove_peer(peer_id=args.peer_id)
+
+        logger.info(f"Peer registry removed: {args.peer_id}")
+        masked_response = _mask_sensitive_fields(response)
+        print(json.dumps(masked_response, indent=2, default=str))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Remove peer failed: {e}")
+        return 1
+
+
+def cmd_peer_sync(args: argparse.Namespace) -> int:
+    """
+    Trigger sync from a specific peer registry.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.sync_peer(peer_id=args.peer_id)
+
+        if args.json:
+            print(json.dumps(response, indent=2, default=str))
+            return 0
+
+        print(f"\nSync Results for peer '{args.peer_id}':")
+        print(f"  Status:          {response.get('status', 'unknown')}")
+        print(f"  Servers Synced:  {response.get('servers_synced', 0)}")
+        print(f"  Agents Synced:   {response.get('agents_synced', 0)}")
+        print(f"  Servers Orphaned: {response.get('servers_orphaned', 0)}")
+        print(f"  Agents Orphaned:  {response.get('agents_orphaned', 0)}")
+
+        errors = response.get('errors', [])
+        if errors:
+            print(f"\n  Errors ({len(errors)}):")
+            for error in errors:
+                print(f"    - {error}")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Peer sync failed: {e}")
+        return 1
+
+
+def cmd_peer_sync_all(args: argparse.Namespace) -> int:
+    """
+    Trigger sync from all enabled peer registries.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.sync_all_peers()
+
+        if args.json:
+            print(json.dumps(response, indent=2, default=str))
+            return 0
+
+        results = response if isinstance(response, list) else response.get('results', [])
+        print(f"\nSync All Peers Results:")
+        print(f"  Total peers synced: {len(results)}")
+
+        for result in results:
+            peer_id = result.get('peer_id', 'unknown')
+            status = result.get('status', 'unknown')
+            print(f"\n  {peer_id}: {status}")
+            print(f"    Servers: {result.get('servers_synced', 0)}")
+            print(f"    Agents:  {result.get('agents_synced', 0)}")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Sync all peers failed: {e}")
+        return 1
+
+
+def cmd_peer_status(args: argparse.Namespace) -> int:
+    """
+    Get sync status for a specific peer registry.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.get_peer_status(peer_id=args.peer_id)
+
+        if args.json:
+            print(json.dumps(response, indent=2, default=str))
+            return 0
+
+        print(f"\nSync Status for peer '{args.peer_id}':")
+
+        # Determine last sync status from history or health
+        history = response.get('sync_history', [])
+        if history:
+            last_entry = history[0]
+            last_status = "success" if last_entry.get('success') else "failed"
+            last_time = last_entry.get('completed_at') or last_entry.get('started_at')
+        else:
+            last_status = "never"
+            last_time = response.get('last_successful_sync') or response.get('last_sync_attempt')
+
+        print(f"  Last Sync Status:  {last_status}")
+        print(f"  Last Sync Time:    {last_time or 'never'}")
+        print(f"  Last Generation:   {response.get('current_generation', 0)}")
+        print(f"  Servers Synced:    {response.get('total_servers_synced', 0)}")
+        print(f"  Agents Synced:     {response.get('total_agents_synced', 0)}")
+        print(f"  Is Healthy:        {response.get('is_healthy', False)}")
+
+        if history:
+            print(f"\n  Recent Sync History ({len(history)} entries):")
+            for entry in history[:5]:
+                entry_status = "success" if entry.get('success') else "failed"
+                entry_time = entry.get('completed_at') or entry.get('started_at')
+                print(f"    {entry_time} - {entry_status}")
+                print(f"      Servers: {entry.get('servers_synced', 0)}, "
+                      f"Agents: {entry.get('agents_synced', 0)}")
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get peer status failed: {e}")
+        return 1
+
+
+def cmd_peer_enable(args: argparse.Namespace) -> int:
+    """
+    Enable a peer registry.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.enable_peer(peer_id=args.peer_id)
+
+        logger.info(f"Peer registry enabled: {args.peer_id}")
+        masked_response = _mask_sensitive_fields(response)
+        print(json.dumps(masked_response, indent=2, default=str))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Enable peer failed: {e}")
+        return 1
+
+
+def cmd_peer_disable(args: argparse.Namespace) -> int:
+    """
+    Disable a peer registry.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.disable_peer(peer_id=args.peer_id)
+
+        logger.info(f"Peer registry disabled: {args.peer_id}")
+        masked_response = _mask_sensitive_fields(response)
+        print(json.dumps(masked_response, indent=2, default=str))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Disable peer failed: {e}")
+        return 1
+
+
+def cmd_peer_connections(args: argparse.Namespace) -> int:
+    """
+    Get all federation connections across all peers.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.get_peer_connections()
+
+        if args.json:
+            print(json.dumps(response, indent=2, default=str))
+            return 0
+
+        connections = response if isinstance(response, list) else response.get('connections', [])
+
+        if not connections:
+            logger.info("No federation connections found")
+            return 0
+
+        logger.info(f"Found {len(connections)} federation connections:\n")
+        for conn in connections:
+            print(f"  Peer: {conn.get('peer_id')}")
+            print(f"  Direction: {conn.get('direction', 'unknown')}")
+            print(f"  Status: {conn.get('status', 'unknown')}")
+            print()
+
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get peer connections failed: {e}")
+        return 1
+
+
+def cmd_peer_shared_resources(args: argparse.Namespace) -> int:
+    """
+    Get resource sharing summary across all peers.
+
+    Args:
+        args: Command arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    try:
+        client = _create_client(args)
+        response = client.get_shared_resources()
+
+        if args.json:
+            print(json.dumps(response, indent=2, default=str))
+            return 0
+
+        print("\nShared Resources Summary:")
+        print(json.dumps(response, indent=2, default=str))
+        return 0
+
+    except Exception as e:
+        logger.error(f"Get shared resources failed: {e}")
+        return 1
+
+
 def main() -> int:
     """
     Main entry point for the CLI.
@@ -2986,6 +3795,165 @@ Examples:
         help="Output raw JSON"
     )
 
+    # ==========================================
+    # Agent Skills Commands
+    # ==========================================
+
+    # Skill register command
+    skill_register_parser = subparsers.add_parser(
+        "skill-register",
+        help="Register a new Agent Skill"
+    )
+    skill_register_parser.add_argument(
+        "--name",
+        required=True,
+        help="Skill name (lowercase alphanumeric with hyphens)"
+    )
+    skill_register_parser.add_argument(
+        "--url",
+        required=True,
+        help="URL to SKILL.md file"
+    )
+    skill_register_parser.add_argument(
+        "--description",
+        help="Skill description"
+    )
+    skill_register_parser.add_argument(
+        "--tags",
+        help="Comma-separated tags"
+    )
+    skill_register_parser.add_argument(
+        "--visibility",
+        choices=["public", "private", "group"],
+        default="public",
+        help="Visibility level (default: public)"
+    )
+
+    # Skill list command
+    skill_list_parser = subparsers.add_parser(
+        "skill-list",
+        help="List all Agent Skills"
+    )
+    skill_list_parser.add_argument(
+        "--include-disabled",
+        action="store_true",
+        help="Include disabled skills"
+    )
+    skill_list_parser.add_argument(
+        "--tag",
+        help="Filter by tag"
+    )
+
+    # Skill get command
+    skill_get_parser = subparsers.add_parser(
+        "skill-get",
+        help="Get skill details"
+    )
+    skill_get_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name (e.g., pdf-processing)"
+    )
+
+    # Skill delete command
+    skill_delete_parser = subparsers.add_parser(
+        "skill-delete",
+        help="Delete a skill"
+    )
+    skill_delete_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name"
+    )
+
+    # Skill toggle command
+    skill_toggle_parser = subparsers.add_parser(
+        "skill-toggle",
+        help="Toggle skill enabled/disabled state"
+    )
+    skill_toggle_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name"
+    )
+    skill_toggle_parser.add_argument(
+        "--enable",
+        type=lambda x: x.lower() == 'true',
+        required=True,
+        help="Enable (true) or disable (false)"
+    )
+
+    # Skill health command
+    skill_health_parser = subparsers.add_parser(
+        "skill-health",
+        help="Check skill health (SKILL.md accessibility)"
+    )
+    skill_health_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name"
+    )
+
+    # Skill content command
+    skill_content_parser = subparsers.add_parser(
+        "skill-content",
+        help="Get SKILL.md content for a skill"
+    )
+    skill_content_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name"
+    )
+    skill_content_parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Output raw content only"
+    )
+
+    # Skill search command
+    skill_search_parser = subparsers.add_parser(
+        "skill-search",
+        help="Search for skills"
+    )
+    skill_search_parser.add_argument(
+        "--query",
+        required=True,
+        help="Search query"
+    )
+    skill_search_parser.add_argument(
+        "--tags",
+        help="Comma-separated tags filter"
+    )
+
+    # Skill rate command
+    skill_rate_parser = subparsers.add_parser(
+        "skill-rate",
+        help="Rate a skill (1-5 stars)"
+    )
+    skill_rate_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name"
+    )
+    skill_rate_parser.add_argument(
+        "--rating",
+        type=int,
+        required=True,
+        choices=[1, 2, 3, 4, 5],
+        help="Rating (1-5 stars)"
+    )
+
+    # Skill rating command
+    skill_rating_parser = subparsers.add_parser(
+        "skill-rating",
+        help="Get rating information for a skill"
+    )
+    skill_rating_parser.add_argument(
+        "--path",
+        required=True,
+        help="Skill path or name"
+    )
+
     # Anthropic Registry API Commands
 
     # Anthropic list servers command
@@ -3298,6 +4266,184 @@ Examples:
         help="Output raw JSON instead of formatted text"
     )
 
+    # ==========================================
+    # Peer Registry Management Commands
+    # ==========================================
+
+    # List peers command
+    peer_list_parser = subparsers.add_parser(
+        "peer-list",
+        help="List all configured peer registries"
+    )
+    peer_list_parser.add_argument(
+        "--enabled-only",
+        action="store_true",
+        help="Show only enabled peers"
+    )
+    peer_list_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
+    # Add peer command
+    peer_add_parser = subparsers.add_parser(
+        "peer-add",
+        help="Add a new peer registry from JSON config"
+    )
+    peer_add_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to peer configuration JSON file"
+    )
+    peer_add_parser.add_argument(
+        "--federation-token",
+        required=False,
+        help="Federation static token from the remote peer registry. "
+        "Overrides federation_token in the JSON config file if both are provided."
+    )
+
+    # Get peer command
+    peer_get_parser = subparsers.add_parser(
+        "peer-get",
+        help="Get details of a specific peer registry"
+    )
+    peer_get_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier"
+    )
+    peer_get_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
+    # Update peer command
+    peer_update_parser = subparsers.add_parser(
+        "peer-update",
+        help="Update an existing peer registry"
+    )
+    peer_update_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier"
+    )
+    peer_update_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to updated peer configuration JSON file"
+    )
+    peer_update_parser.add_argument(
+        "--federation-token",
+        required=False,
+        help="Federation static token from the remote peer registry. "
+        "Overrides federation_token in the JSON config file if both are provided."
+    )
+
+    # Remove peer command
+    peer_remove_parser = subparsers.add_parser(
+        "peer-remove",
+        help="Remove a peer registry"
+    )
+    peer_remove_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier"
+    )
+    peer_remove_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Skip confirmation prompt"
+    )
+
+    # Sync from specific peer command
+    peer_sync_parser = subparsers.add_parser(
+        "peer-sync",
+        help="Trigger sync from a specific peer registry"
+    )
+    peer_sync_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier to sync from"
+    )
+    peer_sync_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
+    # Sync from all peers command
+    peer_sync_all_parser = subparsers.add_parser(
+        "peer-sync-all",
+        help="Trigger sync from all enabled peer registries"
+    )
+    peer_sync_all_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
+    # Get peer sync status command
+    peer_status_parser = subparsers.add_parser(
+        "peer-status",
+        help="Get sync status for a specific peer registry"
+    )
+    peer_status_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier"
+    )
+    peer_status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
+    # Enable peer command
+    peer_enable_parser = subparsers.add_parser(
+        "peer-enable",
+        help="Enable a peer registry"
+    )
+    peer_enable_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier"
+    )
+
+    # Disable peer command
+    peer_disable_parser = subparsers.add_parser(
+        "peer-disable",
+        help="Disable a peer registry"
+    )
+    peer_disable_parser.add_argument(
+        "--peer-id",
+        required=True,
+        help="Peer registry identifier"
+    )
+
+    # Get peer connections command
+    peer_connections_parser = subparsers.add_parser(
+        "peer-connections",
+        help="Get all federation connections across all peers"
+    )
+    peer_connections_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
+    # Get shared resources command
+    peer_shared_resources_parser = subparsers.add_parser(
+        "peer-shared-resources",
+        help="Get resource sharing summary across all peers"
+    )
+    peer_shared_resources_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output raw JSON instead of formatted text"
+    )
+
     args = parser.parse_args()
 
     # Enable debug logging if requested
@@ -3342,6 +4488,17 @@ Examples:
         "agent-rating": cmd_agent_rating,
         "agent-security-scan": cmd_agent_security_scan,
         "agent-rescan": cmd_agent_rescan,
+        # Skill commands
+        "skill-register": cmd_skill_register,
+        "skill-list": cmd_skill_list,
+        "skill-get": cmd_skill_get,
+        "skill-delete": cmd_skill_delete,
+        "skill-toggle": cmd_skill_toggle,
+        "skill-health": cmd_skill_health,
+        "skill-content": cmd_skill_content,
+        "skill-search": cmd_skill_search,
+        "skill-rate": cmd_skill_rate,
+        "skill-rating": cmd_skill_rating,
         "anthropic-list": cmd_anthropic_list_servers,
         "anthropic-versions": cmd_anthropic_list_versions,
         "anthropic-get": cmd_anthropic_get_server,
@@ -3361,6 +4518,18 @@ Examples:
         "federation-add-asor-agent": cmd_federation_add_asor_agent,
         "federation-remove-asor-agent": cmd_federation_remove_asor_agent,
         "federation-sync": cmd_federation_sync,
+        "peer-list": cmd_peer_list,
+        "peer-add": cmd_peer_add,
+        "peer-get": cmd_peer_get,
+        "peer-update": cmd_peer_update,
+        "peer-remove": cmd_peer_remove,
+        "peer-sync": cmd_peer_sync,
+        "peer-sync-all": cmd_peer_sync_all,
+        "peer-status": cmd_peer_status,
+        "peer-enable": cmd_peer_enable,
+        "peer-disable": cmd_peer_disable,
+        "peer-connections": cmd_peer_connections,
+        "peer-shared-resources": cmd_peer_shared_resources,
     }
 
     handler = command_handlers.get(args.command)

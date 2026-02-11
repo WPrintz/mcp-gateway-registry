@@ -42,8 +42,8 @@ services:
       - DOCUMENTDB_HOST=mongodb
       - DOCUMENTDB_PORT=27017
       - DOCUMENTDB_DATABASE=${DOCUMENTDB_DATABASE:-mcp_registry}
-      - DOCUMENTDB_USERNAME=${DOCUMENTDB_USERNAME:-admin}
-      - DOCUMENTDB_PASSWORD=${DOCUMENTDB_PASSWORD:-admin}
+      - DOCUMENTDB_USERNAME=${DOCUMENTDB_USERNAME:-}
+      - DOCUMENTDB_PASSWORD=${DOCUMENTDB_PASSWORD:-}
       - DOCUMENTDB_NAMESPACE=${DOCUMENTDB_NAMESPACE:-default}
     volumes:
       - ./scripts/init-mongodb-ce.py:/app/scripts/init-mongodb-ce.py:ro
@@ -138,6 +138,12 @@ services:
       - EMBEDDINGS_API_KEY=${EMBEDDINGS_API_KEY}
       - EMBEDDINGS_API_BASE=${EMBEDDINGS_API_BASE}
       - EMBEDDINGS_AWS_REGION=${EMBEDDINGS_AWS_REGION:-us-east-1}
+      # Federation Peer Sync Configuration
+      - FEDERATION_TOKEN_ENDPOINT=${FEDERATION_TOKEN_ENDPOINT}
+      - FEDERATION_CLIENT_ID=${FEDERATION_CLIENT_ID}
+      - FEDERATION_CLIENT_SECRET=${FEDERATION_CLIENT_SECRET}
+      # Federation Token Encryption (for encrypting federation_token before storage)
+      - FEDERATION_ENCRYPTION_KEY=${FEDERATION_ENCRYPTION_KEY:-}
     ports:
       - "80:80"
       - "443:443"
@@ -156,6 +162,8 @@ services:
         condition: service_started
       metrics-service:
         condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Metrics Collection Service
@@ -247,6 +255,9 @@ services:
       # Registry API static token auth (IdP-independent access)
       - REGISTRY_STATIC_TOKEN_AUTH_ENABLED=${REGISTRY_STATIC_TOKEN_AUTH_ENABLED:-false}
       - REGISTRY_API_TOKEN=${REGISTRY_API_TOKEN:-}
+      # Federation static token auth (scoped access for peer registries)
+      - FEDERATION_STATIC_TOKEN_AUTH_ENABLED=${FEDERATION_STATIC_TOKEN_AUTH_ENABLED:-false}
+      - FEDERATION_STATIC_TOKEN=${FEDERATION_STATIC_TOKEN:-}
       # OAuth token storage in session (set to false for Entra ID large tokens)
       - OAUTH_STORE_TOKENS_IN_SESSION=${OAUTH_STORE_TOKENS_IN_SESSION:-true}
     ports:
@@ -257,6 +268,8 @@ services:
     depends_on:
       metrics-service:
         condition: service_healthy
+      mongodb-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   # Current Time MCP Server

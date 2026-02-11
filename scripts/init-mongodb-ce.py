@@ -40,6 +40,8 @@ COLLECTION_SCOPES = "mcp_scopes"
 COLLECTION_EMBEDDINGS = "mcp_embeddings_1536"
 COLLECTION_SECURITY_SCANS = "mcp_security_scans"
 COLLECTION_FEDERATION_CONFIG = "mcp_federation_config"
+COLLECTION_AUDIT_EVENTS = "audit_events"
+COLLECTION_SKILLS = "agent_skills"
 
 
 def _get_config_from_env() -> dict:
@@ -68,8 +70,15 @@ def _initialize_replica_set(
 
     try:
         # Connect without replica set for initialization
+        # Use auth only if username is provided (MongoDB CE runs without auth by default)
+        if username and password:
+            connection_uri = f"mongodb://{username}:{password}@{host}:{port}/?authMechanism=SCRAM-SHA-256&authSource=admin"
+        else:
+            connection_uri = f"mongodb://{host}:{port}/"
+            logger.info("Connecting without authentication (MongoDB CE no-auth mode)")
+
         client = MongoClient(
-            f"mongodb://{username}:{password}@{host}:{port}/?authMechanism=SCRAM-SHA-256&authSource=admin",
+            connection_uri,
             serverSelectionTimeoutMS=5000,
             directConnection=True,
         )
@@ -149,6 +158,36 @@ async def _create_standard_indexes(
     elif collection_name == COLLECTION_FEDERATION_CONFIG:
         await collection.create_index([("registry_name", ASCENDING)], unique=True)
         await collection.create_index([("enabled", ASCENDING)])
+        logger.info(f"Created indexes for {full_name}")
+
+    elif collection_name == COLLECTION_AUDIT_EVENTS:
+        # Indexes for audit event queries (Requirements 6.2)
+        # Note: timestamp index is created as TTL index below, so we use compound indexes here
+        await collection.create_index([("identity.username", ASCENDING), ("timestamp", ASCENDING)])
+        await collection.create_index([("action.operation", ASCENDING), ("timestamp", ASCENDING)])
+        await collection.create_index([("action.resource_type", ASCENDING), ("timestamp", ASCENDING)])
+        await collection.create_index([("request_id", ASCENDING)], unique=True)
+
+        # TTL index for automatic expiration (Requirements 6.3)
+        # This also serves as the timestamp index for sorting
+        # Default 7 days (604800 seconds), configurable via AUDIT_LOG_MONGODB_TTL_DAYS
+        ttl_days = int(os.getenv("AUDIT_LOG_MONGODB_TTL_DAYS", "7"))
+        ttl_seconds = ttl_days * 24 * 60 * 60
+        await collection.create_index(
+            [("timestamp", ASCENDING)],
+            expireAfterSeconds=ttl_seconds,
+            name="timestamp_ttl"
+        )
+        logger.info(f"Created indexes for {full_name} (TTL: {ttl_days} days)")
+
+    elif collection_name == COLLECTION_SKILLS:
+        # Note: path is stored as _id, so no separate path index needed
+        await collection.create_index([("name", ASCENDING)], unique=True)
+        await collection.create_index([("tags", ASCENDING)])
+        await collection.create_index([("visibility", ASCENDING)])
+        await collection.create_index([("is_enabled", ASCENDING)])
+        await collection.create_index([("registry_name", ASCENDING)])
+        await collection.create_index([("owner", ASCENDING)])
         logger.info(f"Created indexes for {full_name}")
 
 
@@ -239,7 +278,13 @@ async def _initialize_mongodb_ce() -> None:
     _initialize_replica_set(config["host"], config["port"], config["username"], config["password"])
 
     # Connect with motor for async operations
-    connection_string = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}?replicaSet={config['replicaset']}&authMechanism=SCRAM-SHA-256&authSource=admin"
+    # Use auth only if username is provided (MongoDB CE runs without auth by default)
+    if config['username'] and config['password']:
+        connection_string = f"mongodb://{config['username']}:{config['password']}@{config['host']}:{config['port']}/{config['database']}?replicaSet={config['replicaset']}&authMechanism=SCRAM-SHA-256&authSource=admin"
+    else:
+        connection_string = f"mongodb://{config['host']}:{config['port']}/{config['database']}?replicaSet={config['replicaset']}"
+        logger.info("Using no-auth connection for async client")
+
     try:
         client = AsyncIOMotorClient(
             connection_string,
@@ -263,6 +308,8 @@ async def _initialize_mongodb_ce() -> None:
             COLLECTION_EMBEDDINGS,
             COLLECTION_SECURITY_SCANS,
             COLLECTION_FEDERATION_CONFIG,
+            COLLECTION_AUDIT_EVENTS,
+            COLLECTION_SKILLS,
         ]
 
         for coll_name in collections:
@@ -292,6 +339,9 @@ async def _initialize_mongodb_ce() -> None:
         for coll_name in collections:
             if coll_name == COLLECTION_EMBEDDINGS:
                 logger.info(f"  - {coll_name}_{namespace} (with vector search)")
+            elif coll_name == COLLECTION_AUDIT_EVENTS:
+                ttl_days = int(os.getenv("AUDIT_LOG_MONGODB_TTL_DAYS", "7"))
+                logger.info(f"  - {coll_name}_{namespace} (TTL: {ttl_days} days)")
             else:
                 logger.info(f"  - {coll_name}_{namespace}")
         logger.info("")

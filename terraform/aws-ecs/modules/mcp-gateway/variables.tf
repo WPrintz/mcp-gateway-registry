@@ -511,3 +511,49 @@ variable "registry_api_token" {
   default     = ""
   sensitive   = true
 }
+
+# =============================================================================
+# FEDERATION CONFIGURATION (Peer-to-Peer Registry Sync)
+# =============================================================================
+
+variable "registry_id" {
+  description = "Unique identifier for this registry instance in federation."
+  type        = string
+  default     = ""
+}
+
+variable "federation_static_token_auth_enabled" {
+  description = "Enable static token auth for Federation API endpoints."
+  type        = bool
+  default     = false
+}
+
+variable "federation_static_token" {
+  description = "Static token for Federation API access."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "federation_encryption_key" {
+  description = "Fernet encryption key for storing federation tokens in MongoDB."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# =============================================================================
+# AUDIT LOGGING CONFIGURATION
+# =============================================================================
+
+variable "audit_log_enabled" {
+  description = "Enable audit logging for all API and MCP requests."
+  type        = bool
+  default     = true
+}
+
+variable "audit_log_ttl_days" {
+  description = "Audit log retention period in days."
+  type        = number
+  default     = 7
+}

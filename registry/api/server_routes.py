@@ -10,6 +10,7 @@ from fastapi.templating import Jinja2Templates
 import httpx
 
 from ..core.config import settings
+from ..audit import set_audit_action
 from ..auth.dependencies import enhanced_auth, nginx_proxied_auth
 from ..services.server_service import server_service
 from ..services.security_scanner import security_scanner_service
@@ -253,10 +254,14 @@ async def read_root(
 
 @router.get("/servers")
 async def get_servers_json(
+    request: Request,
     query: str | None = None,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
 ):
     """Get servers data as JSON for React frontend and external API (supports both session cookies and Bearer tokens)."""
+    # Set audit action for server list
+    set_audit_action(request, "list", "server", description="List all servers")
+    
     # CRITICAL DIAGNOSTIC: Log user_context received by endpoint
     logger.debug(f"[GET_SERVERS_DEBUG] Received user_context: {user_context}")
     logger.debug(f"[GET_SERVERS_DEBUG] user_context type: {type(user_context)}")
@@ -375,6 +380,7 @@ async def get_servers_json(
                     "mcp_server_version": server_info.get("mcp_server_version"),
                     "mcp_server_version_previous": server_info.get("mcp_server_version_previous"),
                     "mcp_server_version_updated_at": server_info.get("mcp_server_version_updated_at"),
+                    "sync_metadata": server_info.get("sync_metadata"),
                 }
             )
 
@@ -508,6 +514,8 @@ async def register_service(
     mcp_endpoint: Annotated[str | None, Form()] = None,
     sse_endpoint: Annotated[str | None, Form()] = None,
     metadata: Annotated[str | None, Form()] = None,
+    visibility: Annotated[str, Form()] = "public",
+    allowed_groups: Annotated[str | None, Form()] = None,
     user_context: Annotated[dict, Depends(enhanced_auth)] = None,
 ):
     """Register a new service (requires register_service UI permission)."""
@@ -538,6 +546,26 @@ async def register_service(
     # Process tags
     tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
+    # Validate visibility value
+    valid_visibility = ["public", "group-restricted", "internal"]
+    if visibility not in valid_visibility:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid visibility value. Must be one of: {', '.join(valid_visibility)}",
+        )
+
+    # Process allowed_groups (comma-separated string to list)
+    allowed_groups_list = []
+    if allowed_groups:
+        allowed_groups_list = [g.strip() for g in allowed_groups.split(",") if g.strip()]
+
+    # Validate group-restricted requires allowed_groups
+    if visibility == "group-restricted" and not allowed_groups_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group-restricted visibility requires at least one allowed_group",
+        )
+
     # Create server entry
     server_entry = {
         "server_name": name,
@@ -550,6 +578,8 @@ async def register_service(
         "is_python": is_python,
         "license": license_str,
         "tool_list": [],
+        "visibility": visibility,
+        "allowed_groups": allowed_groups_list,
     }
 
     # Add custom endpoint fields if provided
@@ -653,6 +683,8 @@ async def internal_register_service(
     supported_transports: Annotated[str | None, Form()] = None,
     headers: Annotated[str | None, Form()] = None,
     tool_list_json: Annotated[str | None, Form()] = None,
+    visibility: Annotated[str, Form()] = "public",
+    allowed_groups: Annotated[str | None, Form()] = None,
 ):
     """Internal service registration endpoint for mcpgw-server (requires HTTP Basic Authentication with admin credentials)."""
     logger.warning(
@@ -790,6 +822,16 @@ async def internal_register_service(
         except Exception as e:
             logger.warning(f"INTERNAL REGISTER: Failed to parse tool_list_json: {e}")
 
+    # Process allowed_groups (comma-separated string to list)
+    allowed_groups_list = []
+    if allowed_groups:
+        allowed_groups_list = [g.strip() for g in allowed_groups.split(",") if g.strip()]
+
+    # Validate visibility value
+    valid_visibility = ["public", "group-restricted", "internal"]
+    if visibility not in valid_visibility:
+        visibility = "public"  # Default to public for internal registration
+
     # Create server entry
     server_entry = {
         "server_name": name,
@@ -804,6 +846,8 @@ async def internal_register_service(
         "is_python": is_python,
         "license": license_str,
         "tool_list": tool_list,
+        "visibility": visibility,
+        "allowed_groups": allowed_groups_list,
     }
 
     # Add optional fields if provided
@@ -1473,6 +1517,8 @@ async def edit_server_submit(
     license_str: Annotated[str, Form(alias="license")] = "N/A",
     mcp_endpoint: Annotated[str | None, Form()] = None,
     metadata: Annotated[str | None, Form()] = None,
+    visibility: Annotated[str, Form()] = "public",
+    allowed_groups: Annotated[str | None, Form()] = None,
 ):
     """Handle server edit form submission (requires modify_service UI permission)."""
     from ..search.service import faiss_service
@@ -1517,6 +1563,26 @@ async def edit_server_submit(
     # Process tags
     tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
+    # Validate visibility value
+    valid_visibility = ["public", "group-restricted", "internal"]
+    if visibility not in valid_visibility:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid visibility value. Must be one of: {', '.join(valid_visibility)}",
+        )
+
+    # Process allowed_groups (comma-separated string to list)
+    allowed_groups_list = []
+    if allowed_groups:
+        allowed_groups_list = [g.strip() for g in allowed_groups.split(",") if g.strip()]
+
+    # Validate group-restricted requires allowed_groups
+    if visibility == "group-restricted" and not allowed_groups_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group-restricted visibility requires at least one allowed_group",
+        )
+
     # Prepare updated server data
     updated_server_entry = {
         "server_name": name,
@@ -1529,6 +1595,8 @@ async def edit_server_submit(
         "is_python": bool(is_python),
         "license": license_str,
         "tool_list": [],  # Keep existing or initialize
+        "visibility": visibility,
+        "allowed_groups": allowed_groups_list,
     }
 
     # Add optional mcp_endpoint if provided
@@ -1601,12 +1669,19 @@ async def token_generation_page(
 
 @router.get("/server_details/{service_path:path}")
 async def get_server_details(
+    request: Request,
     service_path: str, user_context: Annotated[dict, Depends(enhanced_auth)]
 ):
     """Get server details by path, or all servers if path is 'all' (filtered by permissions)."""
     # Normalize the path to ensure it starts with '/'
     if not service_path.startswith("/"):
         service_path = "/" + service_path
+
+    # Set audit action for server read
+    if service_path == "/all":
+        set_audit_action(request, "list", "server", description="List all server details")
+    else:
+        set_audit_action(request, "read", "server", resource_id=service_path, description=f"Read server details for {service_path}")
 
     # Special case: if path is 'all' or '/all', return details for all accessible servers
     if service_path == "/all":
@@ -2839,6 +2914,9 @@ async def register_service_api(
       -F "proxy_pass_url=http://localhost:8000"
     ```
     """
+    # Set audit action for server registration
+    set_audit_action(request, "create", "server", resource_id=path, description=f"Register server {name}")
+    
     logger.info(
         f"API register service request from user '{user_context.get('username')}' for service '{name}'"
     )
@@ -3018,6 +3096,7 @@ async def register_service_api(
 
 @router.post("/servers/toggle")
 async def toggle_service_api(
+    request: Request,
     path: Annotated[str, Form()],
     new_state: Annotated[bool, Form()],
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
@@ -3049,6 +3128,9 @@ async def toggle_service_api(
     from ..search.service import faiss_service
     from ..health.service import health_service
     from ..core.nginx_service import nginx_service
+
+    # Set audit action for server toggle
+    set_audit_action(request, "toggle", "server", resource_id=path, description=f"Toggle server to {new_state}")
 
     logger.info(
         f"API toggle service request from user '{user_context.get('username')}' for path '{path}' to {new_state}"
@@ -3128,6 +3210,7 @@ async def toggle_service_api(
 
 @router.post("/servers/remove")
 async def remove_service_api(
+    request: Request,
     path: Annotated[str, Form()],
     user_context: Annotated[dict, Depends(nginx_proxied_auth)] = None,
 ):
@@ -3158,6 +3241,9 @@ async def remove_service_api(
     from ..core.nginx_service import nginx_service
     from ..services.scope_service import remove_server_scopes
 
+    # Set audit action for server removal
+    set_audit_action(request, "delete", "server", resource_id=path, description=f"Remove server at {path}")
+
     logger.info(
         f"API remove service request from user '{user_context.get('username')}' for path '{path}'"
     )
@@ -3178,6 +3264,40 @@ async def remove_service_api(
                 "suggestion": "Check the service path and ensure it is registered",
             },
         )
+
+    # Block deletion of federated (read-only) servers from peer registries
+    sync_metadata = server_info.get("sync_metadata", {})
+    if sync_metadata.get("is_federated") or sync_metadata.get("is_read_only"):
+        source_peer = sync_metadata.get("source_peer_id", "unknown peer registry")
+        logger.warning(
+            f"User {user_context.get('username')} attempted to delete federated server {path} "
+            f"from {source_peer}"
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": "Cannot delete federated server",
+                "reason": f"Server '{path}' is synced from {source_peer} and cannot be deleted locally",
+                "suggestion": "Delete this server from its source registry, or remove the peer federation",
+            },
+        )
+
+    # Fine-grained delete permission check (gateway already validated api.servers access)
+    if not user_context.get("is_admin", False):
+        ui_permissions = user_context.get("ui_permissions", {})
+        delete_service_perms = ui_permissions.get("delete_service", [])
+        server_name = path.strip("/")
+        if "all" not in delete_service_perms and server_name not in delete_service_perms:
+            logger.warning(
+                f"User {user_context.get('username')} denied delete for server {path}"
+            )
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error": "Permission denied",
+                    "reason": f"User does not have delete_service permission for '{path}'",
+                },
+            )
 
     # Remove the server
     success = await server_service.remove_server(path)
@@ -3863,11 +3983,15 @@ async def import_group_definition(
 
 @router.post("/servers/{path:path}/rate")
 async def rate_server(
+    request: Request,
     path: str,
-    request: RatingRequest,
+    rating_request: RatingRequest,
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
 ):
     """Save integer ratings to server."""
+    # Set audit action for server rating
+    set_audit_action(request, "rate", "server", resource_id=path, description=f"Rate server with {rating_request.rating}")
+    
     if not path.startswith("/"):
         path = "/" + path
 
@@ -3899,7 +4023,7 @@ async def rate_server(
             )
 
     try:
-        avg_rating = await server_service.update_rating(actual_path, user_context["username"], request.rating)
+        avg_rating = await server_service.update_rating(actual_path, user_context["username"], rating_request.rating)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

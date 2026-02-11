@@ -32,6 +32,7 @@ This document provides a comprehensive overview of the MCP Gateway & Registry so
 - **Self-Signed JWT Tokens**: Human users can generate tokens for CLI tools and AI coding assistants
 - **Secure Token Management**: OAuth token refresh and validation with centralized session management
 - **MCP Server Security Scanning**: Integrated vulnerability scanning with Cisco AI Defense MCP Scanner
+- **Compliance Audit Logging**: Comprehensive audit logs for all API and MCP access events with TTL-based retention, credential masking, and admin UI for compliance monitoring
 
 ## Intelligent Tool Discovery
 - **Hybrid Search**: Combined vector similarity with tokenized keyword matching for servers, tools, and agents
@@ -50,10 +51,12 @@ This document provides a comprehensive overview of the MCP Gateway & Registry so
 - **Development Tools**: Docker Compose for local development and testing
 
 ## Federation & External Registries
+- **Peer-to-Peer Registry Federation**: Connect MCP Gateway Registry instances for bidirectional server and agent sync with static token or OAuth2 authentication
+- **Federation UI**: VS Code-style Settings page for managing peer registries, sync modes (all, whitelist, tag filter), and monitoring sync status
 - **Federated Registry**: Import servers and agents from external registries
 - **Anthropic MCP Registry**: Import curated MCP servers with API compatibility
 - **Workday ASOR**: Import AI agents from Agent System of Record
-- **Automatic Sync**: Scheduled synchronization with external registries
+- **Automatic Sync**: Scheduled synchronization with external registries and peer registries
 - **Amazon Bedrock AgentCore**: Gateway support with dual authentication
 
 ## Enterprise Integration

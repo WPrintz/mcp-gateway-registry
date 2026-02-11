@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 
-type EntityType = 'mcp_server' | 'tool' | 'a2a_agent';
+type EntityType = 'mcp_server' | 'tool' | 'a2a_agent' | 'skill';
 
-const DEFAULT_ENTITY_TYPES: EntityType[] = ['mcp_server', 'tool', 'a2a_agent'];
+const DEFAULT_ENTITY_TYPES: EntityType[] = ['mcp_server', 'tool', 'a2a_agent', 'skill'];
 const DEFAULT_ENTITY_TYPES_KEY = DEFAULT_ENTITY_TYPES.join('|');
 
 export interface MatchingToolHit {
@@ -11,6 +11,16 @@ export interface MatchingToolHit {
   description?: string;
   relevance_score: number;
   match_context?: string;
+}
+
+export interface SyncMetadata {
+  is_federated?: boolean;
+  source_peer_id?: string;
+  upstream_path?: string;
+  last_synced_at?: string;
+  is_read_only?: boolean;
+  is_orphaned?: boolean;
+  orphaned_at?: string;
 }
 
 export interface SemanticServerHit {
@@ -23,6 +33,7 @@ export interface SemanticServerHit {
   relevance_score: number;
   match_context?: string;
   matching_tools: MatchingToolHit[];
+  sync_metadata?: SyncMetadata;
 }
 
 export interface SemanticToolHit {
@@ -44,8 +55,27 @@ export interface SemanticAgentHit {
   trust_level?: string;
   visibility?: string;
   is_enabled?: boolean;
-   url?: string;
-   agent_card?: Record<string, any>;
+  url?: string;
+  agent_card?: Record<string, any>;
+  relevance_score: number;
+  match_context?: string;
+  sync_metadata?: SyncMetadata;
+}
+
+export interface SemanticSkillHit {
+  path: string;
+  skill_name: string;
+  description?: string;
+  tags: string[];
+  skill_md_url?: string;
+  skill_md_raw_url?: string;
+  version?: string;
+  author?: string;
+  visibility?: string;
+  owner?: string;
+  is_enabled?: boolean;
+  health_status?: 'healthy' | 'unhealthy' | 'unknown';
+  last_checked_time?: string;
   relevance_score: number;
   match_context?: string;
 }
@@ -55,9 +85,11 @@ export interface SemanticSearchResponse {
   servers: SemanticServerHit[];
   tools: SemanticToolHit[];
   agents: SemanticAgentHit[];
+  skills: SemanticSkillHit[];
   total_servers: number;
   total_tools: number;
   total_agents: number;
+  total_skills: number;
 }
 
 interface UseSemanticSearchOptions {
