@@ -243,11 +243,16 @@ local function flush()
 end
 
 local function schedule()
-    ngx.timer.at(5, function(premature)
+    local ok, err = ngx.timer.every(5, function(premature)
         if premature then return end
-        pcall(flush)
-        schedule()
+        local pok, perr = pcall(flush)
+        if not pok then
+            ngx.log(ngx.ERR, "metrics flush error: ", perr)
+        end
     end)
+    if not ok then
+        ngx.log(ngx.ERR, "metrics flush: failed to create timer: ", err)
+    end
 end
 
 if ngx.worker.id() == 0 then
