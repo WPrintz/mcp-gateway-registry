@@ -249,6 +249,7 @@ local function schedule()
 end
 
 if ngx.worker.id() == 0 then
+    ngx.log(ngx.WARN, "metrics flush: starting on worker 0, host=", host, " port=", port, " api_key_len=", #api_key)
     schedule()
 end
 FLUSH_EOF
@@ -257,6 +258,12 @@ echo "Lua scripts created (capture_body, emit_metrics, flush_metrics)."
 
 # --- Nginx Configuration ---
 echo "Preparing Nginx configuration..."
+
+# Pass environment variables through to Lua workers (nginx strips them by default)
+for envvar in METRICS_API_KEY METRICS_API_KEY_NGINX METRICS_SERVICE_URL; do
+    grep -q "^env ${envvar};" /etc/nginx/nginx.conf 2>/dev/null || \
+        sed -i "1i env ${envvar};" /etc/nginx/nginx.conf
+done
 
 # Remove default nginx site to prevent conflicts with our config
 echo "Removing default nginx site configuration..."

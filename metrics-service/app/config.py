@@ -24,6 +24,12 @@ class Settings:
     METRICS_RATE_LIMIT: int = int(os.getenv("METRICS_RATE_LIMIT", "1000"))
     API_KEY_HASH_ALGORITHM: str = os.getenv("API_KEY_HASH_ALGORITHM", "sha256")
     
+    # Histogram bucket boundaries (seconds) — covers 5ms to 5min
+    HISTOGRAM_BUCKET_BOUNDARIES: str = os.getenv(
+        "HISTOGRAM_BUCKET_BOUNDARIES",
+        "0.005,0.01,0.025,0.05,0.1,0.25,0.5,1.0,2.5,5.0,10.0,30.0,60.0,120.0,300.0"
+    )
+
     # Performance
     BATCH_SIZE: int = int(os.getenv("BATCH_SIZE", "100"))
     FLUSH_INTERVAL_SECONDS: int = int(os.getenv("FLUSH_INTERVAL_SECONDS", "30"))

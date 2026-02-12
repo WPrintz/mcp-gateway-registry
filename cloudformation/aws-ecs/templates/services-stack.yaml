@@ -3214,6 +3214,8 @@ Resources:
               Value: '9465'
             - Name: METRICS_RATE_LIMIT
               Value: '5000'
+            - Name: HISTOGRAM_BUCKET_BOUNDARIES
+              Value: '0.005,0.01,0.025,0.05,0.1,0.25,0.5,1.0,2.5,5.0,10.0,30.0,60.0,120.0,300.0'
             - Name: SQLITE_DB_PATH
               Value: '/tmp/metrics.db'
             # API keys for authentication - must match METRICS_API_KEY_* pattern for auto-registration

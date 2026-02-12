@@ -1,6 +1,11 @@
 from opentelemetry import metrics
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.view import View
+try:
+    from opentelemetry.sdk.metrics.aggregation import ExplicitBucketHistogramAggregation
+except ImportError:
+    from opentelemetry.sdk.metrics._internal.aggregation import ExplicitBucketHistogramAggregation
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
@@ -69,9 +74,15 @@ def setup_otel():
         
         # Create MeterProvider with configured readers and resource
         if readers:
+            boundaries = [float(b) for b in settings.HISTOGRAM_BUCKET_BOUNDARIES.split(",")]
+            duration_view = View(
+                instrument_name="*_duration_seconds",
+                aggregation=ExplicitBucketHistogramAggregation(boundaries=boundaries),
+            )
             meter_provider = MeterProvider(
                 resource=resource,
-                metric_readers=readers
+                metric_readers=readers,
+                views=[duration_view],
             )
             metrics.set_meter_provider(meter_provider)
             logger.info("OpenTelemetry metrics configured successfully")
