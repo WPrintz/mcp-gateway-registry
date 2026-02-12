@@ -273,15 +273,17 @@ The following services emit custom metrics to the metrics-service:
 
 | Service | Metrics Emitted | Configuration |
 |---------|-----------------|---------------|
-| **Registry** | Tool discovery, tool execution, registry operations, health checks | Uses `METRICS_API_KEY` env var |
-| **Auth-server** | Authentication requests, session operations | Uses `METRICS_API_KEY` env var |
+| **Registry** | Tool discovery, registry operations, health checks | Uses `METRICS_API_KEY` env var |
+| **Auth-server** | Authentication requests (via `/validate` subrequest), session operations | Uses `METRICS_API_KEY` env var |
+| **Nginx (Lua)** | MCP tool execution counters and duration histograms | Uses `METRICS_API_KEY_NGINX` env var. See [GitHub issue #475](https://github.com/agentic-community/mcp-gateway-registry/issues/475). |
 
-**Note**: MCP servers (CurrentTime, MCPGW, RealServerFakeTools, etc.) do not emit custom metrics to metrics-service. They are monitored via ECS Container Insights and CloudWatch metrics only.
+**Note**: MCP servers (CurrentTime, MCPGW, RealServerFakeTools, etc.) do not emit custom metrics directly. However, nginx emits tool execution metrics on their behalf via `log_by_lua` — capturing method, tool name, duration, and success/failure for all MCP protocol traffic flowing through nginx location blocks.
+
+**Important — MCP data-plane metrics gap**: MCP protocol traffic (initialize, tools/list, tools/call) is handled by nginx location blocks and proxied directly to backend servers, bypassing FastAPI entirely. The middleware in `registry/metrics/middleware.py` never observes these requests. The auth-server sees every request via `auth_request /validate`, but the auth check fires *before* `proxy_pass` — so it captures auth latency but cannot observe tool execution duration, success/failure, or which tool was called. The nginx Lua metrics pipeline (`emit_metrics.lua` + `flush_metrics.lua`) fills this gap.
 
 The metrics emission flow:
-1. Registry/Auth-server instantiate `MetricsClient` from `registry/metrics/client.py`
-2. The client reads `METRICS_SERVICE_URL` and `METRICS_API_KEY` from environment variables
-3. Metrics are sent via HTTP POST to `{METRICS_SERVICE_URL}/metrics` with `X-API-Key` header
+1. **Registry/Auth-server** (control plane): Instantiate `MetricsClient` from `registry/metrics/client.py`. The client reads `METRICS_SERVICE_URL` and `METRICS_API_KEY` from environment variables. Metrics are sent via HTTP POST to `{METRICS_SERVICE_URL}/metrics` with `X-API-Key` header.
+2. **Nginx** (data plane, planned — [#475](https://github.com/agentic-community/mcp-gateway-registry/issues/475)): `emit_metrics.lua` runs in `log_by_lua` phase after each MCP request, writing metrics to `lua_shared_dict metrics_buffer 10m` (no network I/O). A background timer in `flush_metrics.lua` (`init_worker_by_lua`) batch-POSTs buffered metrics to metrics-service every 5-10 seconds, authenticating with `METRICS_API_KEY_NGINX`.
 
 ### API Key Authentication Configuration
 
@@ -323,6 +325,8 @@ Used in 3 task definitions:
 1. **Registry** (`RegistryTaskDefinition`) - as `METRICS_API_KEY`
 2. **Auth-server** (`AuthServerTaskDefinition`) - as `METRICS_API_KEY`
 3. **Metrics-service** (`MetricsServiceTaskDefinition`) - as `METRICS_API_KEY_REGISTRY`
+
+Additionally, `METRICS_API_KEY_NGINX` is configured in docker-compose files for the nginx Lua flush script to authenticate to metrics-service. In ECS, this is set in the Registry task definition (nginx runs inside the registry container).
 
 To rotate the API key, update the `MetricsApiKey` parameter and redeploy the services stack.
 
@@ -422,6 +426,10 @@ Dashboards (provisioned):
 - `mcp_tool_executions_total` - Counter by tool, server, success
 - `mcp_tool_execution_duration_seconds` - Histogram of execution time
 
+**Status**: These metrics are defined in the Grafana dashboard but currently show no data. MCP traffic bypasses FastAPI (see note above). The nginx Lua metrics pipeline ([#475](https://github.com/agentic-community/mcp-gateway-registry/issues/475)) will emit these from the `log_by_lua` phase.
+
+**Histogram bucket note**: The OTel SDK default bucket boundaries have a smallest non-zero boundary of 5 seconds. Since most MCP responses are sub-second, `histogram_quantile(0.95, ...)` interpolates within the 0–5s bucket and reports misleading values (e.g., ~4.75s P95 for a 50ms response). The fix is to configure `ExplicitBucketHistogramAggregation` with boundaries from 5ms–300s in `metrics-service/app/otel/exporters.py`, overridable via `HISTOGRAM_BUCKET_BOUNDARIES` env var.
+
 ### Discovery Metrics
 - `mcp_tool_discovery_total` - Counter of semantic search requests
 - `mcp_discovery_duration_seconds` - Histogram of search latency
@@ -517,6 +525,13 @@ Note: Amazon Managed Grafana (AMG) was considered but requires SAML/SSO configur
 - [x] Configure ADOT to scrape metrics-service
 - [x] Add METRICS_SERVICE_URL to registry/auth-server task definitions
 - [x] Configure API key authentication for metrics-service
+- [ ] Implement nginx Lua metrics pipeline ([#475](https://github.com/agentic-community/mcp-gateway-registry/issues/475))
+  - [ ] `emit_metrics.lua` — log_by_lua shared dict writer
+  - [ ] `flush_metrics.lua` — init_worker_by_lua background flush timer
+  - [ ] Add `log_by_lua_file` to location blocks in `nginx_service.py`
+  - [ ] Add `init_worker_by_lua_file` to nginx conf templates
+  - [ ] Add `lua-resty-http` to Dockerfile
+- [ ] Fix histogram bucket boundaries in metrics-service
 - [ ] Test end-to-end metrics flow
 - [ ] Validate dashboards show data from AMP
 
