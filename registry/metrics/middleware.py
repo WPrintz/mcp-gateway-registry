@@ -7,8 +7,7 @@ Tracks registry operations, request headers, and API usage patterns.
 import time
 import logging
 import asyncio
-import json
-from typing import Callable, Dict, Any, Optional
+from typing import Callable, Dict, Any
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -16,24 +15,6 @@ from .client import create_metrics_client
 from .utils import extract_headers_for_analysis, hash_user_id
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_mcp_body(body_str: str) -> Dict[str, Any]:
-    """Parse MCP JSON-RPC body to extract method and tool information."""
-    try:
-        if not body_str:
-            return {}
-        body = json.loads(body_str)
-        result = {
-            "method": body.get("method", "unknown"),
-        }
-        # Extract tool_name from tools/call params
-        params = body.get("params", {})
-        if result["method"] == "tools/call" and "name" in params:
-            result["tool_name"] = params["name"]
-        return result
-    except (json.JSONDecodeError, TypeError):
-        return {}
 
 
 class RegistryMetricsMiddleware(BaseHTTPMiddleware):
@@ -54,55 +35,36 @@ class RegistryMetricsMiddleware(BaseHTTPMiddleware):
         """Extract operation type and resource information from the request."""
         path = request.url.path
         method = request.method
-
-        # Skip non-API and non-MCP endpoints
-        if not (path.startswith('/api/') or path.startswith('/mcp/')):
+        
+        # Skip non-API endpoints
+        if not path.startswith('/api/'):
             return None
-
+        
         # Determine operation and resource type
         operation = "unknown"
         resource_type = "unknown"
         resource_id = ""
-
-        # Parse path to determine resource type and ID
-        path_parts = [p for p in path.split('/') if p]  # Remove empty parts
-
-        # Handle MCP protocol calls: /mcp/{server}/
-        if len(path_parts) >= 1 and path_parts[0] == 'mcp':
-            resource_type = "mcp_protocol"
-            operation = "mcp_call"
-            if len(path_parts) >= 2:
-                resource_id = path_parts[1]  # server name
-            return {
-                "operation": operation,
-                "resource_type": resource_type,
-                "resource_id": resource_id,
-                "path": path
-            }
-
-        # Map HTTP methods to operations for API calls
+        
+        # Map HTTP methods to operations
         method_mapping = {
             "GET": "read",
-            "POST": "create",
+            "POST": "create", 
             "PUT": "update",
             "PATCH": "update",
             "DELETE": "delete"
         }
-
+        
         operation = method_mapping.get(method, "unknown")
-
+        
+        # Parse path to determine resource type and ID
+        path_parts = [p for p in path.split('/') if p]  # Remove empty parts
+        
         if len(path_parts) >= 2 and path_parts[0] == 'api':
             if path_parts[1] == 'servers':
                 resource_type = "server"
                 if len(path_parts) >= 3:
                     resource_id = path_parts[2]
                 # Special case for GET /api/servers - this is a list operation
-                if method == "GET" and len(path_parts) == 2:
-                    operation = "list"
-            elif path_parts[1] == 'agents':
-                resource_type = "agent"
-                if len(path_parts) >= 3:
-                    resource_id = path_parts[2]
                 if method == "GET" and len(path_parts) == 2:
                     operation = "list"
             elif path_parts[1] == 'search':
@@ -120,7 +82,7 @@ class RegistryMetricsMiddleware(BaseHTTPMiddleware):
                         operation = "logout"
                     elif path_parts[2] == 'me':
                         operation = "profile"
-
+        
         return {
             "operation": operation,
             "resource_type": resource_type,
@@ -194,32 +156,19 @@ class RegistryMetricsMiddleware(BaseHTTPMiddleware):
         finally:
             # Calculate duration
             duration_ms = (time.perf_counter() - start_time) * 1000
-
-            # For MCP protocol calls, emit tool_execution metric
-            # For other operations, emit registry_operation metric
-            if operation_info["resource_type"] == "mcp_protocol":
-                asyncio.create_task(
-                    self._emit_mcp_tool_execution_metric(
-                        request=request,
-                        server_name=operation_info["resource_id"],
-                        success=success,
-                        duration_ms=duration_ms,
-                        error_code=error_code
-                    )
+            
+            # Emit registry operation metric asynchronously
+            asyncio.create_task(
+                self._emit_registry_metric(
+                    operation=operation_info["operation"],
+                    resource_type=operation_info["resource_type"],
+                    success=success,
+                    duration_ms=duration_ms,
+                    resource_id=operation_info["resource_id"],
+                    user_id=user_hash,
+                    error_code=error_code
                 )
-            else:
-                # Emit registry operation metric asynchronously
-                asyncio.create_task(
-                    self._emit_registry_metric(
-                        operation=operation_info["operation"],
-                        resource_type=operation_info["resource_type"],
-                        success=success,
-                        duration_ms=duration_ms,
-                        resource_id=operation_info["resource_id"],
-                        user_id=user_hash,
-                        error_code=error_code
-                    )
-                )
+            )
             
             # Emit headers analysis metric for nginx config insights
             if success and operation_info["resource_type"] != "health":
@@ -243,43 +192,6 @@ class RegistryMetricsMiddleware(BaseHTTPMiddleware):
         
         return response
     
-    async def _emit_mcp_tool_execution_metric(
-        self,
-        request: Request,
-        server_name: str,
-        success: bool,
-        duration_ms: float,
-        error_code: Optional[str] = None
-    ):
-        """Emit MCP tool execution metric for protocol calls."""
-        try:
-            # Extract MCP method and tool_name from X-Body header
-            # The load generator and MCP clients send this header
-            body_str = request.headers.get("X-Body", "")
-            mcp_info = _parse_mcp_body(body_str)
-
-            mcp_method = mcp_info.get("method", "unknown")
-            tool_name = mcp_info.get("tool_name", "")
-
-            # Extract client name from header
-            client_name = request.headers.get("X-Client-Name", "unknown")
-
-            # Build server path from URL
-            server_path = f"/mcp/{server_name}/"
-
-            await self.metrics_client.emit_tool_execution_metric(
-                tool_name=tool_name if tool_name else mcp_method,
-                server_path=server_path,
-                server_name=server_name,
-                success=success,
-                duration_ms=duration_ms,
-                method=mcp_method,
-                client_name=client_name,
-                error_code=error_code
-            )
-        except Exception as e:
-            logger.debug(f"Failed to emit MCP tool execution metric: {e}")
-
     async def _emit_registry_metric(
         self,
         operation: str,
