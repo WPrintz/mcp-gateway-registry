@@ -249,7 +249,7 @@ mcp_initialize() {
         "id": 1
     }'
 
-    curl -s -X POST "${REGISTRY_URL}/${server}/mcp" \
+    curl -s -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "X-Client-Name: $client_name" \
@@ -271,7 +271,7 @@ mcp_list_tools() {
         "id": 2
     }'
 
-    curl -s -X POST "${REGISTRY_URL}/${server}/mcp" \
+    curl -s -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "X-Client-Name: $client_name" \
@@ -334,7 +334,7 @@ mcp_call_tool() {
         "id": 3
     }'
 
-    curl -s -X POST "${REGISTRY_URL}/${server}/mcp" \
+    curl -s -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "X-Client-Name: $client_name" \
