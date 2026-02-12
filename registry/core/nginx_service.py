@@ -480,6 +480,7 @@ class NginxConfigService:
             transport_settings = """
         # Capture request body for auth validation using Lua
         rewrite_by_lua_file /etc/nginx/lua/capture_body.lua;
+        log_by_lua_file /etc/nginx/lua/emit_metrics.lua;
 
         # For SSE connections and WebSocket upgrades
         proxy_buffering off;
@@ -494,6 +495,7 @@ class NginxConfigService:
             transport_settings = """
         # Capture request body for auth validation using Lua
         rewrite_by_lua_file /etc/nginx/lua/capture_body.lua;
+        log_by_lua_file /etc/nginx/lua/emit_metrics.lua;
 
         # HTTP transport configuration
         proxy_buffering off;
@@ -505,6 +507,7 @@ class NginxConfigService:
             transport_settings = """
         # Capture request body for auth validation using Lua
         rewrite_by_lua_file /etc/nginx/lua/capture_body.lua;
+        log_by_lua_file /etc/nginx/lua/emit_metrics.lua;
         
         # Generic transport configuration
         proxy_buffering off;

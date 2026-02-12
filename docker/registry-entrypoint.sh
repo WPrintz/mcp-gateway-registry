@@ -111,7 +111,149 @@ else
 end
 EOF
 
-echo "Lua script created."
+cat > "$LUA_SCRIPTS_DIR/emit_metrics.lua" << 'EMIT_EOF'
+-- emit_metrics.lua: Capture MCP request metrics in log_by_lua phase (no network I/O)
+local ok, cjson = pcall(require, "cjson")
+if not ok then return end
+
+local metrics = ngx.shared.metrics_buffer
+if not metrics then return end
+
+-- Extract server name from first URI path segment: /<server>/...
+local server_name = ngx.var.uri:match("^/([^/]+)/")
+if not server_name then return end
+
+-- Parse JSON-RPC body from X-Body header (set by capture_body.lua)
+local method = "unknown"
+local tool_name = ""
+local body = ngx.req.get_headers()["X-Body"]
+if body then
+    local dok, parsed = pcall(cjson.decode, body)
+    if dok and parsed.method then
+        method = parsed.method
+        if method == "tools/call" and parsed.params and parsed.params.name then
+            tool_name = parsed.params.name
+        end
+    end
+end
+
+local entry = cjson.encode({
+    m = method,
+    s = server_name,
+    t = tool_name,
+    c = ngx.req.get_headers()["X-Client-Name"] or "unknown",
+    ok = ngx.status < 400,
+    d = (tonumber(ngx.var.request_time) or 0) * 1000,
+})
+
+local key = "m:" .. ngx.now() .. ":" .. ngx.worker.pid() .. ":" .. math.random(1, 999999)
+metrics:set(key, entry, 300)
+EMIT_EOF
+
+cat > "$LUA_SCRIPTS_DIR/flush_metrics.lua" << 'FLUSH_EOF'
+-- flush_metrics.lua: Background timer flushes shared dict buffer to metrics-service
+local ok, cjson = pcall(require, "cjson")
+if not ok then return end
+
+local api_key = os.getenv("METRICS_API_KEY_NGINX") or os.getenv("METRICS_API_KEY") or ""
+local metrics_url = os.getenv("METRICS_SERVICE_URL") or "http://metrics-service.mcp-gateway.local:8890"
+local host, port = metrics_url:match("http://([^:/]+):?(%d*)")
+port = tonumber(port) or 80
+
+local function flush()
+    local buf = ngx.shared.metrics_buffer
+    if not buf then return end
+
+    local keys = buf:get_keys(1024)
+    if #keys == 0 then return end
+
+    local batch = {}
+    local to_delete = {}
+    for _, key in ipairs(keys) do
+        if key:sub(1, 2) == "m:" then
+            local val = buf:get(key)
+            if val then
+                local dok, e = pcall(cjson.decode, val)
+                if dok then
+                    batch[#batch + 1] = {
+                        type = "tool_execution",
+                        value = 1.0,
+                        duration_ms = e.d,
+                        dimensions = {
+                            method = e.m,
+                            server_name = e.s,
+                            tool_name = e.t,
+                            client_name = e.c,
+                            success = tostring(e.ok),
+                        },
+                        metadata = {},
+                    }
+                    to_delete[#to_delete + 1] = key
+                end
+            end
+        end
+    end
+
+    if #batch == 0 then return end
+
+    local payload = cjson.encode({
+        service = "nginx",
+        version = "1.0.0",
+        metrics = batch,
+    })
+
+    local sock = ngx.socket.tcp()
+    sock:settimeout(5000)
+    local conn_ok, err = sock:connect(host, port)
+    if not conn_ok then
+        ngx.log(ngx.ERR, "metrics flush: connect failed: ", err)
+        return
+    end
+
+    local req = "POST /metrics HTTP/1.1\r\n"
+        .. "Host: " .. host .. "\r\n"
+        .. "Content-Type: application/json\r\n"
+        .. "X-API-Key: " .. api_key .. "\r\n"
+        .. "Content-Length: " .. #payload .. "\r\n"
+        .. "Connection: close\r\n\r\n"
+        .. payload
+
+    local send_ok, err = sock:send(req)
+    if not send_ok then
+        ngx.log(ngx.ERR, "metrics flush: send failed: ", err)
+        sock:close()
+        return
+    end
+
+    local line = sock:receive("*l")
+    sock:close()
+
+    if line and line:match("200") then
+        for _, key in ipairs(to_delete) do
+            buf:delete(key)
+        end
+        if #batch > 1 then
+            ngx.log(ngx.INFO, "metrics flush: sent ", #batch, " metrics")
+        end
+    else
+        ngx.log(ngx.ERR, "metrics flush: bad response: ", line or "nil")
+    end
+end
+
+local function schedule()
+    ngx.timer.at(5, function(premature)
+        if premature then return end
+        pcall(flush)
+        schedule()
+    end)
+end
+
+if ngx.worker.id() == 0 then
+    schedule()
+end
+FLUSH_EOF
+
+echo "Lua scripts created (capture_body, emit_metrics, flush_metrics)."
 
 # --- Nginx Configuration ---
 echo "Preparing Nginx configuration..."
