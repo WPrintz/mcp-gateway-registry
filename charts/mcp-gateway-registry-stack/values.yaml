@@ -11,8 +11,15 @@ global:
   # secretKey: "your-secure-key-here"
 
   # Shared secret name - automatically set for stack deployment
-  # Both auth-server and registry will use this secret for SECRET_KEY
+  # Both auth-server and registry will use this secret for SECRET_KEY and federation (if enabled)
   sharedSecretName: "shared-secret"
+
+  # Federation configuration - shared between registry and auth-server
+  federation:
+    staticTokenAuthEnabled: false # If not provided, defaults to false
+    staticToken: # If not provided, a random token is auto-generated
+    encryptionKey: # If not provided, a Fernet key is auto-generated
+    registryId: # Unique identifier for this registry instance (optional)
 
   # Authentication Provider Configuration
   # Choose ONE provider: keycloak or entra
