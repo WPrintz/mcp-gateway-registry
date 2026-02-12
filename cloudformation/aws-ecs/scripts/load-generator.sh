@@ -252,8 +252,9 @@ mcp_initialize() {
     curl -s -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
         -H "X-Client-Name: $client_name" \
-        -H "X-Body: $(echo "$body" | tr -d '\n' | tr -s ' ')" \
+        -H "X-Body: $(echo "$body" | tr -d $'\n' | tr -s ' ')" \
         -d "$body" > /dev/null 2>&1 || true
 }
 
@@ -274,8 +275,9 @@ mcp_list_tools() {
     curl -s -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
         -H "X-Client-Name: $client_name" \
-        -H "X-Body: $(echo "$body" | tr -d '\n' | tr -s ' ')" \
+        -H "X-Body: $(echo "$body" | tr -d $'\n' | tr -s ' ')" \
         -d "$body" > /dev/null 2>&1 || true
 }
 
@@ -337,8 +339,9 @@ mcp_call_tool() {
     curl -s -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
         -H "X-Client-Name: $client_name" \
-        -H "X-Body: $(echo "$body" | tr -d '\n' | tr -s ' ')" \
+        -H "X-Body: $(echo "$body" | tr -d $'\n' | tr -s ' ')" \
         -d "$body" > /dev/null 2>&1 || true
 }
 

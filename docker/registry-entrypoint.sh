@@ -105,6 +105,8 @@ local body_data = ngx.req.get_body_data()
 if body_data then
     -- Set the X-Body header with the raw body data
     ngx.req.set_header("X-Body", body_data)
+    -- Store in ngx.ctx for log_by_lua phase (survives auth_request subrequest)
+    ngx.ctx.request_body = body_data
     ngx.log(ngx.INFO, "Captured request body (" .. string.len(body_data) .. " bytes) for auth validation")
 else
     ngx.log(ngx.INFO, "No request body found")
@@ -123,10 +125,10 @@ if not metrics then return end
 local server_name = ngx.var.uri:match("^/([^/]+)/")
 if not server_name then return end
 
--- Parse JSON-RPC body from X-Body header (set by capture_body.lua)
+-- Parse JSON-RPC body from ngx.ctx (set by capture_body.lua) or X-Body header
 local method = "unknown"
 local tool_name = ""
-local body = ngx.req.get_headers()["X-Body"]
+local body = ngx.ctx.request_body or ngx.req.get_headers()["X-Body"]
 if body then
     local dok, parsed = pcall(cjson.decode, body)
     if dok and parsed.method then
