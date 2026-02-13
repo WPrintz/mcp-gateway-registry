@@ -55,7 +55,7 @@ mongodb:
 keycloak:
   create: true  # Deploy Keycloak in this stack (set to false to use external Keycloak)
   image:
-    repository: bitnamilegacy/keycloak
+    registry: public.ecr.aws
 
   global:
     security:
@@ -63,7 +63,7 @@ keycloak:
 
   postgresql:
     image:
-      repository: bitnamilegacy/postgresql
+      registry: public.ecr.aws
 
   # HTTP relative path for path-based routing
   # IMPORTANT: This must match global.ingress.paths.keycloak when routingMode is "path"
