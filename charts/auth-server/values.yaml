@@ -22,6 +22,12 @@ app:
   sessionCookieDomain: ""  # Auto-inferred from Host header if empty
   sessionCookieSecure: true
 
+  # Federation configuration
+  federationStaticTokenAuthEnabled: false #If not provided, defaults to false
+  federationStaticToken: # If not provided, a random token is auto-generated
+  federationEncryptionKey: # If not provided, a Fernet key is auto-generated
+  registryId: # Unique identifier for this registry instance (optional)
+
 # Authentication Provider Configuration
 # Choose ONE provider: keycloak or entra
 authProvider:

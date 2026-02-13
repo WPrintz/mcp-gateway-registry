@@ -20,6 +20,12 @@ app:
   # Uncomment to use a specific key:
   # secretKey: "your-secure-key-here"
 
+  # Federation configuration
+  federationStaticTokenAuthEnabled: false #If not provided, defaults to false
+  federationStaticToken: # If not provided, a random token is auto-generated
+  federationEncryptionKey: # If not provided, a Fernet key is auto-generated
+  registryId: # Unique identifier for this registry instance (optional)
+
 # Service configuration
 service:
   type: ClusterIP
