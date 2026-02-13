@@ -300,7 +300,7 @@ class NginxConfigService:
                 )
                 logger.info(f"AUTH_PROVIDER is '{auth_provider}', removed Keycloak location blocks from nginx config")
                 keycloak_scheme = 'http'
-                keycloak_host = '127.0.0.1'
+                keycloak_host = 'keycloak'
                 keycloak_port = '8080'
             else:
                 keycloak_url = os.environ.get('KEYCLOAK_URL', 'http://keycloak:8080')
