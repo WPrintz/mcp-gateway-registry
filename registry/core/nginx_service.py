@@ -287,29 +287,45 @@ class NginxConfigService:
 
             # Parse Keycloak configuration from KEYCLOAK_URL environment variable
             import os
-            keycloak_url = os.environ.get('KEYCLOAK_URL', 'http://keycloak:8080')
-            try:
-                parsed_keycloak = urlparse(keycloak_url)
-                keycloak_scheme = parsed_keycloak.scheme or 'http'
-                keycloak_host = parsed_keycloak.hostname or 'keycloak'
-                # Use default port based on scheme if not specified
-                if parsed_keycloak.port:
-                    keycloak_port = str(parsed_keycloak.port)
-                else:
-                    keycloak_port = '443' if keycloak_scheme == 'https' else '8080'
+            auth_provider = os.environ.get('AUTH_PROVIDER', 'keycloak').lower()
 
-                # Validate that we can actually resolve the hostname
-                if not keycloak_host or keycloak_host == 'keycloak':
-                    # If we end up with just 'keycloak', use the full URL's netloc instead
-                    keycloak_host = parsed_keycloak.netloc.split(':')[0] if parsed_keycloak.netloc else 'keycloak'
-                    logger.warning(f"Keycloak hostname is 'keycloak', using netloc instead: {keycloak_host}")
-
-                logger.info(f"Using Keycloak configuration from KEYCLOAK_URL '{keycloak_url}': {keycloak_scheme}://{keycloak_host}:{keycloak_port}")
-            except Exception as e:
-                logger.warning(f"Failed to parse KEYCLOAK_URL '{keycloak_url}': {e}. Using defaults.")
+            # Strip Keycloak location blocks from nginx config when not using Keycloak
+            import re
+            if auth_provider != 'keycloak':
+                template_content = re.sub(
+                    r'    # \{\{KEYCLOAK_LOCATIONS_START\}\}.*?# \{\{KEYCLOAK_LOCATIONS_END\}\}\n?',
+                    '',
+                    template_content,
+                    flags=re.DOTALL
+                )
+                logger.info(f"AUTH_PROVIDER is '{auth_provider}', removed Keycloak location blocks from nginx config")
                 keycloak_scheme = 'http'
-                keycloak_host = 'keycloak'
+                keycloak_host = '127.0.0.1'
                 keycloak_port = '8080'
+            else:
+                keycloak_url = os.environ.get('KEYCLOAK_URL', 'http://keycloak:8080')
+                try:
+                    parsed_keycloak = urlparse(keycloak_url)
+                    keycloak_scheme = parsed_keycloak.scheme or 'http'
+                    keycloak_host = parsed_keycloak.hostname or 'keycloak'
+                    # Use default port based on scheme if not specified
+                    if parsed_keycloak.port:
+                        keycloak_port = str(parsed_keycloak.port)
+                    else:
+                        keycloak_port = '443' if keycloak_scheme == 'https' else '8080'
+
+                    # Validate that we can actually resolve the hostname
+                    if not keycloak_host or keycloak_host == 'keycloak':
+                        # If we end up with just 'keycloak', use the full URL's netloc instead
+                        keycloak_host = parsed_keycloak.netloc.split(':')[0] if parsed_keycloak.netloc else 'keycloak'
+                        logger.warning(f"Keycloak hostname is 'keycloak', using netloc instead: {keycloak_host}")
+
+                    logger.info(f"Using Keycloak configuration from KEYCLOAK_URL '{keycloak_url}': {keycloak_scheme}://{keycloak_host}:{keycloak_port}")
+                except Exception as e:
+                    logger.warning(f"Failed to parse KEYCLOAK_URL '{keycloak_url}': {e}. Using defaults.")
+                    keycloak_scheme = 'http'
+                    keycloak_host = 'keycloak'
+                    keycloak_port = '8080'
 
             # Generate version map for multi-version servers
             version_map = await self._generate_version_map(servers)
