@@ -301,7 +301,12 @@ server {
 
                 with patch.object(nginx_service, "get_additional_server_names", return_value="10.0.0.1"):
                     with patch.object(nginx_service, "reload_nginx", return_value=True):
-                        with patch("os.environ.get", return_value="http://keycloak:8080"):
+                        env_values = {
+                            "AUTH_PROVIDER": "keycloak",
+                            "KEYCLOAK_URL": "http://keycloak:8080",
+                            "NGINX_DISABLE_API_AUTH_REQUEST": "false",
+                        }
+                        with patch("os.environ.get", side_effect=lambda key, default=None: env_values.get(key, default)):
                             result = await nginx_service.generate_config_async(sample_servers)
 
                             assert result is True
@@ -590,7 +595,12 @@ server {
 
                 with patch.object(nginx_service, "get_additional_server_names", return_value=""):
                     with patch.object(nginx_service, "reload_nginx", return_value=True):
-                        with patch("os.environ.get", return_value="https://keycloak.example.com:8443"):
+                        env_values = {
+                            "AUTH_PROVIDER": "keycloak",
+                            "KEYCLOAK_URL": "https://keycloak.example.com:8443",
+                            "NGINX_DISABLE_API_AUTH_REQUEST": "false",
+                        }
+                        with patch("os.environ.get", side_effect=lambda key, default=None: env_values.get(key, default)):
                             result = await nginx_service.generate_config_async(sample_servers)
 
                             assert result is True
@@ -598,6 +608,9 @@ server {
                             # Verify file was written with parsed Keycloak values
                             write_calls = list(mock_file().write.call_args_list)
                             assert len(write_calls) > 0
+                            written_content = write_calls[0][0][0]
+                            assert "keycloak.example.com" in written_content
+                            assert "8443" in written_content
 
 
 @pytest.mark.unit
@@ -618,7 +631,12 @@ server {
 
                 with patch.object(nginx_service, "get_additional_server_names", return_value=""):
                     with patch.object(nginx_service, "reload_nginx", return_value=True):
-                        with patch("os.environ.get", return_value="http://keycloak"):
+                        env_values = {
+                            "AUTH_PROVIDER": "keycloak",
+                            "KEYCLOAK_URL": "http://keycloak",
+                            "NGINX_DISABLE_API_AUTH_REQUEST": "false",
+                        }
+                        with patch("os.environ.get", side_effect=lambda key, default=None: env_values.get(key, default)):
                             result = await nginx_service.generate_config_async(sample_servers)
 
                             assert result is True
@@ -774,3 +792,106 @@ server {
                             assert len(write_calls) > 0
                             written_content = write_calls[0][0][0]
                             assert "/keycloak/" not in written_content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_config_async_keycloak_https_default_port(nginx_service, sample_servers, mock_health_service):
+    """Test Keycloak URL parsing defaults to port 443 for HTTPS without explicit port."""
+    template_content = """
+server {
+    {{KEYCLOAK_SCHEME}}://{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}
+    {{LOCATION_BLOCKS}}
+}
+"""
+
+    env_values = {
+        "AUTH_PROVIDER": "keycloak",
+        "KEYCLOAK_URL": "https://keycloak.example.com",
+        "NGINX_DISABLE_API_AUTH_REQUEST": "false",
+    }
+
+    with patch.object(nginx_service.nginx_template_path, "exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=template_content)) as mock_file:
+            with patch("registry.health.service.health_service", mock_health_service):
+                mock_health_service.server_health_status = {}
+
+                with patch.object(nginx_service, "get_additional_server_names", return_value=""):
+                    with patch.object(nginx_service, "reload_nginx", return_value=True):
+                        with patch("os.environ.get", side_effect=lambda key, default=None: env_values.get(key, default)):
+                            result = await nginx_service.generate_config_async(sample_servers)
+
+                            assert result is True
+                            written_content = mock_file().write.call_args_list[0][0][0]
+                            assert "https" in written_content
+                            assert "443" in written_content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_config_async_keycloak_hostname_fallback(nginx_service, sample_servers, mock_health_service):
+    """Test Keycloak hostname fallback when hostname resolves to bare 'keycloak'."""
+    template_content = """
+server {
+    {{KEYCLOAK_SCHEME}}://{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}
+    {{LOCATION_BLOCKS}}
+}
+"""
+
+    env_values = {
+        "AUTH_PROVIDER": "keycloak",
+        "KEYCLOAK_URL": "http://keycloak:8080",
+        "NGINX_DISABLE_API_AUTH_REQUEST": "false",
+    }
+
+    with patch.object(nginx_service.nginx_template_path, "exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=template_content)) as mock_file:
+            with patch("registry.health.service.health_service", mock_health_service):
+                mock_health_service.server_health_status = {}
+
+                with patch.object(nginx_service, "get_additional_server_names", return_value=""):
+                    with patch.object(nginx_service, "reload_nginx", return_value=True):
+                        with patch("os.environ.get", side_effect=lambda key, default=None: env_values.get(key, default)):
+                            result = await nginx_service.generate_config_async(sample_servers)
+
+                            assert result is True
+                            written_content = mock_file().write.call_args_list[0][0][0]
+                            # Should still contain keycloak as the host (netloc fallback)
+                            assert "keycloak" in written_content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_generate_config_async_keycloak_url_parse_exception(nginx_service, sample_servers, mock_health_service):
+    """Test Keycloak URL parsing falls back to defaults on exception."""
+    template_content = """
+server {
+    {{KEYCLOAK_SCHEME}}://{{KEYCLOAK_HOST}}:{{KEYCLOAK_PORT}}
+    {{LOCATION_BLOCKS}}
+}
+"""
+
+    env_values = {
+        "AUTH_PROVIDER": "keycloak",
+        "KEYCLOAK_URL": "http://keycloak:8080",
+        "NGINX_DISABLE_API_AUTH_REQUEST": "false",
+    }
+
+    with patch.object(nginx_service.nginx_template_path, "exists", return_value=True):
+        with patch("builtins.open", mock_open(read_data=template_content)) as mock_file:
+            with patch("registry.health.service.health_service", mock_health_service):
+                mock_health_service.server_health_status = {}
+
+                with patch.object(nginx_service, "get_additional_server_names", return_value=""):
+                    with patch.object(nginx_service, "reload_nginx", return_value=True):
+                        with patch("os.environ.get", side_effect=lambda key, default=None: env_values.get(key, default)):
+                            # Force urlparse to raise an exception
+                            with patch("registry.core.nginx_service.urlparse", side_effect=Exception("parse error")):
+                                result = await nginx_service.generate_config_async(sample_servers)
+
+                                assert result is True
+                                written_content = mock_file().write.call_args_list[0][0][0]
+                                # Should fall back to defaults
+                                assert "http" in written_content
+                                assert "keycloak" in written_content
+                                assert "8080" in written_content
