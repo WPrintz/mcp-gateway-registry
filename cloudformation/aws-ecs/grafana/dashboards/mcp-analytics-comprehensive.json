@@ -20,20 +20,20 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_tool_executions_total{method=\"initialize\", success=\"true\"}[1m]))",
-          "legendFormat": "Initialize Rate"
+          "legendFormat": "Initialize Rate",
+          "expr": "sum(increase(mcp_tool_executions_total{method=\"initialize\", success=\"true\"}[1m]))"
         },
         {
-          "expr": "sum(rate(mcp_tool_executions_total{method=\"tools/list\", success=\"true\"}[1m]))",
-          "legendFormat": "Tools List Rate"
+          "legendFormat": "Tools List Rate",
+          "expr": "sum(increase(mcp_tool_executions_total{method=\"tools/list\", success=\"true\"}[1m]))"
         },
         {
-          "expr": "sum(rate(mcp_tool_executions_total{method=\"tools/call\", success=\"true\"}[1m]))",
-          "legendFormat": "Tool Call Rate"
+          "legendFormat": "Tool Call Rate",
+          "expr": "sum(increase(mcp_tool_executions_total{method=\"tools/call\", success=\"true\"}[1m]))"
         },
         {
-          "expr": "sum(rate(mcp_auth_requests_total{success=\"true\"}[1m]))",
-          "legendFormat": "Auth Success Rate"
+          "legendFormat": "Auth Success Rate",
+          "expr": "sum(increase(mcp_auth_requests_total{success=\"true\"}[1m]))"
         }
       ],
       "gridPos": {
@@ -336,12 +336,12 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_auth_requests_total{success=\"false\"}[5m])) / sum(rate(mcp_auth_requests_total[5m])) * 100",
-          "legendFormat": "Auth Error Rate"
+          "legendFormat": "Auth Error Rate",
+          "expr": "sum(increase(mcp_auth_requests_total{success=\"false\"}[5m])) / sum(increase(mcp_auth_requests_total[5m])) * 100"
         },
         {
-          "expr": "sum(rate(mcp_tool_executions_total{success=\"false\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
-          "legendFormat": "Tool Execution Error Rate"
+          "legendFormat": "Tool Execution Error Rate",
+          "expr": "sum(increase(mcp_tool_executions_total{success=\"false\"}[5m])) / sum(increase(mcp_tool_executions_total[5m])) * 100"
         }
       ],
       "gridPos": {
@@ -712,8 +712,8 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum(rate(mcp_tool_executions_total{success=\"true\"}[5m])) / sum(rate(mcp_tool_executions_total[5m])) * 100",
-          "legendFormat": "Success Rate"
+          "legendFormat": "Success Rate",
+          "expr": "sum(increase(mcp_tool_executions_total{success=\"true\"}[5m])) / sum(increase(mcp_tool_executions_total[5m])) * 100"
         }
       ],
       "gridPos": {
