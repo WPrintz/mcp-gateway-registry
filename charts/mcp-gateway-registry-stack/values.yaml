@@ -59,8 +59,9 @@ mongodb:
 # Keycloak configuration
 # Set create: true to deploy Keycloak as part of this stack
 # Set create: false to use an external Keycloak instance
+# NOTE: When using Entra (global.authProvider.type: entra), set create: false
 keycloak:
-  create: true  # Deploy Keycloak in this stack (set to false to use external Keycloak)
+  create: true  # Deploy Keycloak in this stack (set to false for external Keycloak or Entra)
   image:
     repository: bitnamilegacy/keycloak
 
@@ -126,8 +127,9 @@ keycloak:
 # Keycloak configuration job
 # Automatically enabled when global.authProvider.type = "keycloak"
 # Set to false to skip configuration (e.g., when using pre-configured Keycloak)
+# NOTE: When using Entra (global.authProvider.type: entra), set enabled: false
 keycloak-configure:
-  enabled: true  # Set to false to skip Keycloak configuration
+  enabled: true  # Set to false to skip Keycloak configuration or when using Entra
   keycloak:
     realm: mcp-gateway
     adminUser: user

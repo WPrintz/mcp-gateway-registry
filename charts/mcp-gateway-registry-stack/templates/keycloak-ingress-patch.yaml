@@ -5,7 +5,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ .Release.Name }}-keycloak
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace | quote }}
   annotations:
     {{- if eq $routingMode "path" }}
     alb.ingress.kubernetes.io/group.name: mcp-gateway-stack
