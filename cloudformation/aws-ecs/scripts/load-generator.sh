@@ -249,22 +249,31 @@ mcp_initialize() {
         "id": 1
     }'
 
-    curl -s -X POST "${REGISTRY_URL}/${server}/" \
+    local header_file
+    header_file=$(mktemp)
+    curl -s --max-time 10 -D "$header_file" -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
         -H "X-Client-Name: $client_name" \
         -H "X-Body: $(echo "$body" | tr -d $'\n' | tr -s ' ')" \
         -d "$body" > /dev/null 2>&1 || true
+
+    # Extract session ID for subsequent calls
+    local session_id=""
+    session_id=$(grep -i 'mcp-session-id' "$header_file" 2>/dev/null | tr -d '\r' | awk '{print $2}')
+    rm -f "$header_file"
+    echo "$session_id"
 }
 
 mcp_list_tools() {
     local server="$1"
     local client_name="$2"
+    local session_id="${3:-}"
     local token
     token=$(get_token)
 
-    debug "MCP tools/list: $server (client: $client_name)"
+    debug "MCP tools/list: $server (client: $client_name, session: ${session_id:0:8}...)"
 
     local body='{
         "jsonrpc": "2.0",
@@ -272,11 +281,15 @@ mcp_list_tools() {
         "id": 2
     }'
 
-    curl -s -X POST "${REGISTRY_URL}/${server}/" \
+    local session_args=()
+    [[ -n "$session_id" ]] && session_args=(-H "Mcp-Session-Id: $session_id")
+
+    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
         -H "X-Client-Name: $client_name" \
+        "${session_args[@]}" \
         -H "X-Body: $(echo "$body" | tr -d $'\n' | tr -s ' ')" \
         -d "$body" > /dev/null 2>&1 || true
 }
@@ -285,10 +298,11 @@ mcp_call_tool() {
     local server="$1"
     local tool_name="$2"
     local client_name="$3"
+    local session_id="${4:-}"
     local token
     token=$(get_token)
 
-    debug "MCP tools/call: $server/$tool_name (client: $client_name)"
+    debug "MCP tools/call: $server/$tool_name (client: $client_name, session: ${session_id:0:8}...)"
 
     # Tool-specific arguments
     local args='{}'
@@ -336,11 +350,15 @@ mcp_call_tool() {
         "id": 3
     }'
 
-    curl -s -X POST "${REGISTRY_URL}/${server}/" \
+    local session_args=()
+    [[ -n "$session_id" ]] && session_args=(-H "Mcp-Session-Id: $session_id")
+
+    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
         -H "X-Client-Name: $client_name" \
+        "${session_args[@]}" \
         -H "X-Body: $(echo "$body" | tr -d $'\n' | tr -s ' ')" \
         -d "$body" > /dev/null 2>&1 || true
 }
@@ -434,43 +452,104 @@ server_search_semantic() {
 }
 
 # =============================================================================
+# Time-Varying Traffic Patterns
+# =============================================================================
+
+# Pick server weighted by current 10-minute phase
+# Creates visible waves: each server gets a "hot" period
+pick_weighted_server() {
+    local now
+    now=$(date +%s)
+    local phase=$(( (now / 600) % 3 ))  # 10-min rotation
+    local roll=$((RANDOM % 100))
+
+    case $phase in
+        0)  # currenttime heavy
+            if [[ $roll -lt 60 ]]; then echo "currenttime"
+            elif [[ $roll -lt 80 ]]; then echo "mcpgw"
+            else echo "realserverfaketools"; fi ;;
+        1)  # mcpgw heavy
+            if [[ $roll -lt 60 ]]; then echo "mcpgw"
+            elif [[ $roll -lt 80 ]]; then echo "realserverfaketools"
+            else echo "currenttime"; fi ;;
+        2)  # realserverfaketools heavy
+            if [[ $roll -lt 60 ]]; then echo "realserverfaketools"
+            elif [[ $roll -lt 80 ]]; then echo "currenttime"
+            else echo "mcpgw"; fi ;;
+    esac
+}
+
+# Pick tool with time-varying popularity within a server
+# Rotates "hot" tool every 2 minutes
+pick_weighted_tool() {
+    local server="$1"
+    local tools_str
+    tools_str=$(get_server_tools "$server")
+    local tools_array=($tools_str)
+    local count=${#tools_array[@]}
+    [[ $count -eq 0 ]] && return
+
+    local now
+    now=$(date +%s)
+    local hot_idx=$(( (now / 120) % count ))  # 2-min rotation
+    local roll=$((RANDOM % 100))
+
+    if [[ $roll -lt 50 ]]; then
+        # 50% chance: pick the "hot" tool
+        echo "${tools_array[$hot_idx]}"
+    else
+        # 50% chance: pick any tool
+        echo "${tools_array[$RANDOM % $count]}"
+    fi
+}
+
+# =============================================================================
 # Load Generation Scenarios
 # =============================================================================
 
 run_mcp_scenario() {
     local server
-    server=$(random_element "${SERVERS[@]}")
+    server=$(pick_weighted_server)
     local client_name
     client_name=$(random_element "${CLIENT_NAMES[@]}")
 
-    # Get available tools for this server
-    local tools_str
-    tools_str=$(get_server_tools "$server")
-    local tools_array=($tools_str)
-    
-    # Randomly choose scenario type
+    # Always initialize first to get session ID
+    local session_id
+    session_id=$(mcp_initialize "$server" "$client_name")
+
+    # Randomly choose what to do with the session
     local scenario=$((RANDOM % 10))
-    
-    if [[ $scenario -lt 5 ]]; then
-        # 50% - Full flow: initialize -> tools/list -> tools/call
-        mcp_initialize "$server" "$client_name"
-        mcp_list_tools "$server" "$client_name"
-        
-        if [[ ${#tools_array[@]} -gt 0 ]]; then
-            local tool="${tools_array[$RANDOM % ${#tools_array[@]}]}"
-            mcp_call_tool "$server" "$tool" "$client_name"
-        fi
+
+    if [[ $scenario -lt 6 ]]; then
+        # 60% - Full flow: initialize -> tools/list -> tools/call
+        mcp_list_tools "$server" "$client_name" "$session_id"
+        local tool
+        tool=$(pick_weighted_tool "$server")
+        [[ -n "$tool" ]] && mcp_call_tool "$server" "$tool" "$client_name" "$session_id"
     elif [[ $scenario -lt 8 ]]; then
-        # 30% - Just call a tool (simulating established session)
-        if [[ ${#tools_array[@]} -gt 0 ]]; then
-            local tool="${tools_array[$RANDOM % ${#tools_array[@]}]}"
-            mcp_call_tool "$server" "$tool" "$client_name"
-        fi
-    else
-        # 20% - Discovery only (initialize + list)
-        mcp_initialize "$server" "$client_name"
-        mcp_list_tools "$server" "$client_name"
+        # 20% - Discovery only: initialize -> tools/list
+        mcp_list_tools "$server" "$client_name" "$session_id"
     fi
+    # 20% - Initialize only (already done above)
+}
+
+# Send a request with an invalid token to generate auth failures
+run_failed_auth_scenario() {
+    local server
+    server=$(random_element "${SERVERS[@]}")
+    local client_name="unauthorized-client"
+
+    debug "Auth failure injection: $server"
+
+    local body='{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"'"$client_name"'","version":"1.0.0"}},"id":1}'
+
+    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/" \
+        -H "Authorization: Bearer invalid-expired-token" \
+        -H "Content-Type: application/json" \
+        -H "Accept: application/json, text/event-stream" \
+        -H "X-Client-Name: $client_name" \
+        -H "X-Body: $body" \
+        -d "$body" > /dev/null 2>&1 || true
 }
 
 run_agent_scenario() {
@@ -538,6 +617,7 @@ main() {
     local request_count=0
     local mcp_count=0
     local agent_count=0
+    local auth_fail_count=0
 
     # Get initial token
     get_token > /dev/null
@@ -545,20 +625,20 @@ main() {
     log "Load generation started..."
 
     while [[ $(date +%s) -lt $end_time ]]; do
-        # Traffic distribution: 60% MCP, 30% Agent, 10% Server Search
-        local rand=$((RANDOM % 10))
+        # Traffic distribution: 55% MCP, 25% Agent, 10% Server Search, 8% Auth Failures, 2% spare
+        local rand=$((RANDOM % 100))
         
-        if [[ $rand -lt 6 ]]; then
-            # 60% MCP operations
+        if [[ $rand -lt 55 ]]; then
             run_mcp_scenario
             ((mcp_count++))
-        elif [[ $rand -lt 9 ]]; then
-            # 30% Agent operations
+        elif [[ $rand -lt 80 ]]; then
             run_agent_scenario
             ((agent_count++))
-        else
-            # 10% Server search operations
+        elif [[ $rand -lt 90 ]]; then
             run_server_search_scenario
+        elif [[ $rand -lt 98 ]]; then
+            run_failed_auth_scenario
+            ((auth_fail_count++))
         fi
 
         ((request_count++))
@@ -567,7 +647,9 @@ main() {
         if [[ $((request_count % 50)) -eq 0 ]]; then
             local elapsed=$(($(date +%s) - start_time))
             local remaining=$((end_time - $(date +%s)))
-            log "Progress: $request_count requests ($mcp_count MCP, $agent_count Agent) | ${elapsed}s elapsed, ${remaining}s remaining"
+            local phase=$(( ($(date +%s) / 600) % 3 ))
+            local hot_server=("currenttime" "mcpgw" "realserverfaketools")
+            log "Progress: $request_count req ($mcp_count MCP, $agent_count Agent, $auth_fail_count auth-fail) | phase=${hot_server[$phase]} | ${elapsed}s elapsed, ${remaining}s remaining"
         fi
 
         sleep "$sleep_interval"
@@ -578,6 +660,7 @@ main() {
     log "Total requests: $request_count"
     log "  MCP operations: $mcp_count"
     log "  Agent operations: $agent_count"
+    log "  Auth failures (intentional): $auth_fail_count"
     log "Duration: ${DURATION}s"
     log "Actual rate: $(awk -v r="$request_count" -v d="$DURATION" 'BEGIN {printf "%.1f", r/d}') req/s"
 }

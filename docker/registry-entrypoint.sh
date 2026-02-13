@@ -145,7 +145,7 @@ local entry = cjson.encode({
     t = tool_name,
     c = ngx.req.get_headers()["X-Client-Name"] or "unknown",
     ok = ngx.status < 400,
-    d = (tonumber(ngx.var.request_time) or 0) * 1000,
+    d = (tonumber(ngx.var.upstream_header_time) or tonumber(ngx.var.request_time) or 0) * 1000,
 })
 
 local key = "m:" .. ngx.now() .. ":" .. ngx.worker.pid() .. ":" .. math.random(1, 999999)
