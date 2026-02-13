@@ -211,16 +211,14 @@ get_token() {
         expires_in=$(echo "$response" | jq -r '.expires_in // 300')
 
         if [[ -z "$ACCESS_TOKEN" ]]; then
-            echo "ERROR: Failed to get access token"
-            echo "Response: $response"
+            log "ERROR: Failed to get access token"
+            log "Response: $response"
             exit 1
         fi
 
         TOKEN_EXPIRY=$((now + expires_in))
         log "Token acquired (expires in ${expires_in}s)"
     fi
-
-    echo "$ACCESS_TOKEN"
 }
 
 # =============================================================================
@@ -231,7 +229,7 @@ mcp_initialize() {
     local server="$1"
     local client_name="$2"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "MCP initialize: $server (client: $client_name)"
 
@@ -271,7 +269,7 @@ mcp_list_tools() {
     local client_name="$2"
     local session_id="${3:-}"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "MCP tools/list: $server (client: $client_name, session: ${session_id:0:8}...)"
 
@@ -300,7 +298,7 @@ mcp_call_tool() {
     local client_name="$3"
     local session_id="${4:-}"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "MCP tools/call: $server/$tool_name (client: $client_name, session: ${session_id:0:8}...)"
 
@@ -369,7 +367,7 @@ mcp_call_tool() {
 
 agent_list() {
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "Agent: list all"
 
@@ -380,7 +378,7 @@ agent_list() {
 agent_get() {
     local agent_path="$1"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "Agent: get $agent_path"
 
@@ -391,7 +389,7 @@ agent_get() {
 agent_discover_skills() {
     local skill="$1"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "Agent: discover by skill ($skill)"
 
@@ -407,7 +405,7 @@ agent_discover_skills() {
 agent_discover_semantic() {
     local query="$1"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "Agent: semantic discover ($query)"
 
@@ -423,7 +421,7 @@ agent_discover_semantic() {
 agent_health_check() {
     local agent_path="$1"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "Agent: health check $agent_path"
 
@@ -438,7 +436,7 @@ agent_health_check() {
 server_search_semantic() {
     local query="$1"
     local token
-    token=$(get_token)
+    get_token; token="$ACCESS_TOKEN"
 
     debug "Server: semantic search ($query)"
 
