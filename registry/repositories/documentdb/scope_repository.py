@@ -332,10 +332,16 @@ class DocumentDBScopeRepository(ScopeRepositoryBase):
                     "ui_scopes": doc.get("ui_permissions", {}),
                     "mappings": doc.get("group_mappings", [])
                 }
-            return groups
+            return {
+                "total_count": len(groups),
+                "groups": groups
+            }
         except Exception as e:
             logger.error(f"Error listing groups from DocumentDB: {e}", exc_info=True)
-            return {}
+            return {
+                "total_count": 0,
+                "groups": {}
+            }
 
 
     async def group_exists(
