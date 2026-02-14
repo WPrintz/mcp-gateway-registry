@@ -180,7 +180,7 @@ class NginxConfigService:
             import os
             if os.environ.get("NGINX_DISABLE_API_AUTH_REQUEST", "false").lower() in ("1", "true", "yes", "on"):
                 protected_api_block = """    # Protected API endpoints - require authentication
-    location /api/ {
+    location {{ROOT_PATH}}/api/ {
         # Authenticate request via auth server (validates JWT Bearer tokens)
         auth_request /validate;
 
@@ -219,7 +219,7 @@ class NginxConfigService:
     }"""
 
                 unprotected_api_block = """    # API endpoints - FastAPI handles authentication (session cookie / bearer)
-    location /api/ {
+    location {{ROOT_PATH}}/api/ {
         # Proxy to FastAPI service
         proxy_pass http://127.0.0.1:7860/api/;
         proxy_http_version 1.1;
@@ -331,7 +331,9 @@ class NginxConfigService:
             version_map = await self._generate_version_map(servers)
 
             # Replace placeholders in template
-            config_content = template_content.replace("{{VERSION_MAP}}", version_map)
+            root_path = os.environ.get("ROOT_PATH", "").rstrip("/")
+            config_content = template_content.replace("{{ROOT_PATH}}", root_path)
+            config_content = config_content.replace("{{VERSION_MAP}}", version_map)
             config_content = config_content.replace("{{LOCATION_BLOCKS}}", "\n".join(location_blocks))
             config_content = config_content.replace("{{ADDITIONAL_SERVER_NAMES}}", additional_server_names)
             config_content = config_content.replace("{{ANTHROPIC_API_VERSION}}", api_version)

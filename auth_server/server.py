@@ -92,10 +92,19 @@ if _registry_static_token_requested and not REGISTRY_API_TOKEN:
 else:
     REGISTRY_STATIC_TOKEN_AUTH_ENABLED: bool = _registry_static_token_requested
 
+# Get ROOT_PATH for path-based routing (auth server's own path, e.g. /auth-server)
+ROOT_PATH = os.environ.get("ROOT_PATH", "").rstrip("/")
+
+# REGISTRY_ROOT_PATH is the registry's base path (e.g. /registry) used for matching
+# X-Original-URL paths that come from the registry's nginx. Falls back to ROOT_PATH
+# for backward compatibility when both services share the same root path.
+REGISTRY_ROOT_PATH = os.environ.get("REGISTRY_ROOT_PATH", ROOT_PATH).rstrip("/")
+
 # Registry API path patterns that use static token auth when enabled
+# REGISTRY_ROOT_PATH is prepended so pattern matching works when hosted on a base path (e.g. /registry/api/)
 REGISTRY_API_PATTERNS: list = [
-    "/api/",
-    "/v0.1/",
+    f"{REGISTRY_ROOT_PATH}/api/",
+    f"{REGISTRY_ROOT_PATH}/v0.1/",
 ]
 
 # Federation static token auth: scoped token for federation endpoints only
@@ -125,9 +134,10 @@ if FEDERATION_STATIC_TOKEN_AUTH_ENABLED and len(FEDERATION_STATIC_TOKEN) < MIN_F
     )
 
 # Federation endpoint path patterns (scoped access for federation static token)
+# REGISTRY_ROOT_PATH is prepended so pattern matching works when hosted on a base path
 FEDERATION_API_PATTERNS: list = [
-    "/api/federation/",
-    "/api/peers/",
+    f"{REGISTRY_ROOT_PATH}/api/federation/",
+    f"{REGISTRY_ROOT_PATH}/api/peers/",
     "/api/peers",  # exact match for list peers (no trailing slash)
 ]
 
@@ -634,10 +644,6 @@ async def lifespan(app: FastAPI):
 
     # Shutdown: Add cleanup code here if needed in the future
     logger.info("Shutting down auth server")
-
-
-# Get ROOT_PATH for path-based routing
-ROOT_PATH = os.environ.get("ROOT_PATH", "").rstrip("/")
 
 # Create FastAPI app
 app = FastAPI(
@@ -1167,6 +1173,13 @@ async def validate_request(request: Request):
             try:
                 parsed_url = urlparse(original_url)
                 path = parsed_url.path.strip("/")
+
+                # Strip the registry's root path prefix so server_name extraction
+                # works correctly when the registry is hosted on a sub-path (e.g. /registry)
+                registry_prefix = REGISTRY_ROOT_PATH.strip("/")
+                if registry_prefix and path.startswith(registry_prefix):
+                    path = path[len(registry_prefix):].lstrip("/")
+
                 path_parts = path.split("/") if path else []
 
                 # MCP endpoints that should be treated as endpoints, not server names
