@@ -145,8 +145,8 @@ class NginxConfigService:
     def generate_config(self, servers: Dict[str, Dict[str, Any]]) -> bool:
         """Generate Nginx configuration (synchronous version for non-async contexts)."""
         if not settings.nginx_updates_enabled:
-            logger.debug(
-                f"Skipping MCP server location block generation - "
+            logger.info(
+                f"Skipping nginx config generation - "
                 f"DEPLOYMENT_MODE={settings.deployment_mode.value}"
             )
             NGINX_UPDATES_SKIPPED.labels(operation="generate_config").inc()
@@ -184,8 +184,8 @@ class NginxConfigService:
         - On server changes (force_base_config=False): skips regeneration (no-op)
         """
         if not settings.nginx_updates_enabled and not force_base_config:
-            logger.debug(
-                f"Skipping MCP server location block generation - "
+            logger.info(
+                f"Skipping nginx config generation - "
                 f"DEPLOYMENT_MODE={settings.deployment_mode.value}"
             )
             NGINX_UPDATES_SKIPPED.labels(operation="generate_config").inc()
@@ -382,6 +382,10 @@ class NginxConfigService:
             config_content = config_content.replace("{{KEYCLOAK_HOST}}", keycloak_host)
             config_content = config_content.replace("{{KEYCLOAK_PORT}}", keycloak_port)
 
+            # Generate registry-only block (503 response for MCP proxy requests)
+            registry_only_block = self._generate_registry_only_block()
+            config_content = config_content.replace("{{REGISTRY_ONLY_BLOCK}}", registry_only_block)
+
             # Write config file
             with open(settings.nginx_config_path, "w") as f:
                 f.write(config_content)
@@ -407,7 +411,7 @@ class NginxConfigService:
         In registry-only mode, skip reload unless force=True.
         """
         if not settings.nginx_updates_enabled and not force:
-            logger.debug(
+            logger.info(
                 f"Skipping nginx reload - DEPLOYMENT_MODE={settings.deployment_mode.value}"
             )
             NGINX_UPDATES_SKIPPED.labels(operation="reload").inc()
@@ -436,6 +440,33 @@ class NginxConfigService:
         except Exception as e:
             logger.error(f"Error reloading Nginx: {e}")
             return False
+
+    def _generate_registry_only_block(self) -> str:
+        """
+        Generate nginx location block for registry-only mode.
+
+        In registry-only mode, this block returns 503 for paths that look like
+        MCP server requests (paths not matching known API prefixes).
+        In with-gateway mode, this returns an empty string.
+
+        Returns:
+            Nginx location block string or empty string
+        """
+        if settings.nginx_updates_enabled:
+            # with-gateway mode: no blocking needed, MCP servers are proxied
+            return ""
+
+        # registry-only mode: block MCP proxy requests with 503
+        # This regex matches paths that don't start with known API prefixes
+        block = '''
+    # Registry-only mode: block MCP proxy requests with 503
+    # Matches paths that don't start with known API/auth prefixes
+    location ~ ^/(?!api/|oauth2/|keycloak/|realms/|resources/|v0\\.1/|health|static/|assets/|_next/|validate).+ {
+        default_type application/json;
+        return 503 '{"error":"gateway_proxy_disabled","message":"Gateway proxy is disabled in registry-only mode. Connect directly to the MCP server using the proxy_pass_url from server registration.","deployment_mode":"registry-only","hint":"Use GET /api/servers/{path} to retrieve the proxy_pass_url for direct connection."}';
+    }'''
+        logger.info("Generated registry-only 503 block for MCP proxy requests")
+        return block
 
 
     async def _generate_version_map(
