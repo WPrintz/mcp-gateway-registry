@@ -103,8 +103,11 @@ ngx.req.read_body()
 local body_data = ngx.req.get_body_data()
 
 if body_data then
-    -- Set the X-Body header with the raw body data
-    ngx.req.set_header("X-Body", body_data)
+    -- Strip newlines to prevent breaking HTTP header format
+    -- (JSON whitespace is insignificant, so this is safe)
+    local clean_body = body_data:gsub("[\r\n]+", " ")
+    -- Set the X-Body header with the cleaned body data
+    ngx.req.set_header("X-Body", clean_body)
     -- Store in ngx.ctx for log_by_lua phase (survives auth_request subrequest)
     ngx.ctx.request_body = body_data
     ngx.log(ngx.INFO, "Captured request body (" .. string.len(body_data) .. " bytes) for auth validation")
