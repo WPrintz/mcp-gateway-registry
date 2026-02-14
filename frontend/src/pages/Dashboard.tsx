@@ -4,6 +4,7 @@ import { MagnifyingGlassIcon, PlusIcon, XMarkIcon, ArrowPathIcon, CheckCircleIco
 import { useServerStats } from '../hooks/useServerStats';
 import { useSkills, Skill } from '../hooks/useSkills';
 import { useAuth } from '../contexts/AuthContext';
+import { useRegistryConfig } from '../hooks/useRegistryConfig';
 import ServerCard from '../components/ServerCard';
 import AgentCard from '../components/AgentCard';
 import SkillCard from '../components/SkillCard';
@@ -122,6 +123,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
   const { servers, agents: agentsFromStats, loading, error, refreshData, setServers, setAgents } = useServerStats();
   const { skills, setSkills, loading: skillsLoading, error: skillsError, refreshData: refreshSkills } = useSkills();
   const { user } = useAuth();
+  const { config: registryConfig } = useRegistryConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [committedQuery, setCommittedQuery] = useState('');
   const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -1125,7 +1127,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
   const renderDashboardCollections = () => (
     <>
       {/* MCP Servers Section - Grouped by Registry */}
-      {(viewFilter === 'all' || viewFilter === 'servers') &&
+      {registryConfig?.features.mcp_servers !== false &&
+        (viewFilter === 'all' || viewFilter === 'servers') &&
         (filteredServers.length > 0 || (!searchTerm && activeFilter === 'all')) && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
@@ -1366,7 +1369,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         )}
 
       {/* A2A Agents Section - Grouped by Registry */}
-      {(viewFilter === 'all' || viewFilter === 'agents') &&
+      {registryConfig?.features.agents !== false &&
+        (viewFilter === 'all' || viewFilter === 'agents') &&
         (filteredAgents.length > 0 || (!searchTerm && activeFilter === 'all')) && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
@@ -1600,7 +1604,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         )}
 
       {/* Agent Skills Section */}
-      {(viewFilter === 'all' || viewFilter === 'skills') &&
+      {registryConfig?.features.skills !== false &&
+        (viewFilter === 'all' || viewFilter === 'skills') &&
         (filteredSkills.length > 0 || (!searchTerm && activeFilter === 'all')) && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
@@ -1674,7 +1679,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         )}
 
       {/* External Registries Section */}
-      {viewFilter === 'external' && (
+      {registryConfig?.features.federation !== false && viewFilter === 'external' && (
         <div className="mb-8">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
             External Registries
@@ -1823,7 +1828,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
       <div className="flex flex-col h-full">
         {/* Fixed Header Section */}
         <div className="flex-shrink-0 space-y-4 pb-4">
-          {/* View Filter Tabs */}
+          {/* View Filter Tabs - conditionally show based on registry mode */}
           <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
             <button
               onClick={() => handleChangeViewFilter('all')}
@@ -1835,46 +1840,54 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
             >
               All
             </button>
-            <button
-              onClick={() => handleChangeViewFilter('servers')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'servers'
-                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              MCP Servers Only
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('agents')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'agents'
-                  ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              A2A Agents Only
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('skills')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'skills'
-                  ? 'border-amber-500 text-amber-600 dark:text-amber-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              Agent Skills
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('external')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'external'
-                  ? 'border-green-500 text-green-600 dark:text-green-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              External Registries
-            </button>
+            {registryConfig?.features.mcp_servers !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('servers')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'servers'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                MCP Servers Only
+              </button>
+            )}
+            {registryConfig?.features.agents !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('agents')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'agents'
+                    ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                A2A Agents Only
+              </button>
+            )}
+            {registryConfig?.features.skills !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('skills')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'skills'
+                    ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                Agent Skills
+              </button>
+            )}
+            {registryConfig?.features.federation !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('external')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'external'
+                    ? 'border-green-500 text-green-600 dark:text-green-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                External Registries
+              </button>
+            )}
           </div>
 
           {/* Search Bar and Refresh Button */}

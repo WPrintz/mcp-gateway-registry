@@ -19,6 +19,9 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
+# Import registry mode middleware
+from registry.middleware.mode_filter import RegistryModeMiddleware
+
 # Import domain routers
 from registry.auth.routes import router as auth_router
 from registry.api.server_routes import router as servers_router
@@ -52,7 +55,12 @@ from registry.services.peer_federation_service import get_peer_federation_servic
 from registry.services.peer_sync_scheduler import get_peer_sync_scheduler
 
 # Import core configuration
-from registry.core.config import settings, _validate_mode_combination, _print_config_warning_banner
+from registry.core.config import (
+    settings,
+    RegistryMode,
+    _validate_mode_combination,
+    _print_config_warning_banner,
+)
 from registry.core.metrics import DEPLOYMENT_MODE_INFO
 
 # Import audit logging
@@ -117,6 +125,27 @@ def _log_startup_configuration() -> None:
     logger.info(f"  - DEPLOYMENT_MODE: {settings.deployment_mode.value}")
     logger.info(f"  - REGISTRY_MODE: {settings.registry_mode.value}")
     logger.info(f"  - Nginx updates: {'ENABLED' if settings.nginx_updates_enabled else 'DISABLED'}")
+
+    # Log what's disabled based on registry mode
+    if settings.registry_mode == RegistryMode.SKILLS_ONLY:
+        logger.info("  - Running in skills-only mode:")
+        logger.info("    - MCP servers API: DISABLED")
+        logger.info("    - A2A agents API: DISABLED")
+        logger.info("    - Federation API: DISABLED")
+        logger.info("    - Skills API: ENABLED")
+    elif settings.registry_mode == RegistryMode.MCP_SERVERS_ONLY:
+        logger.info("  - Running in mcp-servers-only mode:")
+        logger.info("    - MCP servers API: ENABLED")
+        logger.info("    - A2A agents API: DISABLED")
+        logger.info("    - Skills API: DISABLED")
+        logger.info("    - Federation API: DISABLED")
+    elif settings.registry_mode == RegistryMode.AGENTS_ONLY:
+        logger.info("  - Running in agents-only mode:")
+        logger.info("    - A2A agents API: ENABLED")
+        logger.info("    - MCP servers API: DISABLED")
+        logger.info("    - Skills API: DISABLED")
+        logger.info("    - Federation API: DISABLED")
+
     logger.info("=" * 60)
 
 
@@ -397,6 +426,14 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# Add registry mode middleware to filter endpoints based on REGISTRY_MODE
+# This must be after CORS (to allow preflight) and before audit (to log blocked requests)
+if settings.registry_mode != RegistryMode.FULL:
+    logger.info(
+        f"Adding registry mode middleware - mode: {settings.registry_mode.value}"
+    )
+    app.add_middleware(RegistryModeMiddleware)
 
 # Add audit middleware if enabled (must be added before app starts)
 if settings.audit_log_enabled:
