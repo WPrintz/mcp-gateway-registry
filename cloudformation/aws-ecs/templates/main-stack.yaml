@@ -543,6 +543,27 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-services
 
+  #============================================================================
+  # Load Generator Stack
+  # Deploys last — EC2 instance generating traffic through public CloudFront URLs
+  #============================================================================
+  LoadGeneratorStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ServicesStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}load-generator-stack.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        TemplateS3Bucket: !Ref TemplateS3Bucket
+        TemplateS3Prefix: !Ref TemplateS3Prefix
+        RegistryUrl: !GetAtt ComputeStack.Outputs.MainCloudFrontUrl
+        KeycloakCloudFrontUrl: !GetAtt ComputeStack.Outputs.KeycloakCloudFrontUrl
+        PublicSubnets: !GetAtt NetworkStack.Outputs.PublicSubnets
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-load-generator
+
 #============================================================================
 # Outputs
 #============================================================================
