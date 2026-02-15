@@ -4,6 +4,7 @@ import { MagnifyingGlassIcon, PlusIcon, XMarkIcon, ArrowPathIcon, CheckCircleIco
 import { useServerStats } from '../hooks/useServerStats';
 import { useSkills, Skill } from '../hooks/useSkills';
 import { useAuth } from '../contexts/AuthContext';
+import { useRegistryConfig } from '../hooks/useRegistryConfig';
 import ServerCard from '../components/ServerCard';
 import AgentCard from '../components/AgentCard';
 import SkillCard from '../components/SkillCard';
@@ -122,6 +123,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
   const { servers, agents: agentsFromStats, loading, error, refreshData, setServers, setAgents } = useServerStats();
   const { skills, setSkills, loading: skillsLoading, error: skillsError, refreshData: refreshSkills } = useSkills();
   const { user } = useAuth();
+  const { config: registryConfig } = useRegistryConfig();
   const [searchTerm, setSearchTerm] = useState('');
   const [committedQuery, setCommittedQuery] = useState('');
   const [showRegisterModal, setShowRegisterModal] = useState(false);
@@ -851,7 +853,9 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
     );
 
     try {
-      await axios.post(`/api/skills${path}/toggle?enabled=${enabled}`);
+      // Convert full path to API path (e.g., /skills/pdf -> /pdf)
+      const apiPath = path.startsWith('/skills/') ? path.replace('/skills/', '/') : path;
+      await axios.post(`/api/skills${apiPath}/toggle`, { enabled });
 
       showToast(`Skill ${enabled ? 'enabled' : 'disabled'} successfully!`, 'success');
     } catch (error: any) {
@@ -1125,8 +1129,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
   const renderDashboardCollections = () => (
     <>
       {/* MCP Servers Section - Grouped by Registry */}
-      {(viewFilter === 'all' || viewFilter === 'servers') &&
-        (filteredServers.length > 0 || (!searchTerm && activeFilter === 'all')) && (
+      {registryConfig?.features.mcp_servers !== false &&
+        (viewFilter === 'all' || viewFilter === 'servers') && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">
@@ -1267,8 +1271,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                               onToggle={handleToggleServer}
                               onEdit={handleEditServer}
                               canModify={user?.can_modify_servers || false}
-                              canHealthCheck={hasUiPermission('health_check_service', server.path)}
-                              canToggle={hasUiPermission('toggle_service', server.path)}
+                              canHealthCheck={user?.is_admin || hasUiPermission('health_check_service', server.path)}
+                              canToggle={user?.is_admin || hasUiPermission('toggle_service', server.path)}
                               canDelete={(user?.is_admin || hasUiPermission('delete_service', server.path)) && !server.sync_metadata?.is_federated}
                               onDelete={handleDeleteServer}
                               onRefreshSuccess={refreshData}
@@ -1344,8 +1348,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                                 onToggle={handleToggleServer}
                                 onEdit={handleEditServer}
                                 canModify={user?.can_modify_servers || false}
-                                canHealthCheck={hasUiPermission('health_check_service', server.path)}
-                                canToggle={hasUiPermission('toggle_service', server.path)}
+                                canHealthCheck={user?.is_admin || hasUiPermission('health_check_service', server.path)}
+                                canToggle={user?.is_admin || hasUiPermission('toggle_service', server.path)}
                                 canDelete={(user?.is_admin || hasUiPermission('delete_service', server.path)) && !server.sync_metadata?.is_federated}
                                 onDelete={handleDeleteServer}
                                 onRefreshSuccess={refreshData}
@@ -1366,8 +1370,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         )}
 
       {/* A2A Agents Section - Grouped by Registry */}
-      {(viewFilter === 'all' || viewFilter === 'agents') &&
-        (filteredAgents.length > 0 || (!searchTerm && activeFilter === 'all')) && (
+      {registryConfig?.features.agents !== false &&
+        (viewFilter === 'all' || viewFilter === 'agents') && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">
@@ -1491,8 +1495,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                               onToggle={handleToggleAgent}
                               onEdit={handleEditAgent}
                               canModify={user?.can_modify_servers || false}
-                              canHealthCheck={hasUiPermission('health_check_agent', agent.path)}
-                              canToggle={hasUiPermission('toggle_agent', agent.path)}
+                              canHealthCheck={user?.is_admin || hasUiPermission('health_check_agent', agent.path)}
+                              canToggle={user?.is_admin || hasUiPermission('toggle_agent', agent.path)}
                               canDelete={
                                 (user?.is_admin ||
                                 hasUiPermission('delete_agent', agent.path) ||
@@ -1573,8 +1577,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                                 onToggle={handleToggleAgent}
                                 onEdit={handleEditAgent}
                                 canModify={user?.can_modify_servers || false}
-                                canHealthCheck={hasUiPermission('health_check_agent', agent.path)}
-                                canToggle={hasUiPermission('toggle_agent', agent.path)}
+                                canHealthCheck={user?.is_admin || hasUiPermission('health_check_agent', agent.path)}
+                                canToggle={user?.is_admin || hasUiPermission('toggle_agent', agent.path)}
                                 canDelete={
                                   (user?.is_admin ||
                                   hasUiPermission('delete_agent', agent.path) ||
@@ -1600,8 +1604,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         )}
 
       {/* Agent Skills Section */}
-      {(viewFilter === 'all' || viewFilter === 'skills') &&
-        (filteredSkills.length > 0 || (!searchTerm && activeFilter === 'all')) && (
+      {registryConfig?.features.skills !== false &&
+        (viewFilter === 'all' || viewFilter === 'skills') && (
           <div className="mb-8">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-900 dark:text-white">
@@ -1661,7 +1665,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                     onEdit={handleEditSkill}
                     onDelete={(path: string) => setShowDeleteSkillConfirm(path)}
                     canModify={user?.can_modify_servers || false}
-                    canToggle={hasUiPermission('toggle_skill', skill.path)}
+                    canToggle={user?.is_admin || hasUiPermission('toggle_skill', skill.path)}
                     onRefreshSuccess={refreshSkills}
                     onShowToast={showToast}
                     onSkillUpdate={handleSkillUpdate}
@@ -1674,7 +1678,7 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         )}
 
       {/* External Registries Section */}
-      {viewFilter === 'external' && (
+      {registryConfig?.features.federation !== false && viewFilter === 'external' && (
         <div className="mb-8">
           <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
             External Registries
@@ -1745,8 +1749,8 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                         onToggle={handleToggleAgent}
                         onEdit={handleEditAgent}
                         canModify={user?.can_modify_servers || false}
-                        canHealthCheck={hasUiPermission('health_check_agent', agent.path)}
-                        canToggle={hasUiPermission('toggle_agent', agent.path)}
+                        canHealthCheck={user?.is_admin || hasUiPermission('health_check_agent', agent.path)}
+                        canToggle={user?.is_admin || hasUiPermission('toggle_agent', agent.path)}
                         canDelete={
                           (user?.is_admin ||
                           hasUiPermission('delete_agent', agent.path) ||
@@ -1767,19 +1771,6 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
         </div>
       )}
 
-      {/* Empty state when all are filtered out */}
-      {((viewFilter === 'all' && filteredServers.length === 0 && filteredAgents.length === 0 && filteredSkills.length === 0) ||
-        (viewFilter === 'servers' && filteredServers.length === 0) ||
-        (viewFilter === 'agents' && filteredAgents.length === 0) ||
-        (viewFilter === 'skills' && filteredSkills.length === 0)) &&
-        (searchTerm || activeFilter !== 'all') && (
-          <div className="text-center py-16">
-            <div className="text-gray-400 text-xl mb-4">No items found</div>
-            <p className="text-gray-500 dark:text-gray-300 text-base max-w-md mx-auto">
-              Press Enter in the search bar to search semantically
-            </p>
-          </div>
-        )}
     </>
   );
 
@@ -1823,58 +1814,75 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
       <div className="flex flex-col h-full">
         {/* Fixed Header Section */}
         <div className="flex-shrink-0 space-y-4 pb-4">
-          {/* View Filter Tabs */}
+          {/* View Filter Tabs - conditionally show based on registry mode */}
+          {/* Calculate if multiple features are enabled to determine if "All" tab is needed */}
           <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700 overflow-x-auto">
-            <button
-              onClick={() => handleChangeViewFilter('all')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'all'
-                  ? 'border-purple-500 text-purple-600 dark:text-purple-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              All
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('servers')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'servers'
-                  ? 'border-blue-500 text-blue-600 dark:text-blue-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              MCP Servers Only
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('agents')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'agents'
-                  ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              A2A Agents Only
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('skills')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'skills'
-                  ? 'border-amber-500 text-amber-600 dark:text-amber-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              Agent Skills
-            </button>
-            <button
-              onClick={() => handleChangeViewFilter('external')}
-              className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
-                viewFilter === 'external'
-                  ? 'border-green-500 text-green-600 dark:text-green-400'
-                  : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-              }`}
-            >
-              External Registries
-            </button>
+            {/* Only show "All" tab if more than one feature is enabled */}
+            {[
+              registryConfig?.features.mcp_servers !== false,
+              registryConfig?.features.agents !== false,
+              registryConfig?.features.skills !== false,
+              registryConfig?.features.federation !== false
+            ].filter(Boolean).length > 1 && (
+              <button
+                onClick={() => handleChangeViewFilter('all')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'all'
+                    ? 'border-purple-500 text-purple-600 dark:text-purple-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                All
+              </button>
+            )}
+            {registryConfig?.features.mcp_servers !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('servers')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'servers'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                MCP Servers Only
+              </button>
+            )}
+            {registryConfig?.features.agents !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('agents')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'agents'
+                    ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                A2A Agents Only
+              </button>
+            )}
+            {registryConfig?.features.skills !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('skills')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'skills'
+                    ? 'border-amber-500 text-amber-600 dark:text-amber-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                Agent Skills
+              </button>
+            )}
+            {registryConfig?.features.federation !== false && (
+              <button
+                onClick={() => handleChangeViewFilter('external')}
+                className={`px-4 py-2 text-sm font-medium whitespace-nowrap transition-colors border-b-2 ${
+                  viewFilter === 'external'
+                    ? 'border-green-500 text-green-600 dark:text-green-400'
+                    : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+                }`}
+              >
+                External Registries
+              </button>
+            )}
           </div>
 
           {/* Search Bar and Refresh Button */}
@@ -1934,7 +1942,19 @@ const Dashboard: React.FC<DashboardProps> = ({ activeFilter = 'all' }) => {
                 </>
               ) : (
                 <>
-                  Showing {filteredServers.length} servers, {filteredAgents.length} agents, {filteredSkills.length} skills
+                  {/* Dynamic count display based on enabled features */}
+                  Showing{' '}
+                  {registryConfig?.features.mcp_servers !== false && (
+                    <>{filteredServers.length} servers</>
+                  )}
+                  {registryConfig?.features.mcp_servers !== false && registryConfig?.features.agents !== false && ', '}
+                  {registryConfig?.features.agents !== false && (
+                    <>{filteredAgents.length} agents</>
+                  )}
+                  {(registryConfig?.features.mcp_servers !== false || registryConfig?.features.agents !== false) && registryConfig?.features.skills !== false && ', '}
+                  {registryConfig?.features.skills !== false && (
+                    <>{filteredSkills.length} skills</>
+                  )}
                 </>
               )}
               {activeFilter !== 'all' && (

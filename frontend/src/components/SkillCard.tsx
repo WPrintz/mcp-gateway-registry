@@ -514,7 +514,7 @@ const SkillCard: React.FC<SkillCardProps> = React.memo(({
                     checked={skill.is_enabled}
                     onChange={(e) => {
                       e.stopPropagation();
-                      onToggle(skillApiPath, e.target.checked);
+                      onToggle(skill.path, e.target.checked);
                     }}
                     className="sr-only peer"
                   />
