@@ -112,7 +112,7 @@ export const useServerStats = (): UseServerStatsReturn => {
 
       // Fetch skills for stats if skills are enabled
       if (skillsEnabled) {
-        fetchPromises.push(axios.get('/api/skills').catch(() => ({ data: { skills: [] } })));
+        fetchPromises.push(axios.get('/api/skills?include_disabled=true').catch(() => ({ data: { skills: [] } })));
       } else {
         fetchPromises.push(Promise.resolve({ data: { skills: [] } }));
       }
