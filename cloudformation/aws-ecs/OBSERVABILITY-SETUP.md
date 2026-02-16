@@ -54,7 +54,7 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM \
   --parameter-overrides \
     EnvironmentName=mcp-gateway \
-    EnableADOTSidecar=true \
+    EnableObservability=true \
     AMPRemoteWriteEndpoint=<AMP_ENDPOINT_FROM_STEP_2>
 ```
 

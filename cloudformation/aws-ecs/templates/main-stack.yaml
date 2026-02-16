@@ -348,14 +348,6 @@ Parameters:
       Enable full observability stack (Grafana OSS, metrics-service, ADOT collector).
       When enabled, deploys Grafana dashboards for MCP Analytics and AWS Infrastructure monitoring.
 
-  EnableADOTSidecar:
-    Type: String
-    Default: 'true'
-    AllowedValues:
-      - 'true'
-      - 'false'
-    Description: Enable AWS Distro for OpenTelemetry (ADOT) collector for metrics export to AMP
-
   AMPRemoteWriteEndpoint:
     Type: String
     Default: ''
@@ -533,7 +525,6 @@ Resources:
         SecurityAddPendingTag: !Ref SecurityAddPendingTag
         # Observability Configuration
         EnableObservability: !Ref EnableObservability
-        EnableADOTSidecar: !Ref EnableADOTSidecar
         AMPRemoteWriteEndpoint: !Ref AMPRemoteWriteEndpoint
         GrafanaImageRepo: !Ref GrafanaImageRepo
         GrafanaImageTag: !If [UseDefaultGrafanaTag, 'latest', !Ref GrafanaImageTag]
