@@ -234,6 +234,9 @@ async def management_create_group(
             group_mapping_id = payload.name
 
         # Step 3: Create in MongoDB scopes collection
+        # Note: scope_config from the request payload is not yet wired here.
+        # Future work should pass server_access, group_mappings, and
+        # ui_permissions from payload.scope_config to import_group().
         import_success = await scope_service.import_group(
             scope_name=payload.name,
             description=payload.description or "",

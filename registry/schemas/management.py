@@ -55,10 +55,21 @@ class UserListResponse(BaseModel):
 
 
 class GroupCreateRequest(BaseModel):
-    """Payload for creating a Keycloak group."""
+    """Payload for creating a group.
+
+    Note: The backend currently only processes name and description.
+    The scope_config field is accepted but not yet wired to
+    scope_service.import_group(). Future work should pass
+    server_access, group_mappings, and ui_permissions through
+    to the scope service when creating a group.
+    """
 
     name: str = Field(..., min_length=1)
     description: Optional[str] = None
+    scope_config: Optional[dict] = Field(
+        None,
+        description="Scope configuration (accepted but not yet applied server-side)",
+    )
 
 
 class GroupSummary(BaseModel):
