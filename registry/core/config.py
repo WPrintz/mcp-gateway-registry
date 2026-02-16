@@ -92,7 +92,18 @@ class Settings(BaseSettings):
     agent_security_scan_timeout: int = 60  # 1 minute
     agent_security_add_pending_tag: bool = True
     a2a_scanner_llm_api_key: str = ""  # Optional Azure OpenAI API key for LLM-based analysis
-    
+
+    # Skill security scanning settings (AI Agent Skills)
+    skill_security_scan_enabled: bool = True
+    skill_security_scan_on_registration: bool = True
+    skill_security_block_unsafe_skills: bool = True
+    skill_security_analyzers: str = "static"  # Comma-separated: static, behavioral, llm, meta, virustotal, ai-defense
+    skill_security_scan_timeout: int = 120  # 2 minutes
+    skill_security_add_pending_tag: bool = True
+    skill_scanner_llm_api_key: str = ""  # Optional LLM API key for LLM-based analysis
+    skill_scanner_virustotal_api_key: str = ""  # Optional VirusTotal API key
+    skill_scanner_ai_defense_api_key: str = ""  # Optional Cisco AI Defense API key
+
     # Federation settings
     registry_id: Optional[str] = None  # Unique identifier for this registry instance in federation
 
