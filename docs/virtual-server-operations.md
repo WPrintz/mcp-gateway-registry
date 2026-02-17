@@ -309,8 +309,6 @@ All virtual server management operations can also be performed through the web U
 - Tool aliasing and scope configuration
 - Real-time validation
 
-Access the virtual server management UI at `http://localhost/ui/virtual-servers` (or your registry URL).
-
 ## Environment Variables
 
 Instead of passing `--registry-url` each time, you can set environment variables:
