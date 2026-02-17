@@ -147,6 +147,17 @@ const SkillCard: React.FC<SkillCardProps> = React.memo(({
     setLastCheckedTime(skill.last_checked_time || null);
   }, [skill.health_status, skill.last_checked_time]);
 
+  // Extract skill name from path for API calls
+  // skill.path is like "/skills/doc-coauthoring", API routes already have /skills prefix
+  // so we need just "/doc-coauthoring" for the path parameter
+  const getSkillApiPath = (path: string) => {
+    if (path.startsWith('/skills/')) {
+      return path.replace('/skills/', '/');
+    }
+    return path;
+  };
+  const skillApiPath = getSkillApiPath(skill.path);
+
   // Fetch security scan status on mount to show correct icon color
   useEffect(() => {
     const fetchSecurityScan = async () => {
@@ -163,17 +174,6 @@ const SkillCard: React.FC<SkillCardProps> = React.memo(({
     };
     fetchSecurityScan();
   }, [skillApiPath, authToken]);
-
-  // Extract skill name from path for API calls
-  // skill.path is like "/skills/doc-coauthoring", API routes already have /skills prefix
-  // so we need just "/doc-coauthoring" for the path parameter
-  const getSkillApiPath = (path: string) => {
-    if (path.startsWith('/skills/')) {
-      return path.replace('/skills/', '/');
-    }
-    return path;
-  };
-  const skillApiPath = getSkillApiPath(skill.path);
 
   const getVisibilityIcon = () => {
     switch (skill.visibility) {
