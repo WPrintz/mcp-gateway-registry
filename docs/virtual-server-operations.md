@@ -1,15 +1,20 @@
-# Virtual MCP Server CLI Commands
+# Virtual MCP Server Operations
 
-This document describes CLI commands for managing Virtual MCP Servers. Virtual servers aggregate tools from multiple backend MCP servers into a single unified endpoint.
+This document describes operations for managing Virtual MCP Servers. Virtual servers aggregate tools from multiple backend MCP servers into a single unified endpoint.
 
 For the full design and architecture details, see [Virtual MCP Server Design Document](design/virtual-mcp-server.md).
+
+## Video Demo
+
+<!-- TODO: Add video demo showing Virtual MCP Server operations in the UI -->
+_Video demo coming soon - demonstrating virtual server creation, configuration, and management through the web UI._
 
 ## Prerequisites
 
 - A valid JWT token (saved to a file, e.g., `.token`)
 - Registry URL (e.g., `http://localhost` for local development)
 
-## Available Commands
+## Available CLI Commands
 
 | Command | Description |
 |---------|-------------|
@@ -88,7 +93,7 @@ See [cli/examples/virtual-server-combined-example.json](../cli/examples/virtual-
 | `backend_version` | No | Pin to specific backend version |
 | `description_override` | No | Override tool description |
 
-## Example Usage
+## CLI Usage Examples
 
 ### Create a Virtual Server
 
@@ -230,6 +235,63 @@ uv run python api/registry_management.py \
     --token-file .token \
     vs-rating --path /virtual/combined-tools
 ```
+
+## Scope-Based Access Control
+
+Virtual servers support fine-grained access control through scopes. See [Scope-Based Access Control Example](../cli/examples/virtual-server-scoped-example.json) for a configuration example.
+
+### Server-Level Scopes
+
+Use `required_scopes` to require users to have specific scopes to access the virtual server:
+
+```json
+{
+  "required_scopes": ["virtual-server/access"]
+}
+```
+
+### Per-Tool Scope Overrides
+
+Use `tool_scope_overrides` to require additional scopes for specific tools:
+
+```json
+{
+  "tool_scope_overrides": [
+    {
+      "tool_alias": "sensitive-tool",
+      "required_scopes": ["virtual-server/admin"]
+    }
+  ]
+}
+```
+
+### E2E Testing Script
+
+An end-to-end test script is provided for testing scope-based access control:
+
+```bash
+# Run the E2E test (with automatic cleanup)
+./tests/integration/test_virtual_server_scopes_e2e.sh \
+    --registry-url http://localhost \
+    --token-file .token
+
+# Run without cleanup (saves credentials for UI testing)
+./tests/integration/test_virtual_server_scopes_e2e.sh \
+    --registry-url http://localhost \
+    --token-file .token \
+    --no-cleanup
+
+# View saved credentials
+cat /tmp/.vs-creds
+```
+
+The test script creates:
+- A virtual server with scope-based access control
+- A user group with matching scopes
+- An M2M service account for API testing
+- A regular user for UI testing
+
+See [test_virtual_server_scopes_e2e.sh](../tests/integration/test_virtual_server_scopes_e2e.sh) for details.
 
 ## Web UI Alternative
 
