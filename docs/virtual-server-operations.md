@@ -238,7 +238,11 @@ uv run python api/registry_management.py \
 
 ## Scope-Based Access Control
 
-Virtual servers support fine-grained access control through scopes. See [Scope-Based Access Control Example](../cli/examples/virtual-server-scoped-example.json) for a configuration example.
+Virtual servers support fine-grained access control through scopes. Virtual servers are configured in scope definitions exactly the same way as regular MCP servers - you simply use the virtual server path (e.g., `/virtual/scoped-tools`) as the server identifier.
+
+For comprehensive documentation on how access control works, see [Virtual MCP Server Access Control](scopes.md#virtual-mcp-server-access-control) in the Fine-Grained Access Control documentation.
+
+See [Scope-Based Access Control Example](../cli/examples/virtual-server-scoped-example.json) for a virtual server configuration with scopes.
 
 ### Server-Level Scopes
 
