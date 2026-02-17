@@ -434,10 +434,33 @@ const VirtualServerDetailsModal: React.FC<VirtualServerDetailsModalProps> = ({
   isOpen,
   onClose
 }) => {
+  const [copiedEndpoint, setCopiedEndpoint] = useState(false);
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+
   if (!isOpen) return null;
 
   const tools = virtualServer.matching_tools || [];
   const backendPaths = virtualServer.backend_paths || [];
+
+  const handleCopyEndpoint = () => {
+    if (virtualServer.endpoint_url) {
+      navigator.clipboard.writeText(virtualServer.endpoint_url);
+      setCopiedEndpoint(true);
+      setTimeout(() => setCopiedEndpoint(false), 2000);
+    }
+  };
+
+  const toggleToolExpand = (toolName: string) => {
+    setExpandedTools(prev => {
+      const next = new Set(prev);
+      if (next.has(toolName)) {
+        next.delete(toolName);
+      } else {
+        next.add(toolName);
+      }
+      return next;
+    });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
@@ -462,6 +485,31 @@ const VirtualServerDetailsModal: React.FC<VirtualServerDetailsModalProps> = ({
           </button>
         </div>
         <div className="p-4 overflow-auto flex-1 space-y-4">
+          {/* Endpoint URL */}
+          {virtualServer.endpoint_url && (
+            <div>
+              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                Endpoint URL
+              </p>
+              <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900/50 rounded-lg p-2">
+                <code className="flex-1 text-sm text-indigo-600 dark:text-indigo-400 font-mono break-all">
+                  {virtualServer.endpoint_url}
+                </code>
+                <button
+                  onClick={handleCopyEndpoint}
+                  className="flex-shrink-0 p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-lg transition-colors"
+                  title="Copy endpoint URL"
+                >
+                  {copiedEndpoint ? (
+                    <span className="text-xs text-green-600 dark:text-green-400 font-medium">Copied!</span>
+                  ) : (
+                    <ClipboardIcon className="h-4 w-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Description */}
           <div>
             <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
@@ -514,23 +562,53 @@ const VirtualServerDetailsModal: React.FC<VirtualServerDetailsModalProps> = ({
                 Tools ({tools.length})
               </p>
               <ul className="space-y-2">
-                {tools.map((tool) => (
-                  <li key={tool.name} className="text-sm text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900/50 p-3 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-gray-900 dark:text-white">{tool.name}</span>
-                      {tool.backend_server && (
-                        <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                          {tool.backend_server}
-                        </span>
+                {tools.map((tool) => {
+                  const isExpanded = expandedTools.has(tool.tool_name);
+                  return (
+                    <li key={tool.tool_name} className="text-sm text-gray-700 dark:text-gray-200 bg-gray-50 dark:bg-gray-900/50 rounded-lg overflow-hidden">
+                      <button
+                        type="button"
+                        onClick={() => toggleToolExpand(tool.tool_name)}
+                        className="w-full p-3 text-left hover:bg-gray-100 dark:hover:bg-gray-800/50 transition-colors"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-gray-900 dark:text-white">{tool.tool_name}</span>
+                          <div className="flex items-center gap-2">
+                            {tool.relevance_score !== undefined && (
+                              <span className="text-xs text-indigo-600 dark:text-indigo-400">
+                                {Math.round(tool.relevance_score * 100)}%
+                              </span>
+                            )}
+                            <InformationCircleIcon className={`h-4 w-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                          </div>
+                        </div>
+                        {(tool.description || tool.match_context) && (
+                          <p className="text-gray-600 dark:text-gray-300 mt-1 text-xs">
+                            {tool.description || tool.match_context}
+                          </p>
+                        )}
+                      </button>
+                      {isExpanded && (
+                        <div className="px-3 pb-3 border-t border-gray-200 dark:border-gray-700 pt-2">
+                          {tool.inputSchema && Object.keys(tool.inputSchema).length > 0 ? (
+                            <>
+                              <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                                Input Schema
+                              </p>
+                              <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-3 rounded-lg overflow-auto text-gray-800 dark:text-gray-200 max-h-48">
+                                {JSON.stringify(tool.inputSchema, null, 2)}
+                              </pre>
+                            </>
+                          ) : (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 italic">
+                              No input schema available for this tool.
+                            </p>
+                          )}
+                        </div>
                       )}
-                    </div>
-                    {tool.description && (
-                      <p className="text-gray-600 dark:text-gray-300 mt-1 text-xs">
-                        {tool.description}
-                      </p>
-                    )}
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           )}
@@ -632,21 +710,21 @@ const VirtualServerResultCard: React.FC<VirtualServerResultCardProps> = ({
       {tools.length > 0 && (
         <div className="mt-4 border-t border-dashed border-indigo-200 dark:border-indigo-700 pt-3">
           <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
-            Tools ({virtualServer.num_tools})
+            Tools ({tools.length})
           </p>
           <ul className="space-y-2">
             {visibleTools.map((tool) => (
-              <li key={tool.name} className="text-sm text-gray-700 dark:text-gray-200 flex items-start gap-2">
+              <li key={tool.tool_name} className="text-sm text-gray-700 dark:text-gray-200 flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <span className="font-medium text-gray-900 dark:text-white">{tool.name}</span>
-                  {tool.backend_server && (
-                    <span className="ml-2 text-xs text-gray-400 font-mono">
-                      ({tool.backend_server})
+                  <span className="font-medium text-gray-900 dark:text-white">{tool.tool_name}</span>
+                  {tool.relevance_score !== undefined && (
+                    <span className="ml-2 text-xs text-indigo-600 dark:text-indigo-400">
+                      {Math.round(tool.relevance_score * 100)}%
                     </span>
                   )}
-                  {tool.description && (
+                  {(tool.description || tool.match_context) && (
                     <p className="text-gray-600 dark:text-gray-300 text-xs mt-0.5 line-clamp-1">
-                      {tool.description}
+                      {tool.description || tool.match_context}
                     </p>
                   )}
                 </div>
@@ -736,18 +814,21 @@ const SemanticSearchResults: React.FC<SemanticSearchResultsProps> = ({
     }
   };
 
-  const mapHitToAgent = (hit: SemanticAgentHit): AgentType => ({
-    name: hit.agent_name,
-    path: hit.path,
-     url: hit.url || (hit.agent_card as any)?.url,
-    description: hit.description,
-    version: (hit as any).version,
-    visibility: (hit.visibility as AgentType['visibility']) ?? 'public',
-    trust_level: (hit.trust_level as AgentType['trust_level']) ?? 'unverified',
-    enabled: hit.is_enabled ?? true,
-    tags: hit.tags,
-    status: 'unknown',
-  });
+  const mapHitToAgent = (hit: SemanticAgentHit): AgentType => {
+    const card = hit.agent_card || {};
+    return {
+      name: card.name || hit.path.replace(/^\//, ''),
+      path: hit.path,
+      url: card.url,
+      description: card.description,
+      version: card.version,
+      visibility: (card.visibility as AgentType['visibility']) ?? 'public',
+      trust_level: (card.trust_level as AgentType['trust_level']) ?? 'unverified',
+      enabled: card.is_enabled ?? true,
+      tags: card.tags || [],
+      status: 'unknown',
+    };
+  };
 
   return (
     <>
@@ -969,12 +1050,28 @@ const SemanticSearchResults: React.FC<SemanticSearchResultsProps> = ({
             style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '1.25rem' }}
           >
             {agents.map((agent) => {
+              // Extract agent details from agent_card
+              const card = agent.agent_card || {};
+              const agentName = card.name || agent.path.replace(/^\//, '');
+              const agentDescription = card.description;
+              const agentTags = card.tags || [];
+              const agentVisibility = card.visibility || 'public';
+              const agentTrustLevel = card.trust_level || 'unverified';
+              const agentIsEnabled = card.is_enabled ?? false;
+              const syncMetadata = card.sync_metadata;
+
+              // Extract skill names from agent_card.skills (array of skill objects)
+              const rawSkills = card.skills || [];
+              const skillNames = rawSkills.map((s: any) =>
+                typeof s === 'string' ? s : s?.name || s?.id
+              ).filter(Boolean);
+
               // Detect if agent is from a peer registry using sync_metadata
-              const isFederatedAgent = agent.sync_metadata?.is_federated === true;
-              const peerRegistryId = isFederatedAgent && agent.sync_metadata?.source_peer_id
-                ? agent.sync_metadata.source_peer_id.replace('peer-registry-', '').replace('peer-', '').toUpperCase()
+              const isFederatedAgent = syncMetadata?.is_federated === true;
+              const peerRegistryId = isFederatedAgent && syncMetadata?.source_peer_id
+                ? syncMetadata.source_peer_id.replace('peer-registry-', '').replace('peer-', '').toUpperCase()
                 : null;
-              const isOrphanedAgent = agent.sync_metadata?.is_orphaned === true;
+              const isOrphanedAgent = syncMetadata?.is_orphaned === true;
 
               return (
               <div
@@ -985,7 +1082,7 @@ const SemanticSearchResults: React.FC<SemanticSearchResultsProps> = ({
                   <div>
                     <div className="flex items-center gap-2">
                       <p className="text-base font-semibold text-gray-900 dark:text-white">
-                        {agent.agent_name}
+                        {agentName}
                       </p>
                       {/* Registry source badge - only show for federated (peer registry) items */}
                       {isFederatedAgent && (
@@ -1001,7 +1098,7 @@ const SemanticSearchResults: React.FC<SemanticSearchResultsProps> = ({
                       )}
                     </div>
                     <p className="text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500">
-                      {agent.visibility || 'public'}
+                      {agentVisibility}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1020,24 +1117,24 @@ const SemanticSearchResults: React.FC<SemanticSearchResultsProps> = ({
                 </div>
 
                 <p className="mt-3 text-sm text-gray-600 dark:text-gray-300 line-clamp-3">
-                  {agent.description || agent.match_context || 'No description available.'}
+                  {agentDescription || agent.match_context || 'No description available.'}
                 </p>
 
-                {agent.skills?.length > 0 && (
+                {skillNames.length > 0 && (
                   <div className="mt-4">
                     <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-1">
                       Key Skills
                     </p>
                     <p className="text-xs text-gray-600 dark:text-gray-300">
-                      {agent.skills.slice(0, 4).join(', ')}
-                      {agent.skills.length > 4 && '…'}
+                      {skillNames.slice(0, 4).join(', ')}
+                      {skillNames.length > 4 && '…'}
                     </p>
                   </div>
                 )}
 
-                {agent.tags?.length > 0 && (
+                {agentTags.length > 0 && (
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {agent.tags.slice(0, 6).map((tag) => (
+                    {agentTags.slice(0, 6).map((tag: string) => (
                       <span
                         key={tag}
                         className="px-2.5 py-1 text-[11px] rounded-full bg-cyan-50 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-200"
@@ -1050,9 +1147,9 @@ const SemanticSearchResults: React.FC<SemanticSearchResultsProps> = ({
 
                 <div className="mt-4 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                   <span className="font-semibold text-cyan-700 dark:text-cyan-200">
-                    {agent.trust_level || 'unverified'}
+                    {agentTrustLevel}
                   </span>
-                  <span>{agent.is_enabled ? 'Enabled' : 'Disabled'}</span>
+                  <span>{agentIsEnabled ? 'Enabled' : 'Disabled'}</span>
                 </div>
               </div>
             );

@@ -6,11 +6,12 @@ from pydantic import BaseModel, Field
 
 from ..audit import set_audit_action
 from ..auth.dependencies import nginx_proxied_auth
-from ..core.config import settings, RegistryMode
+from ..core.config import settings, RegistryMode, DeploymentMode
 from ..repositories.factory import get_search_repository
 from ..repositories.interfaces import SearchRepositoryBase
 from ..services.agent_service import agent_service
 from ..services.server_service import server_service
+from ..services.virtual_server_service import get_virtual_server_service
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +26,16 @@ def get_search_repo() -> SearchRepositoryBase:
 
 
 class MatchingToolResult(BaseModel):
-    """Tool matching result - basic info for display.
-
-    Note: inputSchema is NOT included here to avoid duplication.
-    Full tool details including inputSchema are in the tools[] array.
-    """
+    """Tool matching result with optional schema for display."""
 
     tool_name: str
     description: str | None = None
     relevance_score: float = Field(0.0, ge=0.0, le=1.0)
     match_context: str | None = None
+    inputSchema: dict | None = Field(
+        default=None,
+        description="JSON Schema for tool input parameters"
+    )
 
 
 class SyncMetadata(BaseModel):
@@ -49,6 +50,47 @@ class SyncMetadata(BaseModel):
     is_read_only: bool = True
 
 
+def _compute_endpoint_url(
+    path: str,
+    proxy_pass_url: str | None,
+    mcp_endpoint: str | None,
+    base_url: str | None,
+) -> str | None:
+    """Compute the endpoint URL for an MCP server.
+
+    URL determination with fallback chain:
+    1. mcp_endpoint (custom override) - always takes precedence
+    2. proxy_pass_url (in registry-only mode)
+    3. Constructed gateway URL (default/fallback in with-gateway mode)
+
+    Args:
+        path: Server path (e.g., /context7)
+        proxy_pass_url: Internal backend URL
+        mcp_endpoint: Custom endpoint override
+        base_url: Base URL from request (e.g., https://mcpgateway.ddns.net)
+
+    Returns:
+        The computed endpoint URL, or None if not determinable
+    """
+    # Priority 1: Explicit mcp_endpoint override
+    if mcp_endpoint:
+        return mcp_endpoint
+
+    # Priority 2: In registry-only mode, use proxy_pass_url directly
+    if settings.deployment_mode == DeploymentMode.REGISTRY_ONLY:
+        return proxy_pass_url
+
+    # Priority 3: Construct gateway URL
+    if base_url:
+        clean_path = path.rstrip("/")
+        if not clean_path.startswith("/"):
+            clean_path = f"/{clean_path}"
+        return f"{base_url}{clean_path}/mcp"
+
+    # Fallback: return proxy_pass_url if nothing else works
+    return proxy_pass_url
+
+
 class ServerSearchResult(BaseModel):
     path: str
     server_name: str
@@ -60,6 +102,28 @@ class ServerSearchResult(BaseModel):
     match_context: str | None = None
     matching_tools: list[MatchingToolResult] = Field(default_factory=list)
     sync_metadata: SyncMetadata | None = None
+    # Endpoint URL for agent connectivity (computed based on deployment mode)
+    endpoint_url: str | None = Field(
+        default=None,
+        description="URL for agents to connect to this MCP server"
+    )
+    # Raw endpoint fields (for advanced use cases)
+    proxy_pass_url: str | None = Field(
+        default=None,
+        description="Base URL for the MCP server backend (internal)"
+    )
+    mcp_endpoint: str | None = Field(
+        default=None,
+        description="Explicit streamable-http endpoint URL (if set)"
+    )
+    sse_endpoint: str | None = Field(
+        default=None,
+        description="Explicit SSE endpoint URL (if set)"
+    )
+    supported_transports: list[str] = Field(
+        default_factory=list,
+        description="Supported transport types (e.g., streamable-http, sse)"
+    )
 
 
 class ToolSearchResult(BaseModel):
@@ -70,20 +134,24 @@ class ToolSearchResult(BaseModel):
     inputSchema: dict | None = Field(default=None, description="JSON Schema for tool input")
     relevance_score: float = Field(..., ge=0.0, le=1.0)
     match_context: str | None = None
+    # Endpoint URL for the parent MCP server
+    endpoint_url: str | None = Field(
+        default=None,
+        description="URL for agents to connect to the parent MCP server"
+    )
 
 
 class AgentSearchResult(BaseModel):
-    path: str
-    agent_name: str
-    description: str | None = None
-    tags: list[str] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
-    trust_level: str | None = None
-    visibility: str | None = None
-    is_enabled: bool = False
+    """Agent search result with minimal top-level fields to avoid duplication.
+
+    Only search-specific fields are at the top level. All agent details
+    (name, description, url, skills, etc.) are in the agent_card.
+    """
+
+    path: str = Field(..., description="Agent path for identification")
     relevance_score: float = Field(..., ge=0.0, le=1.0)
     match_context: str | None = None
-    sync_metadata: SyncMetadata | None = None
+    agent_card: dict = Field(..., description="Full agent card with all details")
 
 
 class SkillSearchResult(BaseModel):
@@ -116,6 +184,11 @@ class VirtualServerSearchResult(BaseModel):
     relevance_score: float = Field(..., ge=0.0, le=1.0)
     match_context: str | None = None
     matching_tools: list[MatchingToolResult] = Field(default_factory=list)
+    # Endpoint URL for agent connectivity (computed based on deployment mode)
+    endpoint_url: str | None = Field(
+        default=None,
+        description="URL for agents to connect to this virtual MCP server"
+    )
 
 
 class SemanticSearchRequest(BaseModel):
@@ -143,6 +216,56 @@ class SemanticSearchResponse(BaseModel):
     total_agents: int = 0
     total_skills: int = 0
     total_virtual_servers: int = 0
+
+
+async def _get_tool_schema_for_virtual_server(
+    vs_path: str,
+    tool_name: str,
+) -> dict | None:
+    """Look up tool schema from backend server for a virtual server's tool.
+
+    Args:
+        vs_path: Virtual server path
+        tool_name: Name of the tool to look up
+
+    Returns:
+        Tool inputSchema dict if found, None otherwise
+    """
+    try:
+        vs_service = get_virtual_server_service()
+        vs_config = await vs_service.get_virtual_server(vs_path)
+        if not vs_config:
+            return None
+
+        # Find the tool mapping for this tool
+        tool_mapping = None
+        for tm in vs_config.tool_mappings:
+            if tm.tool_name == tool_name:
+                tool_mapping = tm
+                break
+
+        if not tool_mapping:
+            return None
+
+        # Get the backend server info
+        backend_path = tool_mapping.backend_server_path
+        if tool_mapping.backend_version:
+            backend_path = f"{backend_path}:{tool_mapping.backend_version}"
+
+        server_info = await server_service.get_server_info(backend_path)
+        if not server_info:
+            return None
+
+        # Find the tool in the backend's tool list
+        tool_list = server_info.get("tool_list", [])
+        for tool in tool_list:
+            if tool.get("name") == tool_name:
+                return tool.get("schema") or tool.get("inputSchema")
+
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get tool schema for {vs_path}/{tool_name}: {e}")
+        return None
 
 
 async def _user_can_access_server(path: str, server_name: str, user_context: dict) -> bool:
@@ -274,6 +397,15 @@ async def semantic_search(
             detail="Semantic search is temporarily unavailable. Please try again later.",
         ) from exc
 
+    # Extract base URL from request for endpoint URL computation
+    # Use X-Forwarded-Proto and X-Forwarded-Host if behind proxy, otherwise use request URL
+    forwarded_proto = http_request.headers.get("x-forwarded-proto", "https")
+    forwarded_host = http_request.headers.get("x-forwarded-host") or http_request.headers.get("host")
+    if forwarded_host:
+        base_url = f"{forwarded_proto}://{forwarded_host}"
+    else:
+        base_url = str(http_request.base_url).rstrip("/")
+
     filtered_servers: list[ServerSearchResult] = []
     for server in raw_results.get("servers", []):
         if not await _user_can_access_server(
@@ -297,9 +429,20 @@ async def semantic_search(
         raw_sync = server.get("sync_metadata")
         sync_meta = SyncMetadata(**raw_sync) if raw_sync else None
 
+        # Compute endpoint URL based on deployment mode
+        server_path = server.get("path", "")
+        server_proxy_url = server.get("proxy_pass_url")
+        server_mcp_endpoint = server.get("mcp_endpoint")
+        endpoint_url = _compute_endpoint_url(
+            path=server_path,
+            proxy_pass_url=server_proxy_url,
+            mcp_endpoint=server_mcp_endpoint,
+            base_url=base_url,
+        )
+
         filtered_servers.append(
             ServerSearchResult(
-                path=server.get("path", ""),
+                path=server_path,
                 server_name=server.get("server_name", ""),
                 description=server.get("description"),
                 tags=server.get("tags", []),
@@ -309,8 +452,18 @@ async def semantic_search(
                 match_context=server.get("match_context"),
                 matching_tools=matching_tools,
                 sync_metadata=sync_meta,
+                endpoint_url=endpoint_url,
+                proxy_pass_url=server_proxy_url,
+                mcp_endpoint=server_mcp_endpoint,
+                sse_endpoint=server.get("sse_endpoint"),
+                supported_transports=server.get("supported_transports", []),
             )
         )
+
+    # Build a map of server_path -> endpoint_url for tool results
+    server_endpoint_map: dict[str, str | None] = {
+        server.path: server.endpoint_url for server in filtered_servers
+    }
 
     filtered_tools: list[ToolSearchResult] = []
     for tool in raw_results.get("tools", []):
@@ -318,6 +471,17 @@ async def semantic_search(
         server_name = tool.get("server_name", "")
         if not await _user_can_access_server(server_path, server_name, user_context):
             continue
+
+        # Get endpoint_url from filtered servers, or compute it if not available
+        tool_endpoint_url = server_endpoint_map.get(server_path)
+        if tool_endpoint_url is None:
+            # Server not in filtered results, compute endpoint_url
+            tool_endpoint_url = _compute_endpoint_url(
+                path=server_path,
+                proxy_pass_url=None,  # We don't have this info for tools
+                mcp_endpoint=None,
+                base_url=base_url,
+            )
 
         filtered_tools.append(
             ToolSearchResult(
@@ -328,6 +492,7 @@ async def semantic_search(
                 inputSchema=tool.get("inputSchema"),
                 relevance_score=tool.get("relevance_score", 0.0),
                 match_context=tool.get("match_context"),
+                endpoint_url=tool_endpoint_url,
             )
         )
 
@@ -345,29 +510,16 @@ async def semantic_search(
             agent_card_obj.model_dump() if agent_card_obj else agent.get("agent_card", {})
         )
 
-        tags = agent_card_dict.get("tags", []) or agent.get("tags", [])
-        raw_skills = agent_card_dict.get("skills", []) or agent.get("skills", [])
-        skills = [skill.get("name") if isinstance(skill, dict) else skill for skill in raw_skills]
-
-        # Parse sync_metadata from search result or agent card
-        raw_agent_sync = agent.get("sync_metadata") or agent_card_dict.get("sync_metadata")
-        agent_sync_meta = SyncMetadata(**raw_agent_sync) if raw_agent_sync else None
+        # Ensure agent_card has the path for consistency
+        if agent_card_dict and "path" not in agent_card_dict:
+            agent_card_dict["path"] = agent_path
 
         filtered_agents.append(
             AgentSearchResult(
                 path=agent_path,
-                agent_name=agent_card_dict.get(
-                    "name", agent.get("agent_name", agent_path.strip("/"))
-                ),
-                description=agent_card_dict.get("description", agent.get("description")),
-                tags=tags or [],
-                skills=[s for s in skills if s],
-                trust_level=agent_card_dict.get("trust_level"),
-                visibility=agent_card_dict.get("visibility"),
-                is_enabled=agent_card_dict.get("is_enabled", False),
                 relevance_score=agent.get("relevance_score", 0.0),
                 match_context=agent.get("match_context") or agent_card_dict.get("description"),
-                sync_metadata=agent_sync_meta,
+                agent_card=agent_card_dict or {},
             )
         )
 
@@ -421,15 +573,29 @@ async def semantic_search(
         ):
             continue
 
-        matching_tools = [
-            MatchingToolResult(
-                tool_name=tool.get("tool_name", ""),
-                description=tool.get("description"),
-                relevance_score=tool.get("relevance_score", 0.0),
-                match_context=tool.get("match_context"),
+        # Build matching tools with schema lookup from backend servers
+        matching_tools: list[MatchingToolResult] = []
+        for tool in vs.get("matching_tools", []):
+            tool_name = tool.get("tool_name", "")
+            # Look up the tool schema from the backend server
+            input_schema = await _get_tool_schema_for_virtual_server(vs_path, tool_name)
+            matching_tools.append(
+                MatchingToolResult(
+                    tool_name=tool_name,
+                    description=tool.get("description"),
+                    relevance_score=tool.get("relevance_score", 0.0),
+                    match_context=tool.get("match_context"),
+                    inputSchema=input_schema,
+                )
             )
-            for tool in vs.get("matching_tools", [])
-        ]
+
+        # Compute endpoint URL for virtual server
+        vs_endpoint_url = _compute_endpoint_url(
+            path=vs_path,
+            proxy_pass_url=None,  # Virtual servers don't have proxy_pass_url
+            mcp_endpoint=None,
+            base_url=base_url,
+        )
 
         metadata = vs.get("metadata", {})
         filtered_virtual_servers.append(
@@ -445,6 +611,7 @@ async def semantic_search(
                 relevance_score=vs.get("relevance_score", 0.0),
                 match_context=vs.get("match_context"),
                 matching_tools=matching_tools,
+                endpoint_url=vs_endpoint_url,
             )
         )
 

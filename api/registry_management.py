@@ -1210,7 +1210,7 @@ def cmd_rescan(args: argparse.Namespace) -> int:
 
 def cmd_server_search(args: argparse.Namespace) -> int:
     """
-    Perform semantic search for servers.
+    Perform semantic search across all entity types.
 
     Args:
         args: Command arguments
@@ -1220,7 +1220,7 @@ def cmd_server_search(args: argparse.Namespace) -> int:
     """
     try:
         client = _create_client(args)
-        response = client.semantic_search_servers(
+        response = client.semantic_search(
             query=args.query,
             max_results=args.max_results
         )
@@ -1230,18 +1230,89 @@ def cmd_server_search(args: argparse.Namespace) -> int:
             print(json.dumps(response.model_dump(), indent=2, default=str))
             return 0
 
-        if not response.servers:
-            logger.info("No servers found matching the query")
+        total_results = (
+            len(response.servers) +
+            len(response.tools) +
+            len(response.agents) +
+            len(response.skills) +
+            len(response.virtual_servers)
+        )
+
+        if total_results == 0:
+            logger.info("No results found matching the query")
             return 0
 
-        logger.info(f"Found {len(response.servers)} matching servers:\n")
-        for server in response.servers:
-            print(f"{server.server_name} ({server.path})")
-            print(f"  Relevance: {server.relevance_score:.2%}")
-            if server.tags:
-                print(f"  Tags: {', '.join(server.tags)}")
-            print(f"  {server.description[:100]}...")
-            print()
+        logger.info(f"Search mode: {response.search_mode}")
+
+        # Display MCP Servers
+        if response.servers:
+            print(f"\n--- MCP Servers ({len(response.servers)}) ---")
+            for server in response.servers:
+                print(f"  {server.server_name} ({server.path})")
+                print(f"    Relevance: {server.relevance_score:.2%}")
+                if server.tags:
+                    print(f"    Tags: {', '.join(server.tags[:5])}")
+                if server.description:
+                    desc = server.description[:100] + "..." if len(server.description) > 100 else server.description
+                    print(f"    {desc}")
+                print()
+
+        # Display Tools
+        if response.tools:
+            print(f"\n--- Tools ({len(response.tools)}) ---")
+            for tool in response.tools:
+                print(f"  {tool.tool_name} (from {tool.server_path})")
+                print(f"    Relevance: {tool.relevance_score:.2%}")
+                if tool.description:
+                    desc = tool.description[:100] + "..." if len(tool.description) > 100 else tool.description
+                    print(f"    {desc}")
+                print()
+
+        # Display A2A Agents
+        if response.agents:
+            print(f"\n--- A2A Agents ({len(response.agents)}) ---")
+            for agent in response.agents:
+                print(f"  {agent.agent_name} ({agent.path})")
+                print(f"    Relevance: {agent.relevance_score:.2%}")
+                if agent.tags:
+                    print(f"    Tags: {', '.join(agent.tags[:5])}")
+                if agent.skills:
+                    print(f"    Skills: {', '.join(agent.skills[:5])}")
+                if agent.description:
+                    desc = agent.description[:100] + "..." if len(agent.description) > 100 else agent.description
+                    print(f"    {desc}")
+                print()
+
+        # Display Skills
+        if response.skills:
+            print(f"\n--- Skills ({len(response.skills)}) ---")
+            for skill in response.skills:
+                print(f"  {skill.skill_name} ({skill.path})")
+                print(f"    Relevance: {skill.relevance_score:.2%}")
+                if skill.author:
+                    print(f"    Author: {skill.author}")
+                if skill.tags:
+                    print(f"    Tags: {', '.join(skill.tags[:5])}")
+                if skill.description:
+                    desc = skill.description[:100] + "..." if len(skill.description) > 100 else skill.description
+                    print(f"    {desc}")
+                print()
+
+        # Display Virtual MCP Servers
+        if response.virtual_servers:
+            print(f"\n--- Virtual MCP Servers ({len(response.virtual_servers)}) ---")
+            for vs in response.virtual_servers:
+                print(f"  {vs.server_name} ({vs.path})")
+                print(f"    Relevance: {vs.relevance_score:.2%}")
+                print(f"    Tools: {vs.num_tools}, Backends: {vs.backend_count}")
+                if vs.backend_paths:
+                    print(f"    Backend paths: {', '.join(vs.backend_paths)}")
+                if vs.tags:
+                    print(f"    Tags: {', '.join(vs.tags[:5])}")
+                if vs.description:
+                    desc = vs.description[:100] + "..." if len(vs.description) > 100 else vs.description
+                    print(f"    {desc}")
+                print()
 
         return 0
 
@@ -3622,22 +3693,25 @@ Examples:
     )
 
     # Server search command
-    server_search_parser = subparsers.add_parser("server-search", help="Semantic search for servers")
+    server_search_parser = subparsers.add_parser(
+        "server-search",
+        help="Semantic search across all entity types (servers, tools, agents, skills, virtual servers)"
+    )
     server_search_parser.add_argument(
         "--query",
         required=True,
-        help="Natural language search query"
+        help="Natural language search query (e.g., 'coding assistants')"
     )
     server_search_parser.add_argument(
         "--max-results",
         type=int,
         default=10,
-        help="Maximum number of results (default: 10)"
+        help="Maximum number of results per entity type (default: 10)"
     )
     server_search_parser.add_argument(
         "--json",
         action="store_true",
-        help="Output raw JSON"
+        help="Output raw JSON with all entity types"
     )
 
     # Server Version Management Commands

@@ -34,6 +34,13 @@ export interface SemanticServerHit {
   match_context?: string;
   matching_tools: MatchingToolHit[];
   sync_metadata?: SyncMetadata;
+  // Endpoint URL for agent connectivity (computed based on deployment mode)
+  endpoint_url?: string;
+  // Raw endpoint fields (for advanced use cases)
+  proxy_pass_url?: string;
+  mcp_endpoint?: string;
+  sse_endpoint?: string;
+  supported_transports?: string[];
 }
 
 export interface SemanticToolHit {
@@ -44,22 +51,16 @@ export interface SemanticToolHit {
   inputSchema?: Record<string, any>;
   relevance_score: number;
   match_context?: string;
+  // Endpoint URL for the parent MCP server
+  endpoint_url?: string;
 }
 
 export interface SemanticAgentHit {
+  // Only search-specific fields at top level; all agent details in agent_card
   path: string;
-  agent_name: string;
-  description?: string;
-  tags: string[];
-  skills: string[];
-  trust_level?: string;
-  visibility?: string;
-  is_enabled?: boolean;
-  url?: string;
-  agent_card?: Record<string, any>;
   relevance_score: number;
   match_context?: string;
-  sync_metadata?: SyncMetadata;
+  agent_card: Record<string, any>;
 }
 
 export interface SemanticSkillHit {
@@ -81,9 +82,11 @@ export interface SemanticSkillHit {
 }
 
 export interface VirtualServerToolHit {
-  name: string;
+  tool_name: string;
   description?: string;
-  backend_server?: string;
+  relevance_score?: number;
+  match_context?: string;
+  inputSchema?: Record<string, any>;
 }
 
 export interface SemanticVirtualServerHit {
@@ -98,6 +101,8 @@ export interface SemanticVirtualServerHit {
   relevance_score: number;
   match_context?: string;
   matching_tools?: VirtualServerToolHit[];
+  // Endpoint URL for agent connectivity (computed based on deployment mode)
+  endpoint_url?: string;
 }
 
 export interface SemanticSearchResponse {

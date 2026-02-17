@@ -892,6 +892,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 doc = item["doc"]
                 relevance_score = item["relevance_score"]
                 matching_tools = doc.get("_matching_tools", [])
+                server_metadata = doc.get("metadata", {})
 
                 result_entry = {
                     "entity_type": "mcp_server",
@@ -899,11 +900,15 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     "server_name": doc.get("name"),
                     "description": doc.get("description"),
                     "tags": doc.get("tags", []),
-                    "num_tools": doc.get("metadata", {}).get("num_tools", 0),
+                    "num_tools": server_metadata.get("num_tools", 0),
                     "is_enabled": doc.get("is_enabled", False),
                     "relevance_score": relevance_score,
                     "match_context": doc.get("description"),
-                    "matching_tools": matching_tools
+                    "matching_tools": matching_tools,
+                    "proxy_pass_url": server_metadata.get("proxy_pass_url"),
+                    "mcp_endpoint": server_metadata.get("mcp_endpoint"),
+                    "sse_endpoint": server_metadata.get("sse_endpoint"),
+                    "supported_transports": server_metadata.get("supported_transports", []),
                 }
                 grouped_results["servers"].append(result_entry)
 
@@ -1130,17 +1135,22 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
             if entity_type == "mcp_server" and server_count < 3:
                 matching_tools = doc.get("matching_tools", [])
+                server_metadata = doc.get("metadata", {})
                 result_entry = {
                     "entity_type": "mcp_server",
                     "path": doc.get("path"),
                     "server_name": doc.get("name"),
                     "description": doc.get("description"),
                     "tags": doc.get("tags", []),
-                    "num_tools": doc.get("metadata", {}).get("num_tools", 0),
+                    "num_tools": server_metadata.get("num_tools", 0),
                     "is_enabled": doc.get("is_enabled", False),
                     "relevance_score": relevance_score,
                     "match_context": doc.get("description"),
                     "matching_tools": matching_tools,
+                    "proxy_pass_url": server_metadata.get("proxy_pass_url"),
+                    "mcp_endpoint": server_metadata.get("mcp_endpoint"),
+                    "sse_endpoint": server_metadata.get("sse_endpoint"),
+                    "supported_transports": server_metadata.get("supported_transports", []),
                 }
                 grouped_results["servers"].append(result_entry)
                 server_count += 1
@@ -1517,6 +1527,10 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                         "match_context": doc.get("description"),
                         "matching_tools": matching_tools,
                         "sync_metadata": server_metadata.get("sync_metadata"),
+                        "proxy_pass_url": server_metadata.get("proxy_pass_url"),
+                        "mcp_endpoint": server_metadata.get("mcp_endpoint"),
+                        "sse_endpoint": server_metadata.get("sse_endpoint"),
+                        "supported_transports": server_metadata.get("supported_transports", []),
                     }
                     grouped_results["servers"].append(result_entry)
                     server_count += 1
