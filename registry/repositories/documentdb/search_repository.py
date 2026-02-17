@@ -16,11 +16,52 @@ logger = logging.getLogger(__name__)
 
 # Stopwords to filter out when tokenizing queries for keyword matching
 _STOPWORDS: set[str] = {
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "can", "to", "of", "in", "on", "at", "by",
-    "for", "with", "about", "as", "into", "through", "from", "what", "when",
-    "where", "who", "which", "how", "why", "get", "set", "put"
+    "a",
+    "an",
+    "the",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "have",
+    "has",
+    "had",
+    "do",
+    "does",
+    "did",
+    "will",
+    "would",
+    "could",
+    "should",
+    "may",
+    "might",
+    "can",
+    "to",
+    "of",
+    "in",
+    "on",
+    "at",
+    "by",
+    "for",
+    "with",
+    "about",
+    "as",
+    "into",
+    "through",
+    "from",
+    "what",
+    "when",
+    "where",
+    "who",
+    "which",
+    "how",
+    "why",
+    "get",
+    "set",
+    "put",
 }
 
 
@@ -120,11 +161,11 @@ def _build_text_boost_stage(
                                 "$regexMatch": {
                                     "input": {"$ifNull": ["$path", ""]},
                                     "regex": token_regex,
-                                    "options": "i"
+                                    "options": "i",
                                 }
                             },
                             5.0,
-                            0.0
+                            0.0,
                         ]
                     },
                     # Name match: +3.0
@@ -134,11 +175,11 @@ def _build_text_boost_stage(
                                 "$regexMatch": {
                                     "input": {"$ifNull": ["$name", ""]},
                                     "regex": token_regex,
-                                    "options": "i"
+                                    "options": "i",
                                 }
                             },
                             3.0,
-                            0.0
+                            0.0,
                         ]
                     },
                     # Description match: +2.0
@@ -148,11 +189,11 @@ def _build_text_boost_stage(
                                 "$regexMatch": {
                                     "input": {"$ifNull": ["$description", ""]},
                                     "regex": token_regex,
-                                    "options": "i"
+                                    "options": "i",
                                 }
                             },
                             2.0,
-                            0.0
+                            0.0,
                         ]
                     },
                     # Tags match: +1.5 if any tag matches
@@ -169,17 +210,17 @@ def _build_text_boost_stage(
                                                     "$regexMatch": {
                                                         "input": "$$tag",
                                                         "regex": token_regex,
-                                                        "options": "i"
+                                                        "options": "i",
                                                     }
-                                                }
+                                                },
                                             }
                                         }
                                     },
-                                    0
+                                    0,
                                 ]
                             },
                             1.5,
-                            0.0
+                            0.0,
                         ]
                     },
                     # Tools match: +1.0 per matching tool
@@ -194,21 +235,21 @@ def _build_text_boost_stage(
                                             "$regexMatch": {
                                                 "input": {"$ifNull": ["$$tool.name", ""]},
                                                 "regex": token_regex,
-                                                "options": "i"
+                                                "options": "i",
                                             }
                                         },
                                         {
                                             "$regexMatch": {
                                                 "input": {"$ifNull": ["$$tool.description", ""]},
                                                 "regex": token_regex,
-                                                "options": "i"
+                                                "options": "i",
                                             }
-                                        }
+                                        },
                                     ]
-                                }
+                                },
                             }
                         }
-                    }
+                    },
                 ]
             },
             # Track matching tools for display
@@ -224,18 +265,18 @@ def _build_text_boost_stage(
                                         "$regexMatch": {
                                             "input": {"$ifNull": ["$$tool.name", ""]},
                                             "regex": token_regex,
-                                            "options": "i"
+                                            "options": "i",
                                         }
                                     },
                                     {
                                         "$regexMatch": {
                                             "input": {"$ifNull": ["$$tool.description", ""]},
                                             "regex": token_regex,
-                                            "options": "i"
+                                            "options": "i",
                                         }
-                                    }
+                                    },
                                 ]
-                            }
+                            },
                         }
                     },
                     "as": "tool",
@@ -247,12 +288,12 @@ def _build_text_boost_stage(
                             "$cond": [
                                 {"$ne": ["$$tool.description", None]},
                                 "$$tool.description",
-                                {"$concat": ["Tool: ", "$$tool.name"]}
+                                {"$concat": ["Tool: ", "$$tool.name"]},
                             ]
-                        }
-                    }
+                        },
+                    },
                 }
-            }
+            },
         }
     }
 
@@ -268,14 +309,12 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
         self._embedding_model = None
         self._embedding_unavailable: bool = False
 
-
     async def _get_collection(self) -> AsyncIOMotorCollection:
         """Get DocumentDB collection."""
         if self._collection is None:
             db = await get_documentdb_client()
             self._collection = db[self._collection_name]
         return self._collection
-
 
     async def _get_embedding_model(self):
         """Lazy load embedding model."""
@@ -293,12 +332,9 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             )
         return self._embedding_model
 
-
     async def initialize(self) -> None:
         """Initialize the search service and create vector index."""
-        logger.info(
-            f"Initializing DocumentDB hybrid search on collection: {self._collection_name}"
-        )
+        logger.info(f"Initializing DocumentDB hybrid search on collection: {self._collection_name}")
         collection = await self._get_collection()
 
         try:
@@ -316,21 +352,22 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                             "similarity": "cosine",
                             "dimensions": settings.embeddings_model_dimensions,
                             "m": 16,
-                            "efConstruction": 128
-                        }
+                            "efConstruction": 128,
+                        },
                     )
                     logger.info("Created HNSW vector index")
                 except Exception as vector_error:
                     # Check if this is a MongoDB CE error (vectorOptions not supported)
-                    if "vectorOptions" in str(vector_error) or "not valid for an index specification" in str(vector_error):
+                    if "vectorOptions" in str(
+                        vector_error
+                    ) or "not valid for an index specification" in str(vector_error):
                         logger.warning(
                             "Vector indexes not supported (MongoDB CE detected). "
                             "Creating regular index on embedding field."
                         )
                         # Create a regular index on the embedding field for faster retrieval
                         await collection.create_index(
-                            [("embedding", 1)],
-                            name="embedding_vector_idx"
+                            [("embedding", 1)], name="embedding_vector_idx"
                         )
                         logger.info("Created regular embedding index")
                     else:
@@ -345,7 +382,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
         except Exception as e:
             logger.error(f"Failed to initialize search indexes: {e}", exc_info=True)
-
 
     async def index_server(
         self,
@@ -403,19 +439,14 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 for t in server_info.get("tool_list", [])
             ],
             "metadata": server_info,
-            "indexed_at": server_info.get("updated_at", server_info.get("registered_at"))
+            "indexed_at": server_info.get("updated_at", server_info.get("registered_at")),
         }
 
         try:
-            await collection.replace_one(
-                {"_id": path},
-                doc,
-                upsert=True
-            )
+            await collection.replace_one({"_id": path}, doc, upsert=True)
             logger.info(f"Indexed server '{server_info.get('server_name')}' for search")
         except Exception as e:
             logger.error(f"Failed to index server in search: {e}", exc_info=True)
-
 
     async def index_agent(
         self,
@@ -472,19 +503,14 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             "embedding_metadata": embedding_config.get_embedding_metadata(),
             "capabilities": agent_card.capabilities or [],
             "metadata": agent_card.model_dump(mode="json"),
-            "indexed_at": agent_card.updated_at or agent_card.registered_at
+            "indexed_at": agent_card.updated_at or agent_card.registered_at,
         }
 
         try:
-            await collection.replace_one(
-                {"_id": path},
-                doc,
-                upsert=True
-            )
+            await collection.replace_one({"_id": path}, doc, upsert=True)
             logger.info(f"Indexed agent '{agent_card.name}' for search")
         except Exception as e:
             logger.error(f"Failed to index agent in search: {e}", exc_info=True)
-
 
     async def index_skill(
         self,
@@ -535,7 +561,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
         # Handle visibility enum
         visibility_value = skill.visibility
-        if hasattr(visibility_value, 'value'):
+        if hasattr(visibility_value, "value"):
             visibility_value = visibility_value.value
 
         # Build search document
@@ -559,9 +585,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             "embedding_metadata": embedding_config.get_embedding_metadata(),
             "metadata": {
                 "skill_md_url": str(skill.skill_md_url),
-                "skill_md_raw_url": str(skill.skill_md_raw_url)
-                if skill.skill_md_raw_url
-                else None,
+                "skill_md_raw_url": str(skill.skill_md_raw_url) if skill.skill_md_raw_url else None,
                 "author": skill.metadata.author if skill.metadata else None,
                 "version": skill.metadata.version if skill.metadata else None,
                 "compatibility": skill.compatibility,
@@ -573,15 +597,10 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
         # Upsert to search collection
         try:
-            await collection.replace_one(
-                {"_id": path},
-                search_doc,
-                upsert=True
-            )
+            await collection.replace_one({"_id": path}, search_doc, upsert=True)
             logger.info(f"Indexed skill for search: {path}")
         except Exception as e:
             logger.error(f"Failed to index skill in search: {e}", exc_info=True)
-
 
     async def index_virtual_server(
         self,
@@ -596,7 +615,30 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             virtual_server: VirtualServerConfig object
             is_enabled: Whether virtual server is enabled
         """
+        # Lazy import to avoid circular dependency
+        from ...services.server_service import server_service
+
         collection = await self._get_collection()
+
+        # Get backend server paths for metadata
+        backend_paths = list(
+            {mapping.backend_server_path for mapping in virtual_server.tool_mappings}
+        )
+
+        # Fetch tool descriptions from backend servers
+        # Build a map: backend_path -> {tool_name -> description}
+        backend_tool_descriptions: dict[str, dict[str, str]] = {}
+        for backend_path in backend_paths:
+            try:
+                server_info = await server_service.get_server_info(backend_path)
+                if server_info:
+                    tool_list = server_info.get("tool_list", [])
+                    backend_tool_descriptions[backend_path] = {
+                        tool.get("name", ""): tool.get("description", "") for tool in tool_list
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to fetch tools from backend {backend_path}: {e}")
+                backend_tool_descriptions[backend_path] = {}
 
         # Compose text for embedding
         text_parts = [
@@ -608,13 +650,31 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
         if virtual_server.tags:
             text_parts.append(f"Tags: {', '.join(virtual_server.tags)}")
 
-        # Add tool names from mappings for better semantic search
+        # Build tools array and collect text for embedding
+        tools = []
         tool_names = []
         for mapping in virtual_server.tool_mappings:
             display_name = mapping.alias or mapping.tool_name
             tool_names.append(display_name)
+
+            # Use description_override if set, otherwise get from backend
             if mapping.description_override:
-                text_parts.append(mapping.description_override)
+                description = mapping.description_override
+            else:
+                backend_tools = backend_tool_descriptions.get(mapping.backend_server_path, {})
+                description = backend_tools.get(mapping.tool_name, "")
+
+            # Add description to embedding text
+            if description:
+                text_parts.append(description)
+
+            tools.append(
+                {
+                    "name": display_name,
+                    "description": description,
+                    "backend_server": mapping.backend_server_path,
+                }
+            )
 
         if tool_names:
             text_parts.append(f"Tools: {', '.join(tool_names)}")
@@ -632,21 +692,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 e,
             )
             embedding = []
-
-        # Build tools array for search (similar to mcp_server)
-        tools = [
-            {
-                "name": mapping.alias or mapping.tool_name,
-                "description": mapping.description_override or "",
-                "backend_server": mapping.backend_server_path,
-            }
-            for mapping in virtual_server.tool_mappings
-        ]
-
-        # Get backend server paths for metadata
-        backend_paths = list(
-            {mapping.backend_server_path for mapping in virtual_server.tool_mappings}
-        )
 
         # Build search document
         search_doc = {
@@ -675,21 +720,12 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
         # Upsert to search collection
         try:
-            await collection.replace_one(
-                {"_id": path},
-                search_doc,
-                upsert=True
-            )
+            await collection.replace_one({"_id": path}, search_doc, upsert=True)
             logger.info(f"Indexed virtual server for search: {path}")
         except Exception as e:
             logger.error(f"Failed to index virtual server in search: {e}", exc_info=True)
 
-
-    def _calculate_cosine_similarity(
-        self,
-        vec1: list[float],
-        vec2: list[float]
-    ) -> float:
+    def _calculate_cosine_similarity(self, vec1: list[float], vec2: list[float]) -> float:
         """Calculate cosine similarity between two vectors.
 
         Returns a value between 0 and 1, where 1 is identical.
@@ -708,7 +744,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
         return dot_product / (magnitude1 * magnitude2)
 
-
     async def remove_entity(
         self,
         path: str,
@@ -724,7 +759,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 logger.warning(f"Entity '{path}' not found in search index")
         except Exception as e:
             logger.error(f"Failed to remove entity from search index: {e}", exc_info=True)
-
 
     async def _client_side_search(
         self,
@@ -747,18 +781,21 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 query_filter["entity_type"] = {"$in": entity_types}
 
             # Fetch all embeddings from MongoDB
-            cursor = collection.find(query_filter, {
-                "_id": 1,
-                "path": 1,
-                "entity_type": 1,
-                "name": 1,
-                "description": 1,
-                "tags": 1,
-                "tools": 1,
-                "metadata": 1,
-                "is_enabled": 1,
-                "embedding": 1
-            })
+            cursor = collection.find(
+                query_filter,
+                {
+                    "_id": 1,
+                    "path": 1,
+                    "entity_type": 1,
+                    "name": 1,
+                    "description": 1,
+                    "tags": 1,
+                    "tools": 1,
+                    "metadata": 1,
+                    "is_enabled": 1,
+                    "embedding": 1,
+                },
+            )
 
             all_docs = await cursor.to_list(length=None)
             logger.info(f"Client-side search: Retrieved {len(all_docs)} documents with embeddings")
@@ -804,25 +841,30 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 for tool in tools:
                     tool_name = tool.get("name", "")
                     tool_desc = tool.get("description") or ""
-                    tool_matched = _tokens_match_text(query_tokens, tool_name) or \
-                        _tokens_match_text(query_tokens, tool_desc)
+                    tool_matched = _tokens_match_text(
+                        query_tokens, tool_name
+                    ) or _tokens_match_text(query_tokens, tool_desc)
 
                     if tool_matched:
                         text_boost += 1.0
-                        matching_tools.append({
-                            "tool_name": tool_name,
-                            "description": tool_desc,
-                            "relevance_score": 1.0,
-                            "match_context": tool_desc or f"Tool: {tool_name}"
-                        })
+                        matching_tools.append(
+                            {
+                                "tool_name": tool_name,
+                                "description": tool_desc,
+                                "relevance_score": 1.0,
+                                "match_context": tool_desc or f"Tool: {tool_name}",
+                            }
+                        )
                     elif server_name_matched:
                         # If server name/path matched, include all tools with base score
-                        matching_tools.append({
-                            "tool_name": tool_name,
-                            "description": tool_desc,
-                            "relevance_score": 0.8,
-                            "match_context": tool_desc or f"Tool: {tool_name}"
-                        })
+                        matching_tools.append(
+                            {
+                                "tool_name": tool_name,
+                                "description": tool_desc,
+                                "relevance_score": 0.8,
+                                "match_context": tool_desc or f"Tool: {tool_name}",
+                            }
+                        )
 
                 # Store matching tools for later use
                 doc["_matching_tools"] = matching_tools
@@ -840,18 +882,23 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     "Score for '%s' (type=%s): vector=%.4f, "
                     "normalized_vector=%.4f, text_boost=%.1f, "
                     "boost_contrib=%.4f, final=%.4f",
-                    doc.get("name"), doc.get("entity_type"),
-                    vector_score, normalized_vector_score,
-                    text_boost, text_boost_contribution,
+                    doc.get("name"),
+                    doc.get("entity_type"),
+                    vector_score,
+                    normalized_vector_score,
+                    text_boost,
+                    text_boost_contribution,
                     relevance_score,
                 )
 
-                scored_docs.append({
-                    "doc": doc,
-                    "relevance_score": relevance_score,
-                    "vector_score": vector_score,
-                    "text_boost": text_boost
-                })
+                scored_docs.append(
+                    {
+                        "doc": doc,
+                        "relevance_score": relevance_score,
+                        "vector_score": vector_score,
+                        "text_boost": text_boost,
+                    }
+                )
 
             # Sort by relevance score (descending)
             scored_docs.sort(key=lambda x: x["relevance_score"], reverse=True)
@@ -916,8 +963,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 # Build a lookup map from tool name to inputSchema from original tools
                 original_tools = doc.get("tools", [])
                 tool_schema_map = {
-                    t.get("name", ""): t.get("inputSchema", {})
-                    for t in original_tools
+                    t.get("name", ""): t.get("inputSchema", {}) for t in original_tools
                 }
 
                 server_path = doc.get("path", "")
@@ -926,16 +972,18 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     if tool_count >= 3:
                         break
                     tool_name = tool.get("tool_name", "")
-                    grouped_results["tools"].append({
-                        "entity_type": "tool",
-                        "server_path": server_path,
-                        "server_name": server_name,
-                        "tool_name": tool_name,
-                        "description": tool.get("description", ""),
-                        "inputSchema": tool_schema_map.get(tool_name, {}),
-                        "relevance_score": tool.get("relevance_score", relevance_score),
-                        "match_context": tool.get("match_context", "")
-                    })
+                    grouped_results["tools"].append(
+                        {
+                            "entity_type": "tool",
+                            "server_path": server_path,
+                            "server_name": server_name,
+                            "tool_name": tool_name,
+                            "description": tool.get("description", ""),
+                            "inputSchema": tool_schema_map.get(tool_name, {}),
+                            "relevance_score": tool.get("relevance_score", relevance_score),
+                            "match_context": tool.get("match_context", ""),
+                        }
+                    )
                     tool_count += 1
 
             for item in agents:
@@ -955,7 +1003,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     "is_enabled": doc.get("is_enabled", False),
                     "relevance_score": relevance_score,
                     "match_context": doc.get("description"),
-                    "agent_card": metadata.get("agent_card", {})
+                    "agent_card": metadata.get("agent_card", {}),
                 }
                 grouped_results["agents"].append(result_entry)
 
@@ -970,7 +1018,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     "description": doc.get("description"),
                     "inputSchema": doc.get("inputSchema", {}),
                     "relevance_score": relevance_score,
-                    "match_context": doc.get("description")
+                    "match_context": doc.get("description"),
                 }
                 grouped_results["tools"].append(result_entry)
 
@@ -1040,7 +1088,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 "virtual_servers": [],
             }
 
-
     async def _lexical_only_search(
         self,
         query: str,
@@ -1090,8 +1137,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
         grouped_results = self._format_lexical_results(results)
 
         logger.info(
-            "Lexical-only search for '%s' returned "
-            "%d servers, %d tools, %d agents",
+            "Lexical-only search for '%s' returned %d servers, %d tools, %d agents",
             query,
             len(grouped_results["servers"]),
             len(grouped_results["tools"]),
@@ -1099,7 +1145,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
         )
 
         return grouped_results
-
 
     def _format_lexical_results(
         self,
@@ -1158,8 +1203,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                 # Add matching tools to top-level tools array
                 original_tools = doc.get("tools", [])
                 tool_schema_map = {
-                    t.get("name", ""): t.get("inputSchema", {})
-                    for t in original_tools
+                    t.get("name", ""): t.get("inputSchema", {}) for t in original_tools
                 }
                 server_path = doc.get("path", "")
                 server_name = doc.get("name", "")
@@ -1167,16 +1211,18 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     if tool_count >= 3:
                         break
                     tool_name = tool.get("tool_name", "")
-                    grouped_results["tools"].append({
-                        "entity_type": "tool",
-                        "server_path": server_path,
-                        "server_name": server_name,
-                        "tool_name": tool_name,
-                        "description": tool.get("description", ""),
-                        "inputSchema": tool_schema_map.get(tool_name, {}),
-                        "relevance_score": tool.get("relevance_score", relevance_score),
-                        "match_context": tool.get("match_context", ""),
-                    })
+                    grouped_results["tools"].append(
+                        {
+                            "entity_type": "tool",
+                            "server_path": server_path,
+                            "server_name": server_name,
+                            "tool_name": tool_name,
+                            "description": tool.get("description", ""),
+                            "inputSchema": tool_schema_map.get(tool_name, {}),
+                            "relevance_score": tool.get("relevance_score", relevance_score),
+                            "match_context": tool.get("match_context", ""),
+                        }
+                    )
                     tool_count += 1
 
             elif entity_type == "a2a_agent" and agent_count < 3:
@@ -1253,7 +1299,6 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
         return grouped_results
 
-
     async def search(
         self,
         query: str,
@@ -1283,9 +1328,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     self._embedding_unavailable = True
 
             if query_embedding is None:
-                return await self._lexical_only_search(
-                    query, entity_types, max_results
-                )
+                return await self._lexical_only_search(query, entity_types, max_results)
 
             # DocumentDB vector search returns results sorted by similarity
             # We get more results than needed to allow for text-based re-ranking
@@ -1306,7 +1349,8 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             ]
             logger.info(
                 "Vector search pipeline: k=%d, efSearch=%d",
-                k_value, ef_search,
+                k_value,
+                ef_search,
             )
 
             # Apply entity type filter if specified
@@ -1321,7 +1365,9 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             token_regex = "|".join(escaped_tokens) if escaped_tokens else query
             logger.info(
                 "Hybrid search tokens for '%s': %s (regex: %s)",
-                query, query_tokens, token_regex,
+                query,
+                query_tokens,
+                token_regex,
             )
 
             # NOTE: DocumentDB does not support $unionWith, so we run a separate
@@ -1350,14 +1396,19 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             # Log vector search results for diagnosis
             logger.info(
                 "Vector search for '%s' returned %d documents (k=%d, efSearch=%d)",
-                query, len(results), k_value, ef_search,
+                query,
+                len(results),
+                k_value,
+                ef_search,
             )
             for i, doc in enumerate(results):
                 logger.info(
-                    "  Vector result [%d]: name='%s', type=%s, "
-                    "text_boost=%.1f, path='%s'",
-                    i, doc.get("name"), doc.get("entity_type"),
-                    doc.get("text_boost", 0.0), doc.get("path"),
+                    "  Vector result [%d]: name='%s', type=%s, text_boost=%.1f, path='%s'",
+                    i,
+                    doc.get("name"),
+                    doc.get("entity_type"),
+                    doc.get("text_boost", 0.0),
+                    doc.get("path"),
                 )
 
             # DocumentDB doesn't support $unionWith, so we run a separate keyword
@@ -1368,17 +1419,18 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
 
             logger.info(
                 "Keyword search for '%s' found %d candidates",
-                query, len(keyword_results),
+                query,
+                len(keyword_results),
             )
             for i, kw_doc in enumerate(keyword_results):
-                already_in = kw_doc.get("_id") in {
-                    doc.get("_id") for doc in results
-                }
+                already_in = kw_doc.get("_id") in {doc.get("_id") for doc in results}
                 logger.info(
-                    "  Keyword candidate [%d]: name='%s', type=%s, "
-                    "path='%s', already_in_vector=%s",
-                    i, kw_doc.get("name"), kw_doc.get("entity_type"),
-                    kw_doc.get("path"), already_in,
+                    "  Keyword candidate [%d]: name='%s', type=%s, path='%s', already_in_vector=%s",
+                    i,
+                    kw_doc.get("name"),
+                    kw_doc.get("entity_type"),
+                    kw_doc.get("path"),
+                    already_in,
                 )
 
             # Merge keyword results with vector results, avoiding duplicates
@@ -1395,9 +1447,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     doc_name = (kw_doc.get("name") or "").lower()
                     doc_path = (kw_doc.get("path") or "").lower()
                     doc_desc = (kw_doc.get("description") or "").lower()
-                    doc_tags = [
-                        (t or "").lower() for t in kw_doc.get("tags", [])
-                    ]
+                    doc_tags = [(t or "").lower() for t in kw_doc.get("tags", [])]
 
                     for token in query_tokens:
                         token_lower = token.lower()
@@ -1423,12 +1473,15 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                         )
                         if tool_matches:
                             kw_text_boost += 1.0  # Tool match
-                            matching_tools.append({
-                                "tool_name": tool.get("name", ""),
-                                "description": tool.get("description", ""),
-                                "relevance_score": 1.0,
-                                "match_context": tool.get("description") or f"Tool: {tool.get('name', '')}"
-                            })
+                            matching_tools.append(
+                                {
+                                    "tool_name": tool.get("name", ""),
+                                    "description": tool.get("description", ""),
+                                    "relevance_score": 1.0,
+                                    "match_context": tool.get("description")
+                                    or f"Tool: {tool.get('name', '')}",
+                                }
+                            )
 
                     kw_doc["text_boost"] = kw_text_boost
                     kw_doc["matching_tools"] = matching_tools
@@ -1438,14 +1491,15 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     keyword_added_count += 1
                     logger.info(
                         "Keyword merge added '%s' (type=%s, text_boost=%.1f)",
-                        kw_doc.get("name"), kw_doc.get("entity_type"),
+                        kw_doc.get("name"),
+                        kw_doc.get("entity_type"),
                         kw_text_boost,
                     )
 
             logger.info(
-                "After keyword merge: %d total results "
-                "(%d added from keyword search)",
-                len(results), keyword_added_count,
+                "After keyword merge: %d total results (%d added from keyword search)",
+                len(results),
+                keyword_added_count,
             )
 
             # Calculate hybrid scores for ALL results before grouping
@@ -1454,9 +1508,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             for doc in results:
                 entity_type = doc.get("entity_type")
                 doc_embedding = doc.get("embedding", [])
-                vector_score = self._calculate_cosine_similarity(
-                    query_embedding, doc_embedding
-                )
+                vector_score = self._calculate_cosine_similarity(query_embedding, doc_embedding)
                 text_boost = doc.get("text_boost", 0.0)
 
                 # Normalize vector_score from [-1, 1] to [0, 1]
@@ -1472,9 +1524,12 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     "Score for '%s' (type=%s): vector=%.4f, "
                     "normalized_vector=%.4f, text_boost=%.1f, "
                     "boost_contrib=%.4f, final=%.4f",
-                    doc.get("name"), entity_type,
-                    vector_score, normalized_vector_score,
-                    text_boost, text_boost_contribution,
+                    doc.get("name"),
+                    entity_type,
+                    vector_score,
+                    normalized_vector_score,
+                    text_boost,
+                    text_boost_contribution,
                     relevance_score,
                 )
 
@@ -1539,8 +1594,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                     # Build a lookup map from tool name to inputSchema from original tools
                     original_tools = doc.get("tools", [])
                     tool_schema_map = {
-                        t.get("name", ""): t.get("inputSchema", {})
-                        for t in original_tools
+                        t.get("name", ""): t.get("inputSchema", {}) for t in original_tools
                     }
 
                     server_path = doc.get("path", "")
@@ -1549,16 +1603,18 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                         if tool_count >= 3:
                             break
                         tool_name = tool.get("tool_name", "")
-                        grouped_results["tools"].append({
-                            "entity_type": "tool",
-                            "server_path": server_path,
-                            "server_name": server_name,
-                            "tool_name": tool_name,
-                            "description": tool.get("description", ""),
-                            "inputSchema": tool_schema_map.get(tool_name, {}),
-                            "relevance_score": tool.get("relevance_score", relevance_score),
-                            "match_context": tool.get("match_context", "")
-                        })
+                        grouped_results["tools"].append(
+                            {
+                                "entity_type": "tool",
+                                "server_path": server_path,
+                                "server_name": server_name,
+                                "tool_name": tool_name,
+                                "description": tool.get("description", ""),
+                                "inputSchema": tool_schema_map.get(tool_name, {}),
+                                "relevance_score": tool.get("relevance_score", relevance_score),
+                                "match_context": tool.get("match_context", ""),
+                            }
+                        )
                         tool_count += 1
 
                 elif entity_type == "a2a_agent":
@@ -1589,7 +1645,7 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
                         "description": doc.get("description"),
                         "inputSchema": doc.get("inputSchema", {}),
                         "relevance_score": relevance_score,
-                        "match_context": doc.get("description")
+                        "match_context": doc.get("description"),
                     }
                     grouped_results["tools"].append(result_entry)
                     tool_count += 1
@@ -1637,18 +1693,10 @@ class DocumentDBSearchRepository(SearchRepositoryBase):
             # Sort each group by relevance_score (descending) to ensure highest matches
             # appear first. This is needed because the DB sorts by text_boost only,
             # but relevance_score combines both vector similarity and text boost.
-            grouped_results["servers"].sort(
-                key=lambda x: x.get("relevance_score", 0), reverse=True
-            )
-            grouped_results["tools"].sort(
-                key=lambda x: x.get("relevance_score", 0), reverse=True
-            )
-            grouped_results["agents"].sort(
-                key=lambda x: x.get("relevance_score", 0), reverse=True
-            )
-            grouped_results["skills"].sort(
-                key=lambda x: x.get("relevance_score", 0), reverse=True
-            )
+            grouped_results["servers"].sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+            grouped_results["tools"].sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+            grouped_results["agents"].sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
+            grouped_results["skills"].sort(key=lambda x: x.get("relevance_score", 0), reverse=True)
             grouped_results["virtual_servers"].sort(
                 key=lambda x: x.get("relevance_score", 0), reverse=True
             )
