@@ -12,7 +12,6 @@ from ..auth.dependencies import nginx_proxied_auth
 from ..core.config import DeploymentMode, RegistryMode, settings
 from ..repositories.factory import get_search_repository
 from ..repositories.interfaces import SearchRepositoryBase
-from ..schemas.virtual_server_models import VirtualServerConfig
 from ..services.agent_service import agent_service
 from ..services.server_service import server_service
 from ..services.virtual_server_service import get_virtual_server_service
@@ -215,22 +214,19 @@ class SemanticSearchResponse(BaseModel):
 async def _get_tool_schema_for_virtual_server(
     vs_path: str,
     tool_name: str,
-    vs_config: VirtualServerConfig | None = None,
 ) -> dict | None:
     """Look up tool schema from backend server for a virtual server's tool.
 
     Args:
         vs_path: Virtual server path
         tool_name: Name of the tool to look up (can be the original name or alias)
-        vs_config: Optional pre-fetched VirtualServerConfig to avoid repeated lookups
 
     Returns:
         Tool inputSchema dict if found, None otherwise
     """
     try:
-        if vs_config is None:
-            vs_service = get_virtual_server_service()
-            vs_config = await vs_service.get_virtual_server(vs_path)
+        vs_service = get_virtual_server_service()
+        vs_config = await vs_service.get_virtual_server(vs_path)
 
         if not vs_config:
             return None
@@ -560,7 +556,6 @@ async def semantic_search(
 
     # Process virtual servers
     filtered_virtual_servers: list[VirtualServerSearchResult] = []
-    vs_service = get_virtual_server_service()
     for vs in raw_results.get("virtual_servers", []):
         vs_path = vs.get("path", "")
         if not vs_path:
@@ -574,58 +569,22 @@ async def semantic_search(
         ):
             continue
 
-        # Get all tools from the virtual server configuration
-        # This ensures we show all tools when a virtual server matches,
-        # not just the ones that matched by keyword
+        # Build matching tools with schema lookup from backend servers
+        # Only include tools that matched the search query
         matching_tools: list[MatchingToolResult] = []
-        raw_matching_tools = vs.get("matching_tools", [])
-
-        try:
-            vs_config = await vs_service.get_virtual_server(vs_path)
-            if vs_config and vs_config.tool_mappings:
-                for tm in vs_config.tool_mappings:
-                    tool_name = tm.alias or tm.tool_name
-
-                    # Look up the tool schema from the backend server
-                    # Pass vs_config to avoid repeated lookups
-                    input_schema = await _get_tool_schema_for_virtual_server(
-                        vs_path, tm.tool_name, vs_config
-                    )
-
-                    # Find match info from raw_matching_tools if available
-                    # Tools that matched the query will have higher relevance score
-                    match_info = next(
-                        (t for t in raw_matching_tools if t.get("tool_name", "") == tool_name), None
-                    )
-
-                    matching_tools.append(
-                        MatchingToolResult(
-                            tool_name=tool_name,
-                            description=tm.description_override or "",
-                            relevance_score=match_info.get("relevance_score", 0.8)
-                            if match_info
-                            else 0.8,
-                            match_context=match_info.get("match_context")
-                            if match_info
-                            else f"Tool: {tool_name}",
-                            inputSchema=input_schema,
-                        )
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to get tools for virtual server {vs_path}: {e}")
-            # Fallback to raw matching tools
-            for tool in raw_matching_tools:
-                tool_name = tool.get("tool_name", "")
-                input_schema = await _get_tool_schema_for_virtual_server(vs_path, tool_name)
-                matching_tools.append(
-                    MatchingToolResult(
-                        tool_name=tool_name,
-                        description=tool.get("description"),
-                        relevance_score=tool.get("relevance_score", 0.0),
-                        match_context=tool.get("match_context"),
-                        inputSchema=input_schema,
-                    )
+        for tool in vs.get("matching_tools", []):
+            tool_name = tool.get("tool_name", "")
+            # Look up the tool schema from the backend server
+            input_schema = await _get_tool_schema_for_virtual_server(vs_path, tool_name)
+            matching_tools.append(
+                MatchingToolResult(
+                    tool_name=tool_name,
+                    description=tool.get("description"),
+                    relevance_score=tool.get("relevance_score", 0.0),
+                    match_context=tool.get("match_context"),
+                    inputSchema=input_schema,
                 )
+            )
 
         # Compute endpoint URL for virtual server
         vs_endpoint_url = _compute_endpoint_url(
