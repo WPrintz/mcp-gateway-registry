@@ -243,6 +243,13 @@ _cleanup() {
 _test_create_virtual_server() {
     _log_step "Step 1: Create Virtual Server with Scope-Based Access Control"
 
+    # Delete existing virtual server if it exists (override mode)
+    _log_info "Checking for existing virtual server..."
+    uv run python "$PROJECT_ROOT/api/registry_management.py" \
+        --registry-url "$REGISTRY_URL" \
+        --token-file "$TOKEN_FILE" \
+        vs-delete --path "$VS_PATH" --force 2>/dev/null || true
+
     _log_info "Virtual server configuration:"
     cat "$TEMP_VS_CONFIG" | jq '.'
 
@@ -255,6 +262,13 @@ _test_create_virtual_server() {
 
 _test_create_group() {
     _log_step "Step 2: Create User Group with Matching Scopes"
+
+    # Delete existing group if it exists (override mode)
+    _log_info "Checking for existing group..."
+    uv run python "$PROJECT_ROOT/api/registry_management.py" \
+        --registry-url "$REGISTRY_URL" \
+        --token-file "$TOKEN_FILE" \
+        group-delete --name "$GROUP_NAME" --force 2>/dev/null || true
 
     _log_info "Group configuration:"
     cat "$TEMP_GROUP_CONFIG" | jq '.'
@@ -269,6 +283,13 @@ _test_create_group() {
 
 _test_create_m2m_account() {
     _log_step "Step 3: Create M2M Service Account in Group"
+
+    # Delete existing M2M account if it exists (override mode)
+    _log_info "Checking for existing M2M account..."
+    uv run python "$PROJECT_ROOT/api/registry_management.py" \
+        --registry-url "$REGISTRY_URL" \
+        --token-file "$TOKEN_FILE" \
+        user-delete --username "$M2M_NAME" --force 2>/dev/null || true
 
     _log_info "Creating M2M service account..."
     M2M_OUTPUT=$(uv run python "$PROJECT_ROOT/api/registry_management.py" \
@@ -289,6 +310,13 @@ _test_create_m2m_account() {
 
 _test_create_regular_user() {
     _log_step "Step 4: Create Regular User in Group"
+
+    # Delete existing regular user if it exists (override mode)
+    _log_info "Checking for existing regular user..."
+    uv run python "$PROJECT_ROOT/api/registry_management.py" \
+        --registry-url "$REGISTRY_URL" \
+        --token-file "$TOKEN_FILE" \
+        user-delete --username "$USER_NAME" --force 2>/dev/null || true
 
     # Generate a random password
     USER_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
