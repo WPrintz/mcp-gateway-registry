@@ -54,14 +54,27 @@ const ServerConfigModal: React.FC<ServerConfigModalProps> = ({
         },
       });
 
-      if (response.data.success && response.data.access_token) {
-        setJwtToken(response.data.access_token);
+      if (response.data.success) {
+        // Token can be in response.data.tokens.access_token or response.data.access_token
+        const accessToken = response.data.tokens?.access_token || response.data.access_token;
+        if (accessToken) {
+          setJwtToken(accessToken);
+        } else {
+          setTokenError('Token not found in response');
+        }
       } else {
         setTokenError('Token generation failed');
       }
     } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || 'Failed to generate token';
-      setTokenError(errorMessage);
+      const status = err.response?.status;
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to generate token';
+
+      // Provide more helpful error messages based on status
+      if (status === 401 || status === 403) {
+        setTokenError('Authentication required. Please log in first.');
+      } else {
+        setTokenError(errorMessage);
+      }
       console.error('Failed to fetch JWT token:', err);
     } finally {
       setTokenLoading(false);
