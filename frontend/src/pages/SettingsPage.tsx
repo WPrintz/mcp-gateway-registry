@@ -7,9 +7,11 @@ import {
   GlobeAltIcon,
   ArrowLeftIcon,
   ClipboardDocumentListIcon,
+  CogIcon,
 } from '@heroicons/react/24/outline';
 import FederationPeers from '../components/FederationPeers';
 import FederationPeerForm from '../components/FederationPeerForm';
+import ConfigPanel from '../components/ConfigPanel';
 import AuditLogsPage from './AuditLogsPage';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -79,6 +81,15 @@ const SETTINGS_CATEGORIES: SettingsCategory[] = [
       { id: 'm2m', label: 'M2M Accounts', path: '/settings/iam/m2m' },
     ],
     disabled: true, // IAM not implemented yet
+  },
+  {
+    id: 'system-config',
+    label: 'System Config',
+    icon: <CogIcon className="h-5 w-5" />,
+    items: [
+      { id: 'configuration', label: 'Configuration', path: '/settings/system-config/configuration' },
+    ],
+    adminOnly: true,
   },
 ];
 
@@ -189,6 +200,11 @@ const SettingsPage: React.FC = () => {
     const editMatch = path.match(/^\/settings\/federation\/peers\/([^/]+)\/edit$/);
     if (editMatch) {
       return <FederationPeerForm peerId={editMatch[1]} onShowToast={showToast} />;
+    }
+
+    // System Config > Configuration
+    if (path === '/settings/system-config/configuration' || path === '/settings/system-config') {
+      return <ConfigPanel showToast={showToast} />;
     }
 
     // IAM placeholders (not implemented yet)
