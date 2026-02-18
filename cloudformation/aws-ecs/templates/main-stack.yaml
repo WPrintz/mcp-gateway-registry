@@ -375,6 +375,12 @@ Parameters:
     Default: ''
     Description: Image tag for metrics-service (defaults to 'latest' if empty)
 
+  # Pre-built Container Assets
+  ContainerAssetsS3Url:
+    Type: String
+    Default: https://ws-assets-us-east-1.s3.us-east-1.amazonaws.com/0c3265a6-1a4a-467b-ae56-e4d019184b0e/static/containers
+    Description: S3 URL base for pre-built container image tarballs (no trailing slash)
+
   # Template S3 Location (for nested stacks)
   # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
   # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
@@ -468,6 +474,7 @@ Resources:
         UseRegionalDomains: !Ref UseRegionalDomains
         UpstreamVersion: !Ref UpstreamVersion
         BuildTriggerVersion: !Ref BuildTriggerVersion
+        ContainerAssetsS3Url: !Ref ContainerAssetsS3Url
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-compute
