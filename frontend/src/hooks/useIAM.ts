@@ -85,6 +85,44 @@ export async function deleteGroup(name: string): Promise<void> {
   await axios.delete(`/api/management/iam/groups/${encodeURIComponent(name)}`);
 }
 
+// ─── Group Detail Types & Functions ────────────────────────────
+
+export interface GroupDetail {
+  id: string;
+  name: string;
+  path?: string;
+  description?: string;
+  server_access?: Array<{server: string; methods: string[]; tools?: string[]}>;
+  group_mappings?: string[];
+  ui_permissions?: Record<string, string[]>;
+  agent_access?: string[];
+}
+
+export interface UpdateGroupPayload {
+  description?: string;
+  scope_config?: {
+    server_access?: Array<{server: string; methods: string[]; tools?: string[]}>;
+    ui_permissions?: Record<string, string[]>;
+    agent_access?: string[];
+  };
+}
+
+export async function getGroup(groupName: string): Promise<GroupDetail> {
+  const res = await axios.get(`/api/management/iam/groups/${encodeURIComponent(groupName)}`);
+  return res.data;
+}
+
+export async function updateGroup(
+  groupName: string,
+  payload: UpdateGroupPayload
+): Promise<GroupDetail> {
+  const res = await axios.patch(
+    `/api/management/iam/groups/${encodeURIComponent(groupName)}`,
+    payload
+  );
+  return res.data;
+}
+
 // ─── Hook: useIAMUsers ──────────────────────────────────────────
 
 export function useIAMUsers(search?: string) {
@@ -124,4 +162,22 @@ export async function createM2MAccount(payload: CreateM2MPayload): Promise<M2MCr
 
 export async function deleteUser(username: string): Promise<void> {
   await axios.delete(`/api/management/iam/users/${encodeURIComponent(username)}`);
+}
+
+export interface UpdateUserGroupsResponse {
+  username: string;
+  groups: string[];
+  added: string[];
+  removed: string[];
+}
+
+export async function updateUserGroups(
+  username: string,
+  groups: string[]
+): Promise<UpdateUserGroupsResponse> {
+  const res = await axios.patch(
+    `/api/management/iam/users/${encodeURIComponent(username)}/groups`,
+    { groups }
+  );
+  return res.data;
 }

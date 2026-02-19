@@ -10,9 +10,19 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   XMarkIcon,
+  PencilIcon,
 } from '@heroicons/react/24/outline';
-import { useIAMGroups, createGroup, deleteGroup, CreateGroupPayload } from '../hooks/useIAM';
-import { useServerList } from '../hooks/useToolCatalog';
+import {
+  useIAMGroups,
+  createGroup,
+  deleteGroup,
+  getGroup,
+  updateGroup,
+  CreateGroupPayload,
+  GroupDetail,
+  UpdateGroupPayload,
+} from '../hooks/useIAM';
+import { useServerList, useServerTools } from '../hooks/useToolCatalog';
 import { useAgentList } from '../hooks/useAgentList';
 import DeleteConfirmation from './DeleteConfirmation';
 import SearchableSelect from './SearchableSelect';
@@ -21,7 +31,7 @@ interface IAMGroupsProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-type View = 'list' | 'create';
+type View = 'list' | 'create' | 'edit';
 
 // ─── Server access entry shape ──────────────────────────────────
 interface ServerAccessEntry {
@@ -78,7 +88,144 @@ const EXAMPLE_SCOPE_JSON = {
   create_in_idp: true,
 };
 
-const EMPTY_SERVER_ENTRY: ServerAccessEntry = { server: '', methods: [], tools: [] };
+// Default entry has all methods selected
+const EMPTY_SERVER_ENTRY: ServerAccessEntry = { server: '', methods: [...COMMON_METHODS], tools: [] };
+
+
+/**
+ * Sub-component for selecting tools for a specific server.
+ * Uses useServerTools hook to fetch available tools and SearchableSelect for UI.
+ */
+interface ServerToolsSelectorProps {
+  serverPath: string;
+  selectedTools: string[];
+  onChange: (tools: string[]) => void;
+}
+
+const ServerToolsSelector: React.FC<ServerToolsSelectorProps> = ({
+  serverPath,
+  selectedTools,
+  onChange,
+}) => {
+  const { tools, isLoading } = useServerTools(serverPath);
+
+  // Handle adding a tool
+  const handleAddTool = (toolName: string) => {
+    if (!toolName) return;
+
+    // If selecting wildcard, replace all with just wildcard
+    if (toolName === '*') {
+      onChange(['*']);
+      return;
+    }
+
+    // If wildcard is already selected, don't add specific tools
+    if (selectedTools.includes('*')) {
+      return;
+    }
+
+    // Add tool if not already selected
+    if (!selectedTools.includes(toolName)) {
+      onChange([...selectedTools, toolName]);
+    }
+  };
+
+  // Handle removing a tool
+  const handleRemoveTool = (toolName: string) => {
+    onChange(selectedTools.filter((t) => t !== toolName));
+  };
+
+  // If server is wildcard, show message
+  if (serverPath === '*') {
+    return (
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Tools</label>
+        <p className="text-xs text-gray-400 italic">All tools on all servers</p>
+      </div>
+    );
+  }
+
+  // If no server selected, show disabled state
+  if (!serverPath) {
+    return (
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Tools</label>
+        <p className="text-xs text-gray-400 italic">Select a server first</p>
+      </div>
+    );
+  }
+
+  // If wildcard is selected, show that with remove option
+  if (selectedTools.includes('*')) {
+    return (
+      <div>
+        <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Tools</label>
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full">
+            * (All tools)
+            <button
+              type="button"
+              onClick={() => handleRemoveTool('*')}
+              className="ml-1 hover:text-purple-900 dark:hover:text-purple-100"
+            >
+              <XMarkIcon className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  // Build options from available tools, excluding already selected
+  const availableOptions = tools
+    .filter((t) => !selectedTools.includes(t.name))
+    .map((t) => ({
+      value: t.name,
+      label: t.name,
+      description: t.description,
+    }));
+
+  return (
+    <div>
+      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Tools</label>
+      <div className="space-y-2">
+        {/* Selected tools as removable tags */}
+        {selectedTools.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {selectedTools.map((toolName) => (
+              <span
+                key={toolName}
+                className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full"
+              >
+                {toolName}
+                <button
+                  type="button"
+                  onClick={() => handleRemoveTool(toolName)}
+                  className="ml-1 hover:text-purple-900 dark:hover:text-purple-100"
+                >
+                  <XMarkIcon className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Searchable tool selector */}
+        <SearchableSelect
+          options={availableOptions}
+          value=""
+          onChange={handleAddTool}
+          placeholder="Search and add tools..."
+          isLoading={isLoading}
+          maxDescriptionWords={8}
+          specialOptions={[
+            { value: '*', label: '* (All tools)', description: 'Grant access to all tools on this server' },
+          ]}
+        />
+      </div>
+    </div>
+  );
+};
 
 
 /**
@@ -130,6 +277,29 @@ function _buildScopeJson(
     const items = val.split(',').map((v) => v.trim()).filter(Boolean);
     if (items.length > 0) perms[key] = items;
   }
+
+  // Auto-populate list_service and health_check_service from selected servers
+  // This ensures users can see the servers in the UI without manual configuration
+  const serverPaths = serverAccess
+    .filter((e) => e.server.trim())
+    .map((e) => e.server.trim());
+  if (serverPaths.length > 0) {
+    // Only auto-populate if not already manually configured
+    if (!perms['list_service']) {
+      perms['list_service'] = serverPaths;
+    }
+    if (!perms['health_check_service']) {
+      perms['health_check_service'] = serverPaths;
+    }
+  }
+
+  // Always sync list_agents and get_agent with selected agents
+  // This ensures UI permissions match the agent_access selection
+  if (selectedAgents.length > 0) {
+    perms['list_agents'] = selectedAgents;
+    perms['get_agent'] = selectedAgents;
+  }
+
   if (Object.keys(perms).length > 0) result.ui_permissions = perms;
 
   result.create_in_idp = createInIdp;
@@ -154,6 +324,12 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const [createInIdp, setCreateInIdp] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [showUiPermissions, setShowUiPermissions] = useState(false);
+
+  // ─── Edit state ────────────────────────────────────────────
+  const [editingGroup, setEditingGroup] = useState<string | null>(null);
+  const [groupDetail, setGroupDetail] = useState<GroupDetail | null>(null);
+  const [isLoadingGroup, setIsLoadingGroup] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -230,6 +406,144 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
     onShowToast(`Group "${name}" deleted`, 'success');
     setDeleteTarget(null);
     await refetch();
+  };
+
+  const handleEditClick = async (groupName: string) => {
+    setIsLoadingGroup(true);
+    setEditingGroup(groupName);
+    try {
+      const detail = await getGroup(groupName);
+      setGroupDetail(detail);
+
+      // Populate form fields with existing group data
+      setFormName(detail.name);
+      setFormDescription(detail.description || '');
+
+      // Server access - only include entries with actual server values
+      if (detail.server_access && detail.server_access.length > 0) {
+        const entries: ServerAccessEntry[] = detail.server_access
+          .filter((sa) => sa.server && sa.server.trim())
+          .map((sa) => ({
+            server: sa.server || '',
+            methods: sa.methods || [],
+            tools: sa.tools || [],
+          }));
+        setServerAccess(entries.length > 0 ? entries : [{ ...EMPTY_SERVER_ENTRY }]);
+      } else {
+        setServerAccess([{ ...EMPTY_SERVER_ENTRY }]);
+      }
+
+      // Group mappings
+      if (detail.group_mappings && detail.group_mappings.length > 0) {
+        setGroupMappings(detail.group_mappings.join(', '));
+      } else {
+        setGroupMappings('');
+      }
+
+      // Agent access
+      if (detail.agent_access && detail.agent_access.length > 0) {
+        setSelectedAgents(detail.agent_access);
+      } else {
+        setSelectedAgents([]);
+      }
+
+      // UI permissions
+      if (detail.ui_permissions) {
+        const perms: Record<string, string> = {};
+        for (const [key, val] of Object.entries(detail.ui_permissions)) {
+          perms[key] = Array.isArray(val) ? val.join(', ') : String(val);
+        }
+        setUiPermissions(perms);
+      } else {
+        setUiPermissions({});
+      }
+
+      setCreateInIdp(true);
+      setView('edit');
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const message = typeof detail === 'string' ? detail : 'Failed to load group details';
+      onShowToast(message, 'error');
+      setEditingGroup(null);
+    } finally {
+      setIsLoadingGroup(false);
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editingGroup) return;
+    setIsSaving(true);
+    try {
+      // Build scope_config from form state
+      const serverAccessPayload = serverAccess
+        .filter((e) => e.server.trim())
+        .map((e) => {
+          const entry: {server: string; methods: string[]; tools?: string[]} = {
+            server: e.server.trim(),
+            methods: e.methods.length > 0 ? e.methods : ['all'],
+          };
+          if (e.tools.length > 0) {
+            entry.tools = e.tools;
+          }
+          return entry;
+        });
+
+      // Build UI permissions
+      const perms: Record<string, string[]> = {};
+      for (const [key, val] of Object.entries(uiPermissions)) {
+        const items = val.split(',').map((v) => v.trim()).filter(Boolean);
+        if (items.length > 0) perms[key] = items;
+      }
+
+      // Auto-populate list_service and health_check_service from selected servers
+      const serverPaths = serverAccess
+        .filter((e) => e.server.trim())
+        .map((e) => e.server.trim());
+      if (serverPaths.length > 0) {
+        if (!perms['list_service']) {
+          perms['list_service'] = serverPaths;
+        }
+        if (!perms['health_check_service']) {
+          perms['health_check_service'] = serverPaths;
+        }
+      }
+
+      // Always sync list_agents and get_agent with selected agents
+      // This ensures UI permissions match the agent_access selection
+      if (selectedAgents.length > 0) {
+        perms['list_agents'] = selectedAgents;
+        perms['get_agent'] = selectedAgents;
+      } else {
+        // Remove agent permissions if no agents selected
+        delete perms['list_agents'];
+        delete perms['get_agent'];
+      }
+
+      const payload: UpdateGroupPayload = {
+        description: formDescription.trim() || undefined,
+        scope_config: {
+          server_access: serverAccessPayload.length > 0 ? serverAccessPayload : undefined,
+          ui_permissions: Object.keys(perms).length > 0 ? perms : undefined,
+          agent_access: selectedAgents.length > 0 ? selectedAgents : undefined,
+        },
+      };
+
+      await updateGroup(editingGroup, payload);
+      onShowToast(`Group "${editingGroup}" updated successfully`, 'success');
+      resetForm();
+      setEditingGroup(null);
+      setGroupDetail(null);
+      setView('list');
+      await refetch();
+    } catch (err: any) {
+      const detail = err.response?.data?.detail;
+      const message = Array.isArray(detail)
+        ? detail.map((d: any) => d.msg).join(', ')
+        : detail || 'Failed to update group';
+      onShowToast(message, 'error');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // ─── JSON upload sync ─────────────────────────────────────────
@@ -480,35 +794,11 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
                     ))}
                   </div>
                 </div>
-                <div>
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                    Tools
-                    <span className="text-xs text-gray-400 ml-1">(comma-separated, or * for all)</span>
-                  </label>
-                  {entry.server === '*' ? (
-                    <p className="text-xs text-gray-400 italic">All tools on all servers</p>
-                  ) : (
-                    <input
-                      type="text"
-                      value={entry.tools.join(', ')}
-                      onChange={(e) => {
-                        const value = e.target.value.trim();
-                        if (value === '*') {
-                          updateServerEntry(idx, 'tools', ['*']);
-                        } else {
-                          const tools = value.split(',').map((t) => t.trim()).filter(Boolean);
-                          updateServerEntry(idx, 'tools', tools);
-                        }
-                      }}
-                      placeholder={entry.server ? "e.g. tool_name, other_tool or * for all" : "Select a server first"}
-                      disabled={!entry.server}
-                      className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
-                                 bg-white dark:bg-gray-900 text-gray-900 dark:text-white
-                                 focus:ring-2 focus:ring-purple-500 focus:border-transparent
-                                 disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                  )}
-                </div>
+                <ServerToolsSelector
+                  serverPath={entry.server}
+                  selectedTools={entry.tools}
+                  onChange={(tools) => updateServerEntry(idx, 'tools', tools)}
+                />
               </div>
           ))}
         </div>
@@ -543,10 +833,10 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
           {/* Searchable agent selector */}
           <SearchableSelect
             options={availableAgents
-              .filter((a) => !selectedAgents.includes(a.name))
+              .filter((a) => !selectedAgents.includes(a.path))
               .map((a) => ({
-                value: a.name,
-                label: a.name,
+                value: a.path,
+                label: `${a.name} (${a.path})`,
                 description: a.description,
               }))}
             value=""
@@ -664,6 +954,276 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   }
 
 
+  // ─── Edit View ───────────────────────────────────────────────
+  if (view === 'edit') {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+            IAM &gt; Groups &gt; Edit: {editingGroup}
+          </h2>
+          <button
+            onClick={() => { resetForm(); setEditingGroup(null); setGroupDetail(null); setView('list'); }}
+            className="flex items-center text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+          >
+            <ArrowLeftIcon className="h-4 w-4 mr-1" />
+            Back to List
+          </button>
+        </div>
+
+        {isLoadingGroup && (
+          <div className="flex justify-center py-12">
+            <ArrowPathIcon className="h-6 w-6 text-gray-400 animate-spin" />
+          </div>
+        )}
+
+        {!isLoadingGroup && (
+          <>
+            {/* ── Basic Info ─────────────────────────────────────── */}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Group Name</label>
+                <input
+                  type="text"
+                  value={formName}
+                  disabled
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                             bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400
+                             cursor-not-allowed"
+                />
+                <p className="text-xs text-gray-400 mt-1">Group name cannot be changed</p>
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Description</label>
+                <input
+                  type="text"
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  placeholder="Optional description"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                             bg-white dark:bg-gray-900 text-gray-900 dark:text-white
+                             focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
+                  Group Mappings
+                  <span className="text-xs text-gray-400 ml-1">(optional, comma-separated)</span>
+                </label>
+                <input
+                  type="text"
+                  value={groupMappings}
+                  onChange={(e) => setGroupMappings(e.target.value)}
+                  placeholder="e.g. currenttime-users, other-group"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                             bg-white dark:bg-gray-900 text-gray-900 dark:text-white
+                             focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            {/* ── Server Access ──────────────────────────────────── */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Server Access</p>
+                <button
+                  onClick={addServerEntry}
+                  className="text-xs text-purple-600 dark:text-purple-400 hover:underline"
+                >
+                  + Add Server
+                </button>
+              </div>
+              {serversLoading && (
+                <p className="text-xs text-gray-400">Loading servers...</p>
+              )}
+              {serverAccess.map((entry, idx) => (
+                  <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                        Server {idx + 1}
+                      </span>
+                      {serverAccess.length > 1 && (
+                        <button
+                          onClick={() => removeServerEntry(idx)}
+                          className="text-xs text-red-500 hover:underline"
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Server</label>
+                      <SearchableSelect
+                        options={availableServers.map((s) => ({
+                          value: s.path,
+                          label: `${s.name} (${s.path})`,
+                          description: s.description,
+                        }))}
+                        value={entry.server}
+                        onChange={(val) => {
+                          updateServerEntry(idx, 'server', val);
+                          // Reset tools when server changes
+                          updateServerEntry(idx, 'tools', []);
+                        }}
+                        placeholder="Search servers..."
+                        isLoading={serversLoading}
+                        maxDescriptionWords={8}
+                        specialOptions={[
+                          { value: '*', label: '* (All servers)', description: 'Grant access to all servers' },
+                        ]}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Methods</label>
+                      <div className="flex flex-wrap gap-2">
+                        {COMMON_METHODS.map((method) => (
+                          <label key={method} className="flex items-center space-x-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={entry.methods.includes(method)}
+                              onChange={() => toggleMethod(idx, method)}
+                              className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
+                            />
+                            <span className="text-xs text-gray-600 dark:text-gray-400">{method}</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <ServerToolsSelector
+                      serverPath={entry.server}
+                      selectedTools={entry.tools}
+                      onChange={(tools) => updateServerEntry(idx, 'tools', tools)}
+                    />
+                  </div>
+              ))}
+            </div>
+
+            {/* ── Agent Access ──────────────────────────────────── */}
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                Agent Access
+                <span className="text-xs text-gray-400 ml-1">(optional)</span>
+              </p>
+              {/* Selected agents as removable tags */}
+              {selectedAgents.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedAgents.map((agentName) => (
+                    <span
+                      key={agentName}
+                      className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30
+                                 text-purple-700 dark:text-purple-300 rounded-full"
+                    >
+                      {agentName}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAgents((prev) => prev.filter((a) => a !== agentName))}
+                        className="ml-1 hover:text-purple-900 dark:hover:text-purple-100"
+                      >
+                        <XMarkIcon className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {/* Searchable agent selector */}
+              <SearchableSelect
+                options={availableAgents
+                  .filter((a) => !selectedAgents.includes(a.path))
+                  .map((a) => ({
+                    value: a.path,
+                    label: `${a.name} (${a.path})`,
+                    description: a.description,
+                  }))}
+                value=""
+                onChange={(val) => {
+                  if (val && !selectedAgents.includes(val)) {
+                    setSelectedAgents((prev) => [...prev, val]);
+                  }
+                }}
+                placeholder="Search and add agents..."
+                isLoading={agentsLoading}
+                maxDescriptionWords={8}
+              />
+            </div>
+
+            {/* ── UI Permissions (collapsible) ───────────────────── */}
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => setShowUiPermissions(!showUiPermissions)}
+                className="flex items-center space-x-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
+              >
+                {showUiPermissions ? (
+                  <ChevronDownIcon className="h-4 w-4" />
+                ) : (
+                  <ChevronRightIcon className="h-4 w-4" />
+                )}
+                <span>
+                  UI Permissions
+                  <span className="text-xs text-gray-400 ml-1">(enter "all" or a comma-separated list of service/agent names)</span>
+                </span>
+              </button>
+              {showUiPermissions && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pl-6">
+                  {UI_PERMISSION_KEYS.map(({ key, label }) => (
+                    <div key={key}>
+                      <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">{label}</label>
+                      <input
+                        type="text"
+                        value={uiPermissions[key] || ''}
+                        onChange={(e) => setPermValue(key, e.target.value)}
+                        placeholder="e.g. all or currenttime, mcpgw"
+                        className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
+                                   bg-white dark:bg-gray-900 text-gray-900 dark:text-white
+                                   focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* ── JSON Preview ──────────────────────────────────────── */}
+            {jsonPreview && (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    JSON Preview (auto-generated from form):
+                  </p>
+                  <pre className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700
+                                  rounded-lg p-4 text-xs font-mono text-gray-800 dark:text-gray-200
+                                  overflow-auto max-h-64">
+                    {jsonPreview}
+                  </pre>
+                </div>
+              </div>
+            )}
+
+            {/* ── Actions ────────────────────────────────────────── */}
+            <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200 dark:border-gray-700">
+              <button
+                onClick={() => { resetForm(); setEditingGroup(null); setGroupDetail(null); setView('list'); }}
+                className="px-4 py-2 text-sm text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700
+                           rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleUpdate}
+                disabled={isSaving}
+                className="px-4 py-2 text-sm text-white bg-purple-600 rounded-lg hover:bg-purple-700
+                           disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+
   // ─── List View ────────────────────────────────────────────────
   return (
     <div className="space-y-4">
@@ -736,6 +1296,18 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
                     <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{group.description || '\u2014'}</td>
                     <td className="py-3 px-4 text-gray-500 dark:text-gray-500 font-mono text-xs">{group.path || '\u2014'}</td>
                     <td className="py-3 px-4 text-right">
+                      <button
+                        onClick={() => handleEditClick(group.name)}
+                        className="p-1 text-gray-400 hover:text-purple-500 dark:hover:text-purple-400 mr-1"
+                        title="Edit group"
+                        disabled={isLoadingGroup && editingGroup === group.name}
+                      >
+                        {isLoadingGroup && editingGroup === group.name ? (
+                          <ArrowPathIcon className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <PencilIcon className="h-4 w-4" />
+                        )}
+                      </button>
                       <button
                         onClick={() => setDeleteTarget(group.name)}
                         className="p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"

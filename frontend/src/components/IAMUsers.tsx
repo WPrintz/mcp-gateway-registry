@@ -7,9 +7,13 @@ import {
   ArrowPathIcon,
   EyeIcon,
   EyeSlashIcon,
+  PencilIcon,
+  XMarkIcon,
+  CheckIcon,
 } from '@heroicons/react/24/outline';
-import { useIAMUsers, useIAMGroups, createHumanUser, deleteUser, CreateHumanUserPayload } from '../hooks/useIAM';
+import { useIAMUsers, useIAMGroups, createHumanUser, deleteUser, updateUserGroups, CreateHumanUserPayload } from '../hooks/useIAM';
 import DeleteConfirmation from './DeleteConfirmation';
+import SearchableSelect from './SearchableSelect';
 
 interface IAMUsersProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
@@ -47,6 +51,11 @@ const IAMUsers: React.FC<IAMUsersProps> = ({ onShowToast }) => {
 
   // Delete state
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  // Edit groups state
+  const [editingUser, setEditingUser] = useState<string | null>(null);
+  const [editGroups, setEditGroups] = useState<Set<string>>(new Set());
+  const [isSavingGroups, setIsSavingGroups] = useState(false);
 
   const filteredUsers = useMemo(() => {
     if (!searchQuery) return users;
@@ -138,6 +147,69 @@ const IAMUsers: React.FC<IAMUsersProps> = ({ onShowToast }) => {
     onShowToast(`User "${username}" deleted`, 'success');
     setDeleteTarget(null);
     await refetch();
+  };
+
+  const startEditGroups = (username: string, currentGroups: string[]) => {
+    setEditingUser(username);
+    setEditGroups(new Set(currentGroups));
+  };
+
+  const cancelEditGroups = () => {
+    setEditingUser(null);
+    setEditGroups(new Set());
+  };
+
+  const handleSaveGroups = async () => {
+    if (!editingUser) return;
+    setIsSavingGroups(true);
+    try {
+      const result = await updateUserGroups(editingUser, Array.from(editGroups));
+      const addedCount = result.added?.length || 0;
+      const removedCount = result.removed?.length || 0;
+      if (addedCount > 0 || removedCount > 0) {
+        onShowToast(
+          `Groups updated: ${addedCount} added, ${removedCount} removed`,
+          'success'
+        );
+      } else {
+        onShowToast('No changes made', 'info');
+      }
+      setEditingUser(null);
+      setEditGroups(new Set());
+      await refetch();
+    } catch (err: any) {
+      const message = err.response?.data?.detail || 'Failed to update groups';
+      onShowToast(message, 'error');
+    } finally {
+      setIsSavingGroups(false);
+    }
+  };
+
+  const toggleEditGroup = (groupName: string) => {
+    setEditGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupName)) next.delete(groupName);
+      else next.add(groupName);
+      return next;
+    });
+  };
+
+  const addGroupToEdit = (groupName: string) => {
+    if (groupName && !editGroups.has(groupName)) {
+      setEditGroups((prev) => {
+        const next = new Set(prev);
+        next.add(groupName);
+        return next;
+      });
+    }
+  };
+
+  const removeGroupFromEdit = (groupName: string) => {
+    setEditGroups((prev) => {
+      const next = new Set(prev);
+      next.delete(groupName);
+      return next;
+    });
   };
 
   // Helper: input border class based on error state
@@ -313,13 +385,20 @@ const IAMUsers: React.FC<IAMUsersProps> = ({ onShowToast }) => {
                       {[u.first_name, u.last_name].filter(Boolean).join(' ') || '\u2014'}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-wrap gap-1 items-center">
                         {(u.groups || []).map((g) => (
                           <span key={g} className="inline-block px-2 py-0.5 text-xs rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300">
                             {g}
                           </span>
                         ))}
                         {(!u.groups || u.groups.length === 0) && <span className="text-gray-400 text-xs">{'\u2014'}</span>}
+                        <button
+                          onClick={() => startEditGroups(u.username, u.groups || [])}
+                          className="ml-2 p-1 text-gray-400 hover:text-purple-600 dark:hover:text-purple-400"
+                          title="Edit groups"
+                        >
+                          <PencilIcon className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </td>
                     <td className="py-3 px-4 text-right">
@@ -338,6 +417,74 @@ const IAMUsers: React.FC<IAMUsersProps> = ({ onShowToast }) => {
                           onConfirm={handleDelete}
                           onCancel={() => setDeleteTarget(null)}
                         />
+                      </td>
+                    </tr>
+                  )}
+                  {editingUser === u.username && (
+                    <tr className="bg-purple-50 dark:bg-purple-900/10">
+                      <td colSpan={5} className="p-4">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                              Edit Groups for {u.username}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={cancelEditGroups}
+                                className="px-3 py-1 text-xs text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+                              >
+                                Cancel
+                              </button>
+                              <button
+                                onClick={handleSaveGroups}
+                                disabled={isSavingGroups}
+                                className="flex items-center px-3 py-1 text-xs text-white bg-purple-600 rounded hover:bg-purple-700 disabled:opacity-50"
+                              >
+                                <CheckIcon className="h-3 w-3 mr-1" />
+                                {isSavingGroups ? 'Saving...' : 'Save'}
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Selected groups as removable tags */}
+                          <div className="flex flex-wrap gap-2">
+                            {Array.from(editGroups).map((groupName) => (
+                              <span
+                                key={groupName}
+                                className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full"
+                              >
+                                {groupName}
+                                <button
+                                  type="button"
+                                  onClick={() => removeGroupFromEdit(groupName)}
+                                  className="ml-1 hover:text-purple-900 dark:hover:text-purple-100"
+                                >
+                                  <XMarkIcon className="h-3 w-3" />
+                                </button>
+                              </span>
+                            ))}
+                            {editGroups.size === 0 && (
+                              <span className="text-xs text-gray-400 italic">No groups assigned</span>
+                            )}
+                          </div>
+
+                          {/* Searchable dropdown to add groups */}
+                          <div className="max-w-sm">
+                            <SearchableSelect
+                              options={groups
+                                .filter((g) => !editGroups.has(g.name))
+                                .map((g) => ({
+                                  value: g.name,
+                                  label: g.name,
+                                  description: g.path || undefined,
+                                }))}
+                              value=""
+                              onChange={addGroupToEdit}
+                              placeholder="Search and add groups..."
+                              maxDescriptionWords={5}
+                            />
+                          </div>
+                        </div>
                       </td>
                     </tr>
                   )}

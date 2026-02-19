@@ -1,5 +1,5 @@
 /**
- * Hook for fetching servers and their tools.
+ * Hooks for fetching servers and their tools.
  *
  * Fetches all servers from /api/servers with descriptions
  * for use in searchable select components.
@@ -15,6 +15,12 @@ export interface ServerInfo {
   description: string;
 }
 
+export interface ToolInfo {
+  name: string;
+  description: string;
+  serverPath: string;
+}
+
 interface ServerListResponse {
   servers: Array<{
     path: string;
@@ -25,11 +31,30 @@ interface ServerListResponse {
   }>;
 }
 
+interface ToolCatalogResponse {
+  tools: Array<{
+    tool_name: string;
+    server_path: string;
+    server_name: string;
+    description: string;
+  }>;
+  by_server: Record<string, Array<{
+    tool_name: string;
+    description: string;
+  }>>;
+}
+
 interface UseServerListReturn {
   servers: ServerInfo[];
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
+}
+
+interface UseServerToolsReturn {
+  tools: ToolInfo[];
+  isLoading: boolean;
+  error: string | null;
 }
 
 
@@ -77,5 +102,63 @@ export function useServerList(): UseServerListReturn {
     isLoading,
     error,
     refetch: fetchServers,
+  };
+}
+
+
+/**
+ * Hook to fetch tools for a specific server.
+ * Returns empty array if serverPath is empty or '*'.
+ */
+export function useServerTools(serverPath: string): UseServerToolsReturn {
+  const [tools, setTools] = useState<ToolInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Don't fetch for empty or wildcard
+    if (!serverPath || serverPath === '*') {
+      setTools([]);
+      setIsLoading(false);
+      return;
+    }
+
+    const fetchTools = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const response = await axios.get<ToolCatalogResponse>(
+          `/api/tool-catalog?server_path=${encodeURIComponent(serverPath)}`
+        );
+        const data = response.data;
+
+        // Extract tools from the response
+        const toolList: ToolInfo[] = (data.tools || []).map((t) => ({
+          name: t.tool_name,
+          description: t.description || '',
+          serverPath: t.server_path,
+        }));
+
+        // Sort by name
+        toolList.sort((a, b) => a.name.localeCompare(b.name));
+
+        setTools(toolList);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to fetch tools';
+        setError(message);
+        setTools([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchTools();
+  }, [serverPath]);
+
+  return {
+    tools,
+    isLoading,
+    error,
   };
 }

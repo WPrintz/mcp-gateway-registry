@@ -91,3 +91,41 @@ class GroupDeleteResponse(BaseModel):
 
     name: str
     deleted: bool = True
+
+
+class UpdateUserGroupsRequest(BaseModel):
+    """Payload for updating a user's group memberships."""
+
+    groups: list[str] = Field(..., description="List of group names to assign")
+
+
+class UpdateUserGroupsResponse(BaseModel):
+    """Response after updating user's group memberships."""
+
+    username: str
+    groups: list[str] = Field(default_factory=list)
+    added: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+
+
+class GroupUpdateRequest(BaseModel):
+    """Request to update a group."""
+
+    description: str | None = None
+    scope_config: dict | None = Field(
+        None,
+        description="Scope configuration (server_access, ui_permissions, etc.)",
+    )
+
+
+class GroupDetailResponse(BaseModel):
+    """Detailed group information."""
+
+    id: str
+    name: str
+    path: str | None = None
+    description: str | None = None
+    server_access: list | None = None
+    group_mappings: list | None = None
+    ui_permissions: dict | None = None
+    agent_access: list | None = None
