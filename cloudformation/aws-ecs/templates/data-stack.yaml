@@ -654,6 +654,8 @@ Resources:
       Timeout: 60
       Code:
         ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
           import boto3
           import cfnresponse
 
@@ -897,6 +899,8 @@ Resources:
           DOCUMENTDB_SECRET_ARN: !Ref DocumentDBCredentialsSecret
       Code:
         ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
           """
           DocumentDB Initialization Lambda for MCP Gateway Registry.
 

@@ -1760,6 +1760,8 @@ Resources:
           LOG_LEVEL: INFO
       Code:
         ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
           """
           Lambda function to initialize Keycloak realm for MCP Gateway.
           Replicates Terraform's init-keycloak.sh functionality.
@@ -2414,6 +2416,8 @@ Resources:
           LOG_LEVEL: INFO
       Code:
         ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
           """
           Lambda function to auto-register MCP servers and A2A agents.
           Used as a CloudFormation Custom Resource.

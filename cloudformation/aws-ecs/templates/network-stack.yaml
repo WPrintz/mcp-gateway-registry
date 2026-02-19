@@ -248,6 +248,11 @@ Resources:
           Value: !Sub ${EnvironmentName}-vpc-endpoints
 
   # Main ALB Security Group
+  # Note: ALBs are behind CloudFront distributions. Security groups use
+  # IngressCidrBlocks parameter (default 0.0.0.0/0) rather than the CloudFront
+  # managed prefix list because the prefix list contains ~120+ CIDRs which
+  # exceeds the default SG rules-per-group quota. CloudFront origin access
+  # is enforced at the application layer via origin custom headers.
   MainAlbSG:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -290,13 +295,13 @@ Resources:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
-          CidrIp: 0.0.0.0/0
-          Description: HTTP from internet
+          CidrIp: !Ref IngressCidrBlocks
+          Description: HTTP from allowed CIDRs
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          CidrIp: 0.0.0.0/0
-          Description: HTTPS from internet
+          CidrIp: !Ref IngressCidrBlocks
+          Description: HTTPS from allowed CIDRs
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-keycloak-alb
