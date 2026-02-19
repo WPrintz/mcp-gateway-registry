@@ -11,6 +11,8 @@ import {
   ChevronRightIcon,
 } from '@heroicons/react/24/outline';
 import { useIAMGroups, createGroup, deleteGroup, CreateGroupPayload } from '../hooks/useIAM';
+import { useToolCatalog } from '../hooks/useToolCatalog';
+import { useAgentList } from '../hooks/useAgentList';
 import DeleteConfirmation from './DeleteConfirmation';
 
 interface IAMGroupsProps {
@@ -23,7 +25,7 @@ type View = 'list' | 'create';
 interface ServerAccessEntry {
   server: string;
   methods: string[];
-  tools: string;  // comma-separated string for form input; converted to array on submit
+  tools: string[];  // array of selected tool names
 }
 
 // ─── Available ui_permissions keys from scopes.yml ──────────────
@@ -74,7 +76,7 @@ const EXAMPLE_SCOPE_JSON = {
   create_in_idp: true,
 };
 
-const EMPTY_SERVER_ENTRY: ServerAccessEntry = { server: '', methods: [], tools: '' };
+const EMPTY_SERVER_ENTRY: ServerAccessEntry = { server: '', methods: [], tools: [] };
 
 
 /**
@@ -85,6 +87,7 @@ function _buildScopeJson(
   description: string,
   serverAccess: ServerAccessEntry[],
   groupMappings: string,
+  selectedAgents: string[],
   uiPermissions: Record<string, string>,
   createInIdp: boolean,
 ): Record<string, unknown> {
@@ -99,22 +102,25 @@ function _buildScopeJson(
         server: e.server.trim(),
         methods: e.methods.length > 0 ? e.methods : ['all'],
       };
-      const toolsStr = e.tools.trim();
-      if (toolsStr === '*') {
+      // Tools is now an array; check for wildcard or list
+      if (e.tools.includes('*')) {
         entry.tools = '*';
-      } else if (toolsStr) {
-        entry.tools = toolsStr.split(',').map((t) => t.trim()).filter(Boolean);
+      } else if (e.tools.length > 0) {
+        entry.tools = e.tools;
       }
       return entry;
     });
   if (access.length > 0) result.server_access = access;
 
-  // Group mappings
+  // Group mappings (optional)
   const mappings = groupMappings
     .split(',')
     .map((m) => m.trim())
     .filter(Boolean);
   if (mappings.length > 0) result.group_mappings = mappings;
+
+  // Agent access (optional)
+  if (selectedAgents.length > 0) result.agent_access = selectedAgents;
 
   // UI permissions -- only include keys that have a non-empty value
   const perms: Record<string, string[]> = {};
@@ -131,6 +137,8 @@ function _buildScopeJson(
 
 const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const { groups, isLoading, error, refetch } = useIAMGroups();
+  const { servers: availableServers, isLoading: serversLoading } = useToolCatalog();
+  const { agents: availableAgents, isLoading: agentsLoading } = useAgentList();
   const [searchQuery, setSearchQuery] = useState('');
   const [view, setView] = useState<View>('list');
 
@@ -139,6 +147,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const [formDescription, setFormDescription] = useState('');
   const [serverAccess, setServerAccess] = useState<ServerAccessEntry[]>([{ ...EMPTY_SERVER_ENTRY }]);
   const [groupMappings, setGroupMappings] = useState('');
+  const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
   const [uiPermissions, setUiPermissions] = useState<Record<string, string>>({});
   const [createInIdp, setCreateInIdp] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -151,11 +160,11 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const jsonPreview = useMemo(() => {
     if (!formName.trim()) return null;
     return JSON.stringify(
-      _buildScopeJson(formName.trim(), formDescription.trim(), serverAccess, groupMappings, uiPermissions, createInIdp),
+      _buildScopeJson(formName.trim(), formDescription.trim(), serverAccess, groupMappings, selectedAgents, uiPermissions, createInIdp),
       null,
       2,
     );
-  }, [formName, formDescription, serverAccess, groupMappings, uiPermissions, createInIdp]);
+  }, [formName, formDescription, serverAccess, groupMappings, selectedAgents, uiPermissions, createInIdp]);
 
   const filteredGroups = useMemo(() => {
     if (!searchQuery) return groups;
@@ -172,6 +181,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
     setFormDescription('');
     setServerAccess([{ ...EMPTY_SERVER_ENTRY }]);
     setGroupMappings('');
+    setSelectedAgents([]);
     setUiPermissions({});
     setCreateInIdp(true);
   }, []);
@@ -188,7 +198,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
       // scope_config is included for future backend support.
       const scopeJson = _buildScopeJson(
         formName.trim(), formDescription.trim(),
-        serverAccess, groupMappings, uiPermissions, createInIdp,
+        serverAccess, groupMappings, selectedAgents, uiPermissions, createInIdp,
       );
       const { scope_name, description, ...scopeConfig } = scopeJson;
 
@@ -231,7 +241,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
       if (parsed.description) setFormDescription(parsed.description);
       if (parsed.create_in_idp !== undefined) setCreateInIdp(parsed.create_in_idp);
 
-      // Group mappings
+      // Group mappings (optional)
       if (Array.isArray(parsed.group_mappings)) {
         setGroupMappings(parsed.group_mappings.join(', '));
       }
@@ -239,13 +249,18 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
       // Server access
       if (Array.isArray(parsed.server_access)) {
         const entries: ServerAccessEntry[] = parsed.server_access
-          .filter((e: any) => e.server || e.agents)
+          .filter((e: any) => e.server)
           .map((e: any) => ({
             server: e.server || '',
             methods: Array.isArray(e.methods) ? e.methods : [],
-            tools: Array.isArray(e.tools) ? e.tools.join(', ') : (e.tools === '*' ? '*' : ''),
+            tools: Array.isArray(e.tools) ? e.tools : (e.tools === '*' ? ['*'] : []),
           }));
         if (entries.length > 0) setServerAccess(entries);
+      }
+
+      // Agent access (optional)
+      if (Array.isArray(parsed.agent_access)) {
+        setSelectedAgents(parsed.agent_access);
       }
 
       // UI permissions
@@ -371,7 +386,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
           <div>
             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
               Group Mappings
-              <span className="text-xs text-gray-400 ml-1">(comma-separated)</span>
+              <span className="text-xs text-gray-400 ml-1">(optional, comma-separated)</span>
             </label>
             <input
               type="text"
@@ -407,66 +422,163 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
               + Add Server
             </button>
           </div>
-          {serverAccess.map((entry, idx) => (
-            <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  Server {idx + 1}
-                </span>
-                {serverAccess.length > 1 && (
-                  <button
-                    onClick={() => removeServerEntry(idx)}
-                    className="text-xs text-red-500 hover:underline"
+          {serversLoading && (
+            <p className="text-xs text-gray-400">Loading servers...</p>
+          )}
+          {serverAccess.map((entry, idx) => {
+            // Find tools for the selected server
+            const selectedServer = availableServers.find((s) => s.path === entry.server);
+            const serverTools = selectedServer?.tools || [];
+
+            return (
+              <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
+                    Server {idx + 1}
+                  </span>
+                  {serverAccess.length > 1 && (
+                    <button
+                      onClick={() => removeServerEntry(idx)}
+                      className="text-xs text-red-500 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Server</label>
+                  <select
+                    value={entry.server}
+                    onChange={(e) => {
+                      updateServerEntry(idx, 'server', e.target.value);
+                      // Reset tools when server changes
+                      updateServerEntry(idx, 'tools', []);
+                    }}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
+                               bg-white dark:bg-gray-900 text-gray-900 dark:text-white
+                               focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                   >
-                    Remove
-                  </button>
-                )}
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Server Name</label>
-                <input
-                  type="text"
-                  value={entry.server}
-                  onChange={(e) => updateServerEntry(idx, 'server', e.target.value)}
-                  placeholder="e.g. currenttime or * for all"
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
-                             bg-white dark:bg-gray-900 text-gray-900 dark:text-white
-                             focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Methods</label>
-                <div className="flex flex-wrap gap-2">
-                  {COMMON_METHODS.map((method) => (
-                    <label key={method} className="flex items-center space-x-1 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={entry.methods.includes(method)}
-                        onChange={() => toggleMethod(idx, method)}
-                        className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
-                      />
-                      <span className="text-xs text-gray-600 dark:text-gray-400">{method}</span>
-                    </label>
-                  ))}
+                    <option value="">Select a server...</option>
+                    <option value="*">* (All servers)</option>
+                    {availableServers.map((server) => (
+                      <option key={server.path} value={server.path}>
+                        {server.name} ({server.path})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Methods</label>
+                  <div className="flex flex-wrap gap-2">
+                    {COMMON_METHODS.map((method) => (
+                      <label key={method} className="flex items-center space-x-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={entry.methods.includes(method)}
+                          onChange={() => toggleMethod(idx, method)}
+                          className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
+                        />
+                        <span className="text-xs text-gray-600 dark:text-gray-400">{method}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
+                    Tools
+                    <span className="text-xs text-gray-400 ml-1">(select tools or * for all)</span>
+                  </label>
+                  {entry.server === '*' ? (
+                    <p className="text-xs text-gray-400 italic">All tools on all servers</p>
+                  ) : entry.server && serverTools.length > 0 ? (
+                    <div className="space-y-2">
+                      <label className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={entry.tools.includes('*')}
+                          onChange={() => {
+                            if (entry.tools.includes('*')) {
+                              updateServerEntry(idx, 'tools', []);
+                            } else {
+                              updateServerEntry(idx, 'tools', ['*']);
+                            }
+                          }}
+                          className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
+                        />
+                        <span className="text-xs text-gray-600 dark:text-gray-400 font-medium">* (All tools)</span>
+                      </label>
+                      {!entry.tools.includes('*') && (
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-1 max-h-32 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded p-2">
+                          {serverTools.map((tool) => (
+                            <label key={tool} className="flex items-center space-x-1 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={entry.tools.includes(tool)}
+                                onChange={() => {
+                                  const newTools = entry.tools.includes(tool)
+                                    ? entry.tools.filter((t) => t !== tool)
+                                    : [...entry.tools, tool];
+                                  updateServerEntry(idx, 'tools', newTools);
+                                }}
+                                className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
+                              />
+                              <span className="text-xs text-gray-600 dark:text-gray-400 truncate" title={tool}>
+                                {tool}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : entry.server ? (
+                    <p className="text-xs text-gray-400 italic">No tools available for this server</p>
+                  ) : (
+                    <p className="text-xs text-gray-400 italic">Select a server first</p>
+                  )}
                 </div>
               </div>
-              <div>
-                <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
-                  Tools
-                  <span className="text-xs text-gray-400 ml-1">(comma-separated, or * for all)</span>
+            );
+          })}
+        </div>
+
+        {/* ── Agent Access ──────────────────────────────────── */}
+        <div className="space-y-3">
+          <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Agent Access
+            <span className="text-xs text-gray-400 ml-1">(optional)</span>
+          </p>
+          {agentsLoading ? (
+            <p className="text-xs text-gray-400">Loading agents...</p>
+          ) : availableAgents.length === 0 ? (
+            <p className="text-xs text-gray-400 italic">No agents available</p>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-1 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg p-3">
+              {availableAgents.map((agent) => (
+                <label key={agent.path} className="flex items-center space-x-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedAgents.includes(agent.name)}
+                    onChange={() => {
+                      setSelectedAgents((prev) =>
+                        prev.includes(agent.name)
+                          ? prev.filter((a) => a !== agent.name)
+                          : [...prev, agent.name]
+                      );
+                    }}
+                    className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
+                  />
+                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate" title={agent.name}>
+                    {agent.name}
+                  </span>
                 </label>
-                <input
-                  type="text"
-                  value={entry.tools}
-                  onChange={(e) => updateServerEntry(idx, 'tools', e.target.value)}
-                  placeholder="e.g. current_time_by_timezone, other_tool"
-                  className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
-                             bg-white dark:bg-gray-900 text-gray-900 dark:text-white
-                             focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-              </div>
+              ))}
             </div>
-          ))}
+          )}
+          {selectedAgents.length > 0 && (
+            <p className="text-xs text-gray-500">
+              Selected: {selectedAgents.join(', ')}
+            </p>
+          )}
         </div>
 
         {/* ── UI Permissions (collapsible) ───────────────────── */}
