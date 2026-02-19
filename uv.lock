@@ -408,7 +408,7 @@ dependencies = [
 [[package]]
 name = "cisco-ai-skill-scanner"
 version = "1.0.2"
-source = { git = "https://github.com/cisco-ai-defense/skill-scanner.git?rev=main#465109ff7e67ec5be63adf7838be73cb560ac4dd" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
     { name = "click" },
@@ -427,6 +427,10 @@ dependencies = [
     { name = "tabulate" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "yara-python" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/3d/3837c1e87d6ede522d737d93f7319248e4832653bddfedcead8f11d5e57c/cisco_ai_skill_scanner-1.0.2.tar.gz", hash = "sha256:2ab4a7dc88e3dbf39b2af25c5fee3b768531edac0855a481bf01bb482a34fb0f", size = 573708, upload-time = "2026-02-06T01:25:08.454Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f3/3d/26425d1b5ac6a9fb73ac17b22ba5481edef01a265aa10000fdb440c1f433/cisco_ai_skill_scanner-1.0.2-py3-none-any.whl", hash = "sha256:8af261d11f46fae81fb44b1ffbf4af7ff35dd8a39103eb1ef3a584cbe36a8298", size = 257525, upload-time = "2026-02-06T01:25:06.745Z" },
 ]
 
 [[package]]
@@ -1979,7 +1983,7 @@ requires-dist = [
     { name = "bandit", specifier = ">=1.8.3" },
     { name = "boto3", specifier = ">=1.35.0" },
     { name = "cisco-ai-a2a-scanner", git = "https://github.com/cisco-ai-defense/a2a-scanner.git?rev=main" },
-    { name = "cisco-ai-skill-scanner", git = "https://github.com/cisco-ai-defense/skill-scanner.git?rev=main" },
+    { name = "cisco-ai-skill-scanner", specifier = ">=1.0.0" },
     { name = "coverage", extras = ["toml"], marker = "extra == 'dev'", specifier = ">=7.4.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
     { name = "dnspython", specifier = ">=2.4.0" },

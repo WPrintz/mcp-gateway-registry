@@ -419,7 +419,6 @@ def mock_security_scan_repository():
 
 
 @pytest.fixture
-@pytest.fixture
 def mock_virtual_server_repository():
     """
     Mock virtual server repository to avoid DocumentDB access.
