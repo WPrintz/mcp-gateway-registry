@@ -394,6 +394,99 @@ async def get_skill_rating(
     }
 
 
+
+# ---------------------------------------------------------------------------
+# Security scan endpoints (must be before catch-all GET /{skill_path:path})
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{skill_path:path}/security-scan",
+    response_model=dict,
+    summary="Get skill security scan results",
+)
+async def get_skill_security_scan(
+    user_context: Annotated[dict, Depends(nginx_proxied_auth)],
+    skill_path: str = Path(..., description="Skill path"),
+) -> dict:
+    """Get the latest security scan results for a skill."""
+    normalized_path = normalize_skill_path(skill_path)
+    service = get_skill_service()
+
+    skill = await service.get_skill(normalized_path)
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill not found: {normalized_path}",
+        )
+
+    if not _user_can_access_skill(skill, user_context):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    from ..services.skill_scanner import skill_scanner_service
+
+    scan_result = await skill_scanner_service.get_scan_result(normalized_path)
+    if not scan_result:
+        return {"message": "No security scan results available", "skill_path": normalized_path}
+
+    return scan_result
+
+
+@router.post(
+    "/{skill_path:path}/rescan",
+    response_model=dict,
+    summary="Trigger manual security scan",
+)
+async def rescan_skill(
+    http_request: Request,
+    user_context: Annotated[dict, Depends(nginx_proxied_auth)],
+    skill_path: str = Path(..., description="Skill path"),
+) -> dict:
+    """Trigger a manual security scan for a skill. Admin only."""
+    if not user_context.get("is_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    normalized_path = normalize_skill_path(skill_path)
+    service = get_skill_service()
+
+    skill = await service.get_skill(normalized_path)
+    if not skill:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill not found: {normalized_path}",
+        )
+
+    set_audit_action(
+        http_request,
+        "rescan",
+        "skill",
+        resource_id=normalized_path,
+        description=f"Manual security scan for skill {normalized_path}",
+    )
+
+    from ..services.skill_scanner import skill_scanner_service
+
+    try:
+        result = await skill_scanner_service.scan_skill(
+            skill_path=normalized_path,
+            skill_md_url=str(skill.skill_md_raw_url or skill.skill_md_url),
+        )
+        return result.model_dump()
+
+    except Exception as e:
+        logger.error(f"Manual security scan failed for skill '{normalized_path}': {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Security scan failed: {str(e)}",
+        )
+
+
 @router.get("/{skill_path:path}", response_model=SkillCard, summary="Get a skill by path")
 async def get_skill(
     user_context: Annotated[dict, Depends(nginx_proxied_auth)],
@@ -730,93 +823,4 @@ async def _perform_skill_security_scan_on_registration(
                 logger.error(f"Failed to add security-pending tag: {tag_err}")
 
 
-# ---------------------------------------------------------------------------
-# Security scan endpoints
-# ---------------------------------------------------------------------------
 
-
-@router.get(
-    "/{skill_path:path}/security-scan",
-    response_model=dict,
-    summary="Get skill security scan results",
-)
-async def get_skill_security_scan(
-    user_context: Annotated[dict, Depends(nginx_proxied_auth)],
-    skill_path: str = Path(..., description="Skill path"),
-) -> dict:
-    """Get the latest security scan results for a skill."""
-    normalized_path = normalize_skill_path(skill_path)
-    service = get_skill_service()
-
-    skill = await service.get_skill(normalized_path)
-    if not skill:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Skill not found: {normalized_path}",
-        )
-
-    if not _user_can_access_skill(skill, user_context):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Access denied",
-        )
-
-    from ..services.skill_scanner import skill_scanner_service
-
-    scan_result = await skill_scanner_service.get_scan_result(normalized_path)
-    if not scan_result:
-        return {"message": "No security scan results available", "skill_path": normalized_path}
-
-    return scan_result
-
-
-@router.post(
-    "/{skill_path:path}/rescan",
-    response_model=dict,
-    summary="Trigger manual security scan",
-)
-async def rescan_skill(
-    http_request: Request,
-    user_context: Annotated[dict, Depends(nginx_proxied_auth)],
-    skill_path: str = Path(..., description="Skill path"),
-) -> dict:
-    """Trigger a manual security scan for a skill. Admin only."""
-    if not user_context.get("is_admin"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-
-    normalized_path = normalize_skill_path(skill_path)
-    service = get_skill_service()
-
-    skill = await service.get_skill(normalized_path)
-    if not skill:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Skill not found: {normalized_path}",
-        )
-
-    set_audit_action(
-        http_request,
-        "rescan",
-        "skill",
-        resource_id=normalized_path,
-        description=f"Manual security scan for skill {normalized_path}",
-    )
-
-    from ..services.skill_scanner import skill_scanner_service
-
-    try:
-        result = await skill_scanner_service.scan_skill(
-            skill_path=normalized_path,
-            skill_md_url=str(skill.skill_md_raw_url or skill.skill_md_url),
-        )
-        return result.model_dump()
-
-    except Exception as e:
-        logger.error(f"Manual security scan failed for skill '{normalized_path}': {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Security scan failed: {str(e)}",
-        )
