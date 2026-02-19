@@ -1,76 +1,79 @@
 /**
- * Hook for fetching tool catalog from the Virtual MCP API.
+ * Hook for fetching servers and their tools.
  *
- * Provides a list of servers and their available tools for
- * building scope configurations in the IAM Groups form.
+ * Fetches all servers from /api/servers, then fetches tools
+ * from the tool catalog for the selected server.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 
-interface ToolEntry {
-  tool_name: string;
-  server_path: string;
-  server_name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-  available_versions: string[];
+interface ServerBasicInfo {
+  path: string;
+  name: string;
+}
+
+interface ServerListResponse {
+  servers: Array<{
+    path: string;
+    server_name?: string;
+    name?: string;
+    [key: string]: unknown;
+  }>;
 }
 
 interface ToolCatalogResponse {
-  tools: ToolEntry[];
-  total_count: number;
-  server_count: number;
-  by_server: Record<string, ToolEntry[]>;
+  tools: Array<{
+    tool_name: string;
+    server_path: string;
+    server_name: string;
+    description: string;
+  }>;
+  by_server: Record<string, Array<{ tool_name: string }>>;
 }
 
-interface ServerWithTools {
-  path: string;
-  name: string;
-  tools: string[];
-}
-
-interface UseToolCatalogReturn {
-  servers: ServerWithTools[];
+interface UseServerListReturn {
+  servers: ServerBasicInfo[];
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
 }
 
+interface UseServerToolsReturn {
+  tools: string[];
+  isLoading: boolean;
+  error: string | null;
+}
 
-export function useToolCatalog(): UseToolCatalogReturn {
-  const [servers, setServers] = useState<ServerWithTools[]>([]);
+
+/**
+ * Hook to fetch all available servers.
+ */
+export function useServerList(): UseServerListReturn {
+  const [servers, setServers] = useState<ServerBasicInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchCatalog = useCallback(async () => {
+  const fetchServers = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
     try {
-      const response = await axios.get<ToolCatalogResponse>('/api/virtual/tool-catalog');
+      const response = await axios.get<ServerListResponse>('/api/servers');
       const data = response.data;
 
-      // Transform by_server into array of ServerWithTools
-      const serverList: ServerWithTools[] = [];
+      const serverList: ServerBasicInfo[] = (data.servers || []).map((s) => ({
+        path: s.path,
+        name: s.server_name || s.name || s.path,
+      }));
 
-      for (const [serverPath, tools] of Object.entries(data.by_server || {})) {
-        if (tools.length > 0) {
-          serverList.push({
-            path: serverPath,
-            name: tools[0].server_name || serverPath,
-            tools: tools.map((t) => t.tool_name),
-          });
-        }
-      }
-
-      // Sort by server name
+      // Sort by name
       serverList.sort((a, b) => a.name.localeCompare(b.name));
 
       setServers(serverList);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to fetch tool catalog';
+      const message = err instanceof Error ? err.message : 'Failed to fetch servers';
       setError(message);
       setServers([]);
     } finally {
@@ -79,13 +82,76 @@ export function useToolCatalog(): UseToolCatalogReturn {
   }, []);
 
   useEffect(() => {
-    fetchCatalog();
-  }, [fetchCatalog]);
+    fetchServers();
+  }, [fetchServers]);
 
   return {
     servers,
     isLoading,
     error,
-    refetch: fetchCatalog,
+    refetch: fetchServers,
+  };
+}
+
+
+/**
+ * Hook to fetch tools for a specific server.
+ * Returns empty array if serverPath is empty or '*'.
+ */
+export function useServerTools(serverPath: string): UseServerToolsReturn {
+  const [tools, setTools] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Don't fetch for empty or wildcard
+    if (!serverPath || serverPath === '*') {
+      setTools([]);
+      return;
+    }
+
+    const fetchTools = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const response = await axios.get<ToolCatalogResponse>(
+          `/api/virtual/tool-catalog?server_path=${encodeURIComponent(serverPath)}`
+        );
+        const data = response.data;
+
+        // Extract tool names from by_server or tools array
+        const serverTools = data.by_server?.[serverPath] || [];
+        const toolNames = serverTools.map((t) => t.tool_name);
+
+        setTools(toolNames);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to fetch tools';
+        setError(message);
+        setTools([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchTools();
+  }, [serverPath]);
+
+  return {
+    tools,
+    isLoading,
+    error,
+  };
+}
+
+
+// Keep backward compatibility - alias for useServerList
+export function useToolCatalog() {
+  const { servers, isLoading, error, refetch } = useServerList();
+  return {
+    servers: servers.map((s) => ({ ...s, tools: [] as string[] })),
+    isLoading,
+    error,
+    refetch,
   };
 }

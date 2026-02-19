@@ -9,9 +9,10 @@ import {
   DocumentArrowUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { useIAMGroups, createGroup, deleteGroup, CreateGroupPayload } from '../hooks/useIAM';
-import { useToolCatalog } from '../hooks/useToolCatalog';
+import { useServerList } from '../hooks/useToolCatalog';
 import { useAgentList } from '../hooks/useAgentList';
 import DeleteConfirmation from './DeleteConfirmation';
 
@@ -137,7 +138,7 @@ function _buildScopeJson(
 
 const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const { groups, isLoading, error, refetch } = useIAMGroups();
-  const { servers: availableServers, isLoading: serversLoading } = useToolCatalog();
+  const { servers: availableServers, isLoading: serversLoading } = useServerList();
   const { agents: availableAgents, isLoading: agentsLoading } = useAgentList();
   const [searchQuery, setSearchQuery] = useState('');
   const [view, setView] = useState<View>('list');
@@ -148,6 +149,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const [serverAccess, setServerAccess] = useState<ServerAccessEntry[]>([{ ...EMPTY_SERVER_ENTRY }]);
   const [groupMappings, setGroupMappings] = useState('');
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
+  const [agentSearchQuery, setAgentSearchQuery] = useState('');
   const [uiPermissions, setUiPermissions] = useState<Record<string, string>>({});
   const [createInIdp, setCreateInIdp] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -182,6 +184,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
     setServerAccess([{ ...EMPTY_SERVER_ENTRY }]);
     setGroupMappings('');
     setSelectedAgents([]);
+    setAgentSearchQuery('');
     setUiPermissions({});
     setCreateInIdp(true);
   }, []);
@@ -425,12 +428,7 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
           {serversLoading && (
             <p className="text-xs text-gray-400">Loading servers...</p>
           )}
-          {serverAccess.map((entry, idx) => {
-            // Find tools for the selected server
-            const selectedServer = availableServers.find((s) => s.path === entry.server);
-            const serverTools = selectedServer?.tools || [];
-
-            return (
+          {serverAccess.map((entry, idx) => (
               <div key={idx} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -486,59 +484,34 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
                 <div>
                   <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">
                     Tools
-                    <span className="text-xs text-gray-400 ml-1">(select tools or * for all)</span>
+                    <span className="text-xs text-gray-400 ml-1">(comma-separated, or * for all)</span>
                   </label>
                   {entry.server === '*' ? (
                     <p className="text-xs text-gray-400 italic">All tools on all servers</p>
-                  ) : entry.server && serverTools.length > 0 ? (
-                    <div className="space-y-2">
-                      <label className="flex items-center space-x-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={entry.tools.includes('*')}
-                          onChange={() => {
-                            if (entry.tools.includes('*')) {
-                              updateServerEntry(idx, 'tools', []);
-                            } else {
-                              updateServerEntry(idx, 'tools', ['*']);
-                            }
-                          }}
-                          className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
-                        />
-                        <span className="text-xs text-gray-600 dark:text-gray-400 font-medium">* (All tools)</span>
-                      </label>
-                      {!entry.tools.includes('*') && (
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-1 max-h-32 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded p-2">
-                          {serverTools.map((tool) => (
-                            <label key={tool} className="flex items-center space-x-1 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={entry.tools.includes(tool)}
-                                onChange={() => {
-                                  const newTools = entry.tools.includes(tool)
-                                    ? entry.tools.filter((t) => t !== tool)
-                                    : [...entry.tools, tool];
-                                  updateServerEntry(idx, 'tools', newTools);
-                                }}
-                                className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
-                              />
-                              <span className="text-xs text-gray-600 dark:text-gray-400 truncate" title={tool}>
-                                {tool}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ) : entry.server ? (
-                    <p className="text-xs text-gray-400 italic">No tools available for this server</p>
                   ) : (
-                    <p className="text-xs text-gray-400 italic">Select a server first</p>
+                    <input
+                      type="text"
+                      value={entry.tools.join(', ')}
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        if (value === '*') {
+                          updateServerEntry(idx, 'tools', ['*']);
+                        } else {
+                          const tools = value.split(',').map((t) => t.trim()).filter(Boolean);
+                          updateServerEntry(idx, 'tools', tools);
+                        }
+                      }}
+                      placeholder={entry.server ? "e.g. tool_name, other_tool or * for all" : "Select a server first"}
+                      disabled={!entry.server}
+                      className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
+                                 bg-white dark:bg-gray-900 text-gray-900 dark:text-white
+                                 focus:ring-2 focus:ring-purple-500 focus:border-transparent
+                                 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
                   )}
                 </div>
               </div>
-            );
-          })}
+          ))}
         </div>
 
         {/* ── Agent Access ──────────────────────────────────── */}
@@ -547,37 +520,76 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
             Agent Access
             <span className="text-xs text-gray-400 ml-1">(optional)</span>
           </p>
+          {/* Selected agents as removable tags */}
+          {selectedAgents.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {selectedAgents.map((agentName) => (
+                <span
+                  key={agentName}
+                  className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 dark:bg-purple-900/30
+                             text-purple-700 dark:text-purple-300 rounded-full"
+                >
+                  {agentName}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedAgents((prev) => prev.filter((a) => a !== agentName))}
+                    className="ml-1 hover:text-purple-900 dark:hover:text-purple-100"
+                  >
+                    <XMarkIcon className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           {agentsLoading ? (
             <p className="text-xs text-gray-400">Loading agents...</p>
           ) : availableAgents.length === 0 ? (
             <p className="text-xs text-gray-400 italic">No agents available</p>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-1 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-              {availableAgents.map((agent) => (
-                <label key={agent.path} className="flex items-center space-x-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selectedAgents.includes(agent.name)}
-                    onChange={() => {
-                      setSelectedAgents((prev) =>
-                        prev.includes(agent.name)
-                          ? prev.filter((a) => a !== agent.name)
-                          : [...prev, agent.name]
-                      );
-                    }}
-                    className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 h-3 w-3"
-                  />
-                  <span className="text-xs text-gray-600 dark:text-gray-400 truncate" title={agent.name}>
-                    {agent.name}
-                  </span>
-                </label>
-              ))}
+            <div className="space-y-2">
+              {/* Search input */}
+              <div className="relative">
+                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <input
+                  type="text"
+                  value={agentSearchQuery}
+                  onChange={(e) => setAgentSearchQuery(e.target.value)}
+                  placeholder="Search agents..."
+                  className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
+                             bg-white dark:bg-gray-900 text-gray-900 dark:text-white
+                             focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                />
+              </div>
+              {/* Filtered agent list */}
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-1 max-h-32 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+                {availableAgents
+                  .filter((agent) =>
+                    agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase()) &&
+                    !selectedAgents.includes(agent.name)
+                  )
+                  .slice(0, 50) // Limit display for performance
+                  .map((agent) => (
+                    <button
+                      key={agent.path}
+                      type="button"
+                      onClick={() => setSelectedAgents((prev) => [...prev, agent.name])}
+                      className="text-left px-2 py-1 text-xs text-gray-600 dark:text-gray-400
+                                 hover:bg-gray-100 dark:hover:bg-gray-700 rounded truncate"
+                      title={agent.name}
+                    >
+                      + {agent.name}
+                    </button>
+                  ))}
+                {availableAgents.filter((a) =>
+                  a.name.toLowerCase().includes(agentSearchQuery.toLowerCase()) &&
+                  !selectedAgents.includes(a.name)
+                ).length > 50 && (
+                  <p className="col-span-full text-xs text-gray-400 italic text-center py-1">
+                    Showing first 50 results. Use search to filter.
+                  </p>
+                )}
+              </div>
             </div>
-          )}
-          {selectedAgents.length > 0 && (
-            <p className="text-xs text-gray-500">
-              Selected: {selectedAgents.join(', ')}
-            </p>
           )}
         </div>
 
