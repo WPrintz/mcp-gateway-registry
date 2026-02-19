@@ -15,6 +15,7 @@ import { useIAMGroups, createGroup, deleteGroup, CreateGroupPayload } from '../h
 import { useServerList } from '../hooks/useToolCatalog';
 import { useAgentList } from '../hooks/useAgentList';
 import DeleteConfirmation from './DeleteConfirmation';
+import SearchableSelect from './SearchableSelect';
 
 interface IAMGroupsProps {
   onShowToast: (message: string, type: 'success' | 'error' | 'info') => void;
@@ -149,7 +150,6 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
   const [serverAccess, setServerAccess] = useState<ServerAccessEntry[]>([{ ...EMPTY_SERVER_ENTRY }]);
   const [groupMappings, setGroupMappings] = useState('');
   const [selectedAgents, setSelectedAgents] = useState<string[]>([]);
-  const [agentSearchQuery, setAgentSearchQuery] = useState('');
   const [uiPermissions, setUiPermissions] = useState<Record<string, string>>({});
   const [createInIdp, setCreateInIdp] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -184,7 +184,6 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
     setServerAccess([{ ...EMPTY_SERVER_ENTRY }]);
     setGroupMappings('');
     setSelectedAgents([]);
-    setAgentSearchQuery('');
     setUiPermissions({});
     setCreateInIdp(true);
   }, []);
@@ -445,25 +444,25 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Server</label>
-                  <select
+                  <SearchableSelect
+                    options={availableServers.map((s) => ({
+                      value: s.path,
+                      label: `${s.name} (${s.path})`,
+                      description: s.description,
+                    }))}
                     value={entry.server}
-                    onChange={(e) => {
-                      updateServerEntry(idx, 'server', e.target.value);
+                    onChange={(val) => {
+                      updateServerEntry(idx, 'server', val);
                       // Reset tools when server changes
                       updateServerEntry(idx, 'tools', []);
                     }}
-                    className="w-full px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
-                               bg-white dark:bg-gray-900 text-gray-900 dark:text-white
-                               focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  >
-                    <option value="">Select a server...</option>
-                    <option value="*">* (All servers)</option>
-                    {availableServers.map((server) => (
-                      <option key={server.path} value={server.path}>
-                        {server.name} ({server.path})
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Search servers..."
+                    isLoading={serversLoading}
+                    maxDescriptionWords={8}
+                    specialOptions={[
+                      { value: '*', label: '* (All servers)', description: 'Grant access to all servers' },
+                    ]}
+                  />
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Methods</label>
@@ -541,56 +540,25 @@ const IAMGroups: React.FC<IAMGroupsProps> = ({ onShowToast }) => {
               ))}
             </div>
           )}
-          {agentsLoading ? (
-            <p className="text-xs text-gray-400">Loading agents...</p>
-          ) : availableAgents.length === 0 ? (
-            <p className="text-xs text-gray-400 italic">No agents available</p>
-          ) : (
-            <div className="space-y-2">
-              {/* Search input */}
-              <div className="relative">
-                <MagnifyingGlassIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input
-                  type="text"
-                  value={agentSearchQuery}
-                  onChange={(e) => setAgentSearchQuery(e.target.value)}
-                  placeholder="Search agents..."
-                  className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg
-                             bg-white dark:bg-gray-900 text-gray-900 dark:text-white
-                             focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                />
-              </div>
-              {/* Filtered agent list */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-1 max-h-32 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg p-2">
-                {availableAgents
-                  .filter((agent) =>
-                    agent.name.toLowerCase().includes(agentSearchQuery.toLowerCase()) &&
-                    !selectedAgents.includes(agent.name)
-                  )
-                  .slice(0, 50) // Limit display for performance
-                  .map((agent) => (
-                    <button
-                      key={agent.path}
-                      type="button"
-                      onClick={() => setSelectedAgents((prev) => [...prev, agent.name])}
-                      className="text-left px-2 py-1 text-xs text-gray-600 dark:text-gray-400
-                                 hover:bg-gray-100 dark:hover:bg-gray-700 rounded truncate"
-                      title={agent.name}
-                    >
-                      + {agent.name}
-                    </button>
-                  ))}
-                {availableAgents.filter((a) =>
-                  a.name.toLowerCase().includes(agentSearchQuery.toLowerCase()) &&
-                  !selectedAgents.includes(a.name)
-                ).length > 50 && (
-                  <p className="col-span-full text-xs text-gray-400 italic text-center py-1">
-                    Showing first 50 results. Use search to filter.
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
+          {/* Searchable agent selector */}
+          <SearchableSelect
+            options={availableAgents
+              .filter((a) => !selectedAgents.includes(a.name))
+              .map((a) => ({
+                value: a.name,
+                label: a.name,
+                description: a.description,
+              }))}
+            value=""
+            onChange={(val) => {
+              if (val && !selectedAgents.includes(val)) {
+                setSelectedAgents((prev) => [...prev, val]);
+              }
+            }}
+            placeholder="Search and add agents..."
+            isLoading={agentsLoading}
+            maxDescriptionWords={8}
+          />
         </div>
 
         {/* ── UI Permissions (collapsible) ───────────────────── */}

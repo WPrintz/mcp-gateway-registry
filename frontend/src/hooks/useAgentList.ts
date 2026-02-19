@@ -1,17 +1,18 @@
 /**
- * Hook for fetching the list of agents.
+ * Hook for fetching the list of agents with descriptions.
  *
- * Provides agent names for scope configuration in IAM Groups form.
- * Only returns name and path - no detailed agent information needed.
+ * Provides agent names and descriptions for scope configuration
+ * in IAM Groups form using searchable select components.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
 
-interface AgentBasicInfo {
+export interface AgentInfo {
   name: string;
   path: string;
+  description: string;
 }
 
 interface AgentListResponse {
@@ -24,7 +25,7 @@ interface AgentListResponse {
 }
 
 interface UseAgentListReturn {
-  agents: AgentBasicInfo[];
+  agents: AgentInfo[];
   isLoading: boolean;
   error: string | null;
   refetch: () => Promise<void>;
@@ -32,7 +33,7 @@ interface UseAgentListReturn {
 
 
 export function useAgentList(): UseAgentListReturn {
-  const [agents, setAgents] = useState<AgentBasicInfo[]>([]);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,10 +45,10 @@ export function useAgentList(): UseAgentListReturn {
       const response = await axios.get<AgentListResponse>('/api/agents');
       const data = response.data;
 
-      // Extract just name and path
-      const agentList: AgentBasicInfo[] = (data.agents || []).map((agent) => ({
+      const agentList: AgentInfo[] = (data.agents || []).map((agent) => ({
         name: agent.name,
         path: agent.path,
+        description: agent.description || '',
       }));
 
       // Sort by name
