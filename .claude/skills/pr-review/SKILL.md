@@ -1,6 +1,7 @@
 ---
 name: pr-review
 description: Review a GitHub pull request using multiple expert personas. Takes a PR URL as input, analyzes the changes, and generates comprehensive review feedback from different perspectives (Merge Specialist, Frontend, Backend, Security, DevOps, AI/Agent, SRE, Chief Architect).
+license: Apache-2.0
 metadata:
   author: mcp-gateway-registry
   version: "1.0"
