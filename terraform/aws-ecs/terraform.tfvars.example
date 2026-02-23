@@ -233,6 +233,10 @@ registry_static_token_auth_enabled = true
 #   export TF_VAR_registry_api_token="your-generated-token"
 registry_api_token = "m3zT65wREARMVDToKosg_DgNkKqS_434hNxy3sslGPY"
 
+# Maximum JWT tokens that can be vended per user per hour
+# Default: 100
+# max_tokens_per_user_per_hour = 100
+
 # ============================================================================
 # FEDERATION CONFIGURATION (Peer-to-Peer Registry Sync)
 # ============================================================================

@@ -133,6 +133,7 @@ module "mcp_gateway" {
   # Registry static token auth
   registry_static_token_auth_enabled = var.registry_static_token_auth_enabled
   registry_api_token                 = var.registry_api_token
+  max_tokens_per_user_per_hour       = var.max_tokens_per_user_per_hour
 
   # Federation configuration (peer-to-peer registry sync)
   registry_id                          = var.registry_id

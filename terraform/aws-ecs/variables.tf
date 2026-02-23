@@ -462,6 +462,12 @@ variable "registry_api_token" {
   sensitive   = true
 }
 
+variable "max_tokens_per_user_per_hour" {
+  description = "Maximum JWT tokens that can be vended per user per hour."
+  type        = number
+  default     = 100
+}
+
 # =============================================================================
 # FEDERATION CONFIGURATION (Peer-to-Peer Registry Sync)
 # =============================================================================

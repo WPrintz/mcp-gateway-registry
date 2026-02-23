@@ -58,11 +58,16 @@ CONFIG_GROUPS: Dict[str, Dict[str, Any]] = {
         "title": "Authentication",
         "order": 3,
         "fields": [
+            ("auth_provider", "Auth Provider", False),
             ("auth_server_url", "Auth Server URL", False),
             ("auth_server_external_url", "Auth Server External URL", False),
             ("session_max_age_seconds", "Session Max Age", False),
             ("session_cookie_secure", "Secure Cookie", False),
             ("session_cookie_domain", "Cookie Domain", False),
+            ("oauth_store_tokens_in_session", "Store OAuth IdP Tokens in Session Cookie", False),
+            ("registry_static_token_auth_enabled", "Static Token Auth Enabled", False),
+            ("registry_api_token", "Registry API Token", True),
+            ("max_tokens_per_user_per_hour", "JWT Token Vending Rate Limit (per user/hour)", False),
             ("secret_key", "Secret Key", True),
         ],
     },
@@ -144,6 +149,8 @@ CONFIG_GROUPS: Dict[str, Dict[str, Any]] = {
         "order": 10,
         "fields": [
             ("registry_id", "Registry ID", False),
+            ("federation_static_token_auth_enabled", "Static Token Auth Enabled", False),
+            ("federation_static_token", "Federation Static Token", True),
         ],
     },
     "discovery": {
