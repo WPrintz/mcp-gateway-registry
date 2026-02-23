@@ -149,6 +149,14 @@ services:
       - FEDERATION_CLIENT_SECRET=${FEDERATION_CLIENT_SECRET}
       # Federation Token Encryption (for encrypting federation_token before storage)
       - FEDERATION_ENCRYPTION_KEY=${FEDERATION_ENCRYPTION_KEY:-}
+      # Federation static token auth
+      - FEDERATION_STATIC_TOKEN_AUTH_ENABLED=${FEDERATION_STATIC_TOKEN_AUTH_ENABLED:-false}
+      - FEDERATION_STATIC_TOKEN=${FEDERATION_STATIC_TOKEN:-}
+      # Auth server config (mirrored for config panel visibility)
+      - OAUTH_STORE_TOKENS_IN_SESSION=${OAUTH_STORE_TOKENS_IN_SESSION:-false}
+      - REGISTRY_STATIC_TOKEN_AUTH_ENABLED=${REGISTRY_STATIC_TOKEN_AUTH_ENABLED:-false}
+      - REGISTRY_API_TOKEN=${REGISTRY_API_TOKEN:-}
+      - MAX_TOKENS_PER_USER_PER_HOUR=${MAX_TOKENS_PER_USER_PER_HOUR:-100}
     ports:
       - "80:80"
       - "443:443"
@@ -264,6 +272,8 @@ services:
       # Federation static token auth (scoped access for peer registries)
       - FEDERATION_STATIC_TOKEN_AUTH_ENABLED=${FEDERATION_STATIC_TOKEN_AUTH_ENABLED:-false}
       - FEDERATION_STATIC_TOKEN=${FEDERATION_STATIC_TOKEN:-}
+      # OAuth token storage in session (set to false for Entra ID large tokens)
+      - OAUTH_STORE_TOKENS_IN_SESSION=${OAUTH_STORE_TOKENS_IN_SESSION:-false}
     ports:
       - "8888:8888"
     volumes:

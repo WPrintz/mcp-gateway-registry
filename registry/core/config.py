@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     session_cookie_domain: Optional[str] = None  # e.g., ".example.com" for cross-subdomain sharing
     auth_server_url: str = "http://localhost:8888"
     auth_server_external_url: str = "http://localhost:8888"  # External URL for OAuth redirects
+    auth_provider: str = "cognito"  # Auth provider: cognito, keycloak, entra, github
+    oauth_store_tokens_in_session: bool = False  # Store OAuth tokens in session cookies
+    registry_static_token_auth_enabled: bool = False  # Enable static token auth (IdP-independent)
+    registry_api_token: str = ""  # Static API token for registry access
+    max_tokens_per_user_per_hour: int = 100  # JWT token vending rate limit
     
     # Embeddings settings [Default]
     embeddings_provider: str = "sentence-transformers"  # 'sentence-transformers' or 'litellm'
@@ -106,6 +111,8 @@ class Settings(BaseSettings):
 
     # Federation settings
     registry_id: Optional[str] = None  # Unique identifier for this registry instance in federation
+    federation_static_token_auth_enabled: bool = False  # Enable federation static token auth
+    federation_static_token: str = ""  # Federation static token for peer registry access
 
     # Audit Logging Configuration
     audit_log_enabled: bool = True  # Enable/disable audit logging globally

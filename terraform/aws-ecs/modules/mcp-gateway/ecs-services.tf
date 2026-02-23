@@ -154,6 +154,10 @@ module "ecs_service_auth" {
           value = var.session_cookie_domain
         },
         {
+          name  = "OAUTH_STORE_TOKENS_IN_SESSION"
+          value = tostring(var.oauth_store_tokens_in_session)
+        },
+        {
           name  = "REGISTRY_STATIC_TOKEN_AUTH_ENABLED"
           value = tostring(var.registry_static_token_auth_enabled)
         },
@@ -593,6 +597,22 @@ module "ecs_service_registry" {
         {
           name  = "REGISTRY_MODE"
           value = var.registry_mode
+        },
+        {
+          name  = "OAUTH_STORE_TOKENS_IN_SESSION"
+          value = tostring(var.oauth_store_tokens_in_session)
+        },
+        {
+          name  = "REGISTRY_STATIC_TOKEN_AUTH_ENABLED"
+          value = tostring(var.registry_static_token_auth_enabled)
+        },
+        {
+          name  = "REGISTRY_API_TOKEN"
+          value = var.registry_api_token
+        },
+        {
+          name  = "MAX_TOKENS_PER_USER_PER_HOUR"
+          value = tostring(var.max_tokens_per_user_per_hour)
         }
       ]
 

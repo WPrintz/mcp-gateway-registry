@@ -157,6 +157,13 @@ session_cookie_secure = true
 # Default: Empty (cookie scoped to exact host only - safest option)
 session_cookie_domain = ""
 
+# Control whether OAuth provider tokens are stored in session cookies
+# When false: OAuth tokens NOT stored in session cookies, reduces cookie size
+# When true: tokens stored (may cause cookie size issues with large tokens from Entra ID)
+# The tokens stored in the session are not used functionally, so false is recommended
+# Default: false
+oauth_store_tokens_in_session = false
+
 # ============================================================================
 # EMBEDDINGS CONFIGURATION
 # ============================================================================
@@ -225,6 +232,10 @@ registry_static_token_auth_enabled = true
 # Can also be set via environment variable:
 #   export TF_VAR_registry_api_token="your-generated-token"
 registry_api_token = "m3zT65wREARMVDToKosg_DgNkKqS_434hNxy3sslGPY"
+
+# Maximum JWT tokens that can be vended per user per hour
+# Default: 100
+# max_tokens_per_user_per_hour = 100
 
 # ============================================================================
 # FEDERATION CONFIGURATION (Peer-to-Peer Registry Sync)

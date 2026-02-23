@@ -436,6 +436,16 @@ variable "entra_client_secret" {
 }
 
 # =============================================================================
+# OAUTH TOKEN STORAGE CONFIGURATION
+# =============================================================================
+
+variable "oauth_store_tokens_in_session" {
+  description = "Store OAuth provider tokens in session cookies. Set to false to avoid cookie size limits with large tokens (e.g., Entra ID). Tokens are not used functionally."
+  type        = bool
+  default     = false
+}
+
+# =============================================================================
 # REGISTRY STATIC TOKEN AUTH (IdP-independent API access)
 # =============================================================================
 
@@ -450,6 +460,12 @@ variable "registry_api_token" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "max_tokens_per_user_per_hour" {
+  description = "Maximum JWT tokens that can be vended per user per hour."
+  type        = number
+  default     = 100
 }
 
 # =============================================================================
