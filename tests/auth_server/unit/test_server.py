@@ -1427,3 +1427,112 @@ class TestOAuthTokenStorageConfiguration:
         assert size_with_tokens - size_without_tokens > 2000
         # Session without tokens should be under cookie limit (4096 bytes)
         assert size_without_tokens < 4096
+
+
+# =============================================================================
+# OAUTH2 CALLBACK TOKEN STORAGE INTEGRATION TESTS
+# =============================================================================
+
+
+class TestOAuth2CallbackTokenStorage:
+    """Test that OAUTH_STORE_TOKENS_IN_SESSION controls actual session cookie content."""
+
+    def _call_oauth2_callback(
+        self,
+        store_tokens: bool,
+    ) -> dict:
+        """Call the real oauth2_callback endpoint and return decoded session data.
+
+        Args:
+            store_tokens: Value for OAUTH_STORE_TOKENS_IN_SESSION flag
+
+        Returns:
+            Decoded session cookie data dict
+        """
+        from itsdangerous import URLSafeTimedSerializer
+
+        from auth_server.server import (
+            SECRET_KEY,
+            app,
+            signer,
+        )
+
+        mock_token_data = {
+            "access_token": "mock-access-token-value",
+            "refresh_token": "mock-refresh-token-value",
+            "expires_in": 3600,
+            "id_token": "mock-id-token",
+        }
+        mock_user_info = {
+            "sub": "testuser",
+            "email": "test@example.com",
+            "name": "Test User",
+        }
+        temp_session_data = {
+            "state": "test-state",
+            "provider": "github",
+            "callback_uri": "http://localhost:8888/oauth2/callback/github",
+        }
+        temp_cookie = signer.dumps(temp_session_data)
+
+        client = TestClient(app, raise_server_exceptions=False)
+
+        with (
+            patch("auth_server.server.OAUTH_STORE_TOKENS_IN_SESSION", store_tokens),
+            patch(
+                "auth_server.server.exchange_code_for_token",
+                new_callable=AsyncMock,
+                return_value=mock_token_data,
+            ),
+            patch(
+                "auth_server.server.get_user_info",
+                new_callable=AsyncMock,
+                return_value=mock_user_info,
+            ),
+            patch(
+                "auth_server.server.map_user_info",
+                return_value={
+                    "username": "testuser",
+                    "email": "test@example.com",
+                    "name": "Test User",
+                    "groups": [],
+                },
+            ),
+        ):
+            response = client.get(
+                "/oauth2/callback/github",
+                params={"code": "test-code", "state": "test-state"},
+                cookies={"oauth2_temp_session": temp_cookie},
+                follow_redirects=False,
+            )
+
+        # Extract session cookie from redirect response
+        assert response.status_code == 302
+        session_cookie = response.cookies.get("mcp_gateway_session")
+        assert session_cookie is not None, "Session cookie not set in response"
+
+        # Decode session cookie
+        decoder = URLSafeTimedSerializer(SECRET_KEY)
+        return decoder.loads(session_cookie)
+
+    def test_tokens_excluded_when_disabled(self):
+        """oauth2_callback omits tokens from session when flag is False."""
+        session_data = self._call_oauth2_callback(store_tokens=False)
+
+        assert session_data["username"] == "testuser"
+        assert session_data["auth_method"] == "oauth2"
+        assert "access_token" not in session_data
+        assert "refresh_token" not in session_data
+        assert "token_expires_in" not in session_data
+        assert "token_obtained_at" not in session_data
+
+    def test_tokens_included_when_enabled(self):
+        """oauth2_callback includes tokens in session when flag is True."""
+        session_data = self._call_oauth2_callback(store_tokens=True)
+
+        assert session_data["username"] == "testuser"
+        assert session_data["auth_method"] == "oauth2"
+        assert session_data["access_token"] == "mock-access-token-value"
+        assert session_data["refresh_token"] == "mock-refresh-token-value"
+        assert session_data["token_expires_in"] == 3600
+        assert "token_obtained_at" in session_data
