@@ -419,18 +419,20 @@ def parse_server_and_tool_from_url(original_url: str) -> tuple[str | None, str |
 
 def _normalize_server_name(name: str) -> str:
     """
-    Normalize server name by removing trailing slash for comparison.
+    Normalize server name by removing leading and trailing slashes for comparison.
 
-    This handles cases where a server is registered with a trailing slash
-    but accessed without one (or vice versa).
+    This handles cases where a server is registered with a leading or trailing
+    slash but accessed without one (or vice versa). Scope configs from the UI
+    store server names with a leading slash (e.g. '/cloudflare-docs') while the
+    URL extraction produces names without one (e.g. 'cloudflare-docs').
 
     Args:
         name: Server name to normalize
 
     Returns:
-        Normalized server name (without trailing slash)
+        Normalized server name (without leading or trailing slashes)
     """
-    return name.rstrip("/") if name else name
+    return name.strip("/") if name else name
 
 
 def _server_names_match(name1: str, name2: str) -> bool:
