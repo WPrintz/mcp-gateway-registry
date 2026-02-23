@@ -34,7 +34,6 @@ global:
 
   # Common ingress settings
   ingress:
-    enabled: true
     inboundCidrs: # optional comma separated list of allowed inbound CIDR ranges
     className: alb
     tls: true
@@ -138,6 +137,11 @@ keycloak-configure:
     realm: mcp-gateway
     adminUser: user
   # authServer.externalUrl will be templated in the subchart using global.domain
+
+# Keycloak ingress for mcp-gateway-registry
+# Whether to create an ingress for Keycloak with this Chart (only applicable when keycloak.create: true)
+keycloakIngress:
+  enabled: true
 
 # Mongodb configuration job
 mongodb-configure:
