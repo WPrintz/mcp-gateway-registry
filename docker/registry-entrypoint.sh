@@ -264,6 +264,22 @@ if [ -n "$METRICS_SERVICE_URL" ]; then
     fi
 fi
 
+# Add FQDN aliases for Service Connect entries in /etc/hosts.
+# Service Connect only registers short names (e.g., "auth-server"), but servers
+# may be registered with Cloud Map FQDNs (e.g., "auth-server.mcp-gateway.local").
+# The Python health checker resolves proxy_pass_url hostnames via system DNS,
+# which only finds /etc/hosts entries.  Adding FQDN aliases ensures both short
+# names and FQDNs resolve to the IPv4 Service Connect VIP.
+# Gated on SERVICE_CONNECT_NAMESPACE -- only set in ECS Terraform deployments.
+if [ -n "${SERVICE_CONNECT_NAMESPACE:-}" ]; then
+    fqdn_count=0
+    grep '^127\.255\.0\.' /etc/hosts | while read -r ip name _rest; do
+        echo "$ip ${name}.${SERVICE_CONNECT_NAMESPACE}" >> /etc/hosts
+        fqdn_count=$((fqdn_count + 1))
+    done
+    echo "Added FQDN aliases for Service Connect entries (namespace: ${SERVICE_CONNECT_NAMESPACE})"
+fi
+
 echo "Starting Nginx..."
 nginx
 
