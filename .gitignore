@@ -362,3 +362,8 @@ charts/*/charts/
 .claude/*
 !.claude/skills/
 .token?
+
+# Workshop authoring materials (content synced separately to Workshop Studio)
+cloudformation/aws-ecs/content/*
+cloudformation/aws-ecs/static/*
+cloudformation/aws-ecs/containers/*

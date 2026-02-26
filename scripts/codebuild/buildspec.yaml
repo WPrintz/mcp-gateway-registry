@@ -1,0 +1,68 @@
+version: 0.2
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      # Pre-pull base images to cache them before parallel builds
+      - echo Pre-pulling base images for layer caching...
+      - docker pull public.ecr.aws/docker/library/python:3.12-slim
+      - docker pull quay.io/keycloak/keycloak:23.0
+      - docker pull grafana/grafana:12.3.1
+      # Setup A2A agent dependencies
+      - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
+  build:
+    commands:
+      - echo Building container images in parallel...
+      - |
+        echo "Using image tag: $IMAGE_TAG"
+
+        # Build function that builds and pushes an image
+        # Passes BUILD_VERSION as build arg for version display in UI
+        # Tags with both $IMAGE_TAG and 'latest' for flexibility
+        # Returns non-zero exit code on failure so wait can detect it
+        build_and_push() {
+          local name=$1
+          local dockerfile=$2
+          local context=$3
+          echo "Starting build: $name"
+          if docker build -t $ECR_REGISTRY/$name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context && \
+             docker tag $ECR_REGISTRY/$name:$IMAGE_TAG $ECR_REGISTRY/$name:latest && \
+             docker push $ECR_REGISTRY/$name:$IMAGE_TAG && \
+             docker push $ECR_REGISTRY/$name:latest; then
+            echo "Completed: $name"
+          else
+            echo "FAILED: $name"
+            return 1
+          fi
+        }
+
+        # Start all builds in parallel
+        # Using CPU-only Dockerfiles for registry and mcpgw (smaller images, no GPU required)
+        build_and_push mcp-gateway-registry docker/Dockerfile.registry-cpu . &
+        build_and_push mcp-gateway-auth-server docker/Dockerfile.auth . &
+        build_and_push mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
+        (docker build -t $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && docker tag $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG $ECR_REGISTRY/mcp-gateway-mcpgw:latest && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && docker push $ECR_REGISTRY/mcp-gateway-mcpgw:latest && echo "Completed: mcp-gateway-mcpgw" || { echo "FAILED: mcp-gateway-mcpgw"; exit 1; }) &
+        build_and_push mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
+        build_and_push mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
+        build_and_push mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
+        build_and_push mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
+        build_and_push mcp-gateway-grafana cloudformation/aws-ecs/grafana/Dockerfile cloudformation/aws-ecs/grafana &
+        build_and_push mcp-gateway-metrics-service metrics-service/Dockerfile metrics-service &
+
+        # Wait for all background jobs and capture exit codes
+        FAILED=0
+        for job in $(jobs -p); do
+          wait $job || FAILED=$((FAILED+1))
+        done
+
+        if [ $FAILED -gt 0 ]; then
+          echo "$FAILED build(s) failed"
+          exit 1
+        fi
+        echo "All builds completed successfully"
+  post_build:
+    commands:
+      - echo Build completed on `date`

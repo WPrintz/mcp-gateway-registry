@@ -1,0 +1,592 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Main Stack (Parent Orchestration)
+  Orchestrates all nested stacks for complete MCP Gateway Registry deployment.
+  Target Region: us-west-2
+
+Parameters:
+  # Upstream Version Tracking
+  UpstreamVersion:
+    Type: String
+    Default: 'v1.0.15'
+    Description: >
+      Upstream mcp-gateway-registry version this deployment is based on.
+      Used for display purposes in the registry console. Image tags default
+      to 'latest' unless explicitly overridden via *ImageTag parameters.
+    AllowedPattern: '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$|^latest$'
+    ConstraintDescription: Must be a semantic version (e.g., v1.0.15, 1.0.15) or 'latest'
+
+  # Build Trigger - increment to force CodeBuild rebuild
+  BuildTriggerVersion:
+    Type: String
+    Default: '1'
+    Description: Increment this value to force a CodeBuild rebuild of all container images
+
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources
+
+  # Network Configuration
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+
+  IngressCidrBlocks:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR blocks allowed to access ALBs
+
+  # Domain Configuration
+  BaseDomain:
+    Type: String
+    Default: ''
+    Description: Base domain for regional URLs (leave empty to skip DNS/certs)
+
+  HostedZoneId:
+    Type: String
+    Default: ''
+    Description: Route53 Hosted Zone ID (leave empty to skip DNS/certs)
+
+  UseRegionalDomains:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Use region-based domain names
+
+  # Database Credentials
+  KeycloakDatabaseUsername:
+    Type: String
+    Default: keycloak
+    Description: Keycloak database username
+    NoEcho: true
+
+  KeycloakDatabasePassword:
+    Type: String
+    Default: McpGateway2026!
+    Description: Keycloak database password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  KeycloakAdminPassword:
+    Type: String
+    Default: AdminPassword2026!
+    Description: Keycloak admin password (min 12 characters)
+    NoEcho: true
+    MinLength: 12
+
+  # DocumentDB Credentials
+  DocumentDBUsername:
+    Type: String
+    Default: docdbadmin
+    Description: DocumentDB admin username
+    NoEcho: true
+
+  DocumentDBPassword:
+    Type: String
+    Default: DocDBPass2026!
+    Description: DocumentDB admin password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  # DocumentDB Instance Configuration
+  DocumentDBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: DocumentDB instance class (db.t3.medium = 2 vCPU, 4 GB RAM)
+    AllowedValues:
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+
+  # Aurora Serverless Scaling
+  DatabaseMinACU:
+    Type: Number
+    Default: 0.5
+    Description: Minimum Aurora Capacity Units
+
+  DatabaseMaxACU:
+    Type: Number
+    Default: 2
+    Description: Maximum Aurora Capacity Units
+
+  # Container Image Repositories (ECR URIs constructed dynamically using AWS::AccountId and AWS::Region)
+  RegistryImageRepo:
+    Type: String
+    Default: 'mcp-gateway-registry'
+    Description: ECR repository name for Registry service
+
+  RegistryImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for Registry service (defaults to 'latest' if empty)
+
+  AuthServerImageRepo:
+    Type: String
+    Default: 'mcp-gateway-auth-server'
+    Description: ECR repository name for Auth Server
+
+  AuthServerImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for Auth Server (defaults to 'latest' if empty)
+
+  KeycloakImageRepo:
+    Type: String
+    Default: 'mcp-gateway-keycloak'
+    Description: ECR repository name for Keycloak
+
+  KeycloakImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for Keycloak (defaults to 'latest' if empty)
+
+  CurrentTimeImageRepo:
+    Type: String
+    Default: 'mcp-gateway-currenttime'
+    Description: ECR repository name for CurrentTime MCP server
+
+  CurrentTimeImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for CurrentTime MCP server (defaults to 'latest' if empty)
+
+  McpgwImageRepo:
+    Type: String
+    Default: 'mcp-gateway-mcpgw'
+    Description: ECR repository name for MCPGW MCP server
+
+  McpgwImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for MCPGW MCP server (defaults to 'latest' if empty)
+
+  RealServerFakeToolsImageRepo:
+    Type: String
+    Default: 'mcp-gateway-realserverfaketools'
+    Description: ECR repository name for RealServerFakeTools MCP server
+
+  RealServerFakeToolsImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for RealServerFakeTools MCP server (defaults to 'latest' if empty)
+
+  FlightBookingAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-flight-booking-agent'
+    Description: ECR repository name for Flight Booking Agent
+
+  FlightBookingAgentImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for Flight Booking Agent (defaults to 'latest' if empty)
+
+  TravelAssistantAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-travel-assistant-agent'
+    Description: ECR repository name for Travel Assistant Agent
+
+  TravelAssistantAgentImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for Travel Assistant Agent (defaults to 'latest' if empty)
+
+  # Resource Configuration
+  ServiceCpu:
+    Type: String
+    Default: '512'
+    Description: CPU units for main services
+
+  ServiceMemory:
+    Type: String
+    Default: '1024'
+    Description: Memory (MB) for main services
+
+  KeycloakCpu:
+    Type: String
+    Default: '1024'
+    Description: CPU units for Keycloak
+
+  KeycloakMemory:
+    Type: String
+    Default: '2048'
+    Description: Memory (MB) for Keycloak
+
+  # Auto Scaling Configuration
+  EnableAutoScaling:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable auto scaling for ECS services
+
+  MinCapacity:
+    Type: Number
+    Default: 1
+    Description: Minimum number of tasks
+
+  MaxCapacity:
+    Type: Number
+    Default: 4
+    Description: Maximum number of tasks
+
+  TargetCpuUtilization:
+    Type: Number
+    Default: 70
+    Description: Target CPU utilization percentage
+
+  TargetMemoryUtilization:
+    Type: Number
+    Default: 80
+    Description: Target memory utilization percentage
+
+  # Keycloak Configuration
+  KeycloakLogLevel:
+    Type: String
+    Default: 'INFO'
+    Description: Keycloak log level
+    AllowedValues:
+      - 'ALL'
+      - 'DEBUG'
+      - 'ERROR'
+      - 'FATAL'
+      - 'INFO'
+      - 'OFF'
+      - 'TRACE'
+      - 'WARN'
+
+  # Embeddings Configuration (matching Terraform v1.0.7)
+  EmbeddingsProvider:
+    Type: String
+    Default: 'sentence-transformers'
+    AllowedValues:
+      - 'sentence-transformers'
+      - 'litellm'
+    Description: Embeddings provider (sentence-transformers for local, litellm for API-based)
+
+  EmbeddingsModelName:
+    Type: String
+    Default: 'all-MiniLM-L6-v2'
+    Description: Name of the embeddings model
+
+  EmbeddingsModelDimensions:
+    Type: Number
+    Default: 384
+    Description: Dimension of the embeddings model (384 for MiniLM, 1536 for OpenAI)
+
+  EmbeddingsAwsRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: AWS region for Bedrock embeddings (only used with litellm provider)
+
+  # Session Cookie Security (matching Terraform v1.0.7)
+  SessionCookieSecure:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable secure flag on session cookies (HTTPS-only)
+
+  SessionCookieDomain:
+    Type: String
+    Default: ''
+    Description: Domain for session cookies (leave empty for single-domain deployments)
+
+  # Security Scanning Configuration (v1.0.9+)
+  SecurityScanEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable security scanning for MCP servers during registration
+
+  SecurityScanOnRegistration:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Automatically scan servers when they are registered
+
+  SecurityBlockUnsafeServers:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Block (disable) servers that fail security scans
+
+  SecurityAnalyzers:
+    Type: String
+    Default: 'yara'
+    Description: Comma-separated analyzers for security scanning (yara, llm, api). YARA requires no API key.
+
+  SecurityScanTimeout:
+    Type: Number
+    Default: 60
+    Description: Security scan timeout in seconds
+
+  SecurityAddPendingTag:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Add security-pending tag to servers that fail security scan
+
+  # Observability Configuration (ADOT + AMP + Grafana + Metrics Service)
+  EnableObservability:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: >
+      Enable full observability stack (Grafana OSS, metrics-service, ADOT collector).
+      When enabled, deploys Grafana dashboards for MCP Analytics and AWS Infrastructure monitoring.
+
+  AMPRemoteWriteEndpoint:
+    Type: String
+    Default: ''
+    Description: >
+      Amazon Managed Prometheus remote write endpoint. If empty, auto-uses endpoint from compute-stack.
+      Format: https://aps-workspaces.<region>.amazonaws.com/workspaces/<workspace-id>/api/v1/remote_write
+
+  GrafanaImageRepo:
+    Type: String
+    Default: 'mcp-gateway-grafana'
+    Description: ECR repository name for Grafana (with dashboards baked in from cloudformation/aws-ecs/grafana/)
+
+  GrafanaImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for Grafana (defaults to 'latest' if empty)
+
+  MetricsServiceImageRepo:
+    Type: String
+    Default: 'mcp-gateway-metrics-service'
+    Description: ECR repository name for metrics-service
+
+  MetricsServiceImageTag:
+    Type: String
+    Default: ''
+    Description: Image tag for metrics-service (defaults to 'latest' if empty)
+
+  # Template S3 Location (for nested stacks)
+  # NOTE: TemplateS3Prefix must include trailing slash (e.g., "path/to/templates/")
+  # This convention allows direct copy to Workshop Studio which injects prefix with trailing slash
+  TemplateS3Bucket:
+    Type: String
+    Default: 'your_template_bucket_here'
+    Description: S3 bucket containing nested stack templates
+
+  TemplateS3Prefix:
+    Type: String
+    Default: 'your_template_prefix_here/'
+    Description: S3 prefix for nested stack templates (must include trailing slash)
+
+Conditions:
+  UseRegionalDomainsCondition: !Equals [!Ref UseRegionalDomains, 'true']
+  HasDnsConfig: !And
+    - !Not [!Equals [!Ref BaseDomain, '']]
+    - !Not [!Equals [!Ref HostedZoneId, '']]
+  # Image tag conditions - use UpstreamVersion as default when individual tags are empty
+  UseDefaultRegistryTag: !Equals [!Ref RegistryImageTag, '']
+  UseDefaultAuthServerTag: !Equals [!Ref AuthServerImageTag, '']
+  UseDefaultKeycloakTag: !Equals [!Ref KeycloakImageTag, '']
+  UseDefaultCurrentTimeTag: !Equals [!Ref CurrentTimeImageTag, '']
+  UseDefaultMcpgwTag: !Equals [!Ref McpgwImageTag, '']
+  UseDefaultRealServerFakeToolsTag: !Equals [!Ref RealServerFakeToolsImageTag, '']
+  UseDefaultFlightBookingAgentTag: !Equals [!Ref FlightBookingAgentImageTag, '']
+  UseDefaultTravelAssistantAgentTag: !Equals [!Ref TravelAssistantAgentImageTag, '']
+  UseDefaultMetricsServiceTag: !Equals [!Ref MetricsServiceImageTag, '']
+  UseDefaultGrafanaTag: !Equals [!Ref GrafanaImageTag, '']
+
+Resources:
+
+  #============================================================================
+  # Network Stack
+  # Approx. 160 sec to deploy
+  #============================================================================
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}network-stack.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcCidr: !Ref VpcCidr
+        IngressCidrBlocks: !Ref IngressCidrBlocks
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-network
+
+  #============================================================================
+  # Data Stack
+  # Approx. 1200 sec to deploy (includes DocumentDB cluster creation)
+  #============================================================================
+  DataStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: NetworkStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}data-stack.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+        VpcCidr: !Ref VpcCidr
+        PrivateSubnet1: !GetAtt NetworkStack.Outputs.PrivateSubnet1
+        PrivateSubnet2: !GetAtt NetworkStack.Outputs.PrivateSubnet2
+        PrivateSubnet3: !GetAtt NetworkStack.Outputs.PrivateSubnet3
+        DatabaseSecurityGroupId: !GetAtt NetworkStack.Outputs.DatabaseSecurityGroupId
+        KeycloakDatabaseUsername: !Ref KeycloakDatabaseUsername
+        KeycloakDatabasePassword: !Ref KeycloakDatabasePassword
+        KeycloakAdminPassword: !Ref KeycloakAdminPassword
+        DocumentDBUsername: !Ref DocumentDBUsername
+        DocumentDBPassword: !Ref DocumentDBPassword
+        DocumentDBInstanceClass: !Ref DocumentDBInstanceClass
+        DatabaseMinACU: !Ref DatabaseMinACU
+        DatabaseMaxACU: !Ref DatabaseMaxACU
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-data
+
+  #============================================================================
+  # Compute Stack
+  # Approx. 700 sec to deploy
+  #============================================================================
+  ComputeStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: DataStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}compute-stack.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        BaseDomain: !Ref BaseDomain
+        HostedZoneId: !Ref HostedZoneId
+        UseRegionalDomains: !Ref UseRegionalDomains
+        UpstreamVersion: !Ref UpstreamVersion
+        BuildTriggerVersion: !Ref BuildTriggerVersion
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-compute
+
+  #============================================================================
+  # Services Stack
+  # Approx. 1500 sec to deploy
+  # Note: Services stack uses ImportValue for cross-stack references
+  # Only passing parameters that are defined in services-stack.yaml
+  #============================================================================
+  ServicesStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ComputeStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}services-stack.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        RegistryImageRepo: !Ref RegistryImageRepo
+        RegistryImageTag: !If [UseDefaultRegistryTag, 'latest', !Ref RegistryImageTag]
+        AuthServerImageRepo: !Ref AuthServerImageRepo
+        AuthServerImageTag: !If [UseDefaultAuthServerTag, 'latest', !Ref AuthServerImageTag]
+        KeycloakImageRepo: !Ref KeycloakImageRepo
+        KeycloakImageTag: !If [UseDefaultKeycloakTag, 'latest', !Ref KeycloakImageTag]
+        CurrentTimeImageRepo: !Ref CurrentTimeImageRepo
+        CurrentTimeImageTag: !If [UseDefaultCurrentTimeTag, 'latest', !Ref CurrentTimeImageTag]
+        McpgwImageRepo: !Ref McpgwImageRepo
+        McpgwImageTag: !If [UseDefaultMcpgwTag, 'latest', !Ref McpgwImageTag]
+        RealServerFakeToolsImageRepo: !Ref RealServerFakeToolsImageRepo
+        RealServerFakeToolsImageTag: !If [UseDefaultRealServerFakeToolsTag, 'latest', !Ref RealServerFakeToolsImageTag]
+        FlightBookingAgentImageRepo: !Ref FlightBookingAgentImageRepo
+        FlightBookingAgentImageTag: !If [UseDefaultFlightBookingAgentTag, 'latest', !Ref FlightBookingAgentImageTag]
+        TravelAssistantAgentImageRepo: !Ref TravelAssistantAgentImageRepo
+        TravelAssistantAgentImageTag: !If [UseDefaultTravelAssistantAgentTag, 'latest', !Ref TravelAssistantAgentImageTag]
+        ServiceCpu: !Ref ServiceCpu
+        ServiceMemory: !Ref ServiceMemory
+        KeycloakCpu: !Ref KeycloakCpu
+        KeycloakMemory: !Ref KeycloakMemory
+        EnableAutoScaling: !Ref EnableAutoScaling
+        MinCapacity: !Ref MinCapacity
+        MaxCapacity: !Ref MaxCapacity
+        TargetCpuUtilization: !Ref TargetCpuUtilization
+        TargetMemoryUtilization: !Ref TargetMemoryUtilization
+        KeycloakLogLevel: !Ref KeycloakLogLevel
+        EmbeddingsProvider: !Ref EmbeddingsProvider
+        EmbeddingsModelName: !Ref EmbeddingsModelName
+        EmbeddingsModelDimensions: !Ref EmbeddingsModelDimensions
+        EmbeddingsAwsRegion: !Ref EmbeddingsAwsRegion
+        SessionCookieSecure: !Ref SessionCookieSecure
+        SessionCookieDomain: !Ref SessionCookieDomain
+        SecurityScanEnabled: !Ref SecurityScanEnabled
+        SecurityScanOnRegistration: !Ref SecurityScanOnRegistration
+        SecurityBlockUnsafeServers: !Ref SecurityBlockUnsafeServers
+        SecurityAnalyzers: !Ref SecurityAnalyzers
+        SecurityScanTimeout: !Ref SecurityScanTimeout
+        SecurityAddPendingTag: !Ref SecurityAddPendingTag
+        # Observability Configuration
+        EnableObservability: !Ref EnableObservability
+        AMPRemoteWriteEndpoint: !Ref AMPRemoteWriteEndpoint
+        GrafanaImageRepo: !Ref GrafanaImageRepo
+        GrafanaImageTag: !If [UseDefaultGrafanaTag, 'latest', !Ref GrafanaImageTag]
+        MetricsServiceImageRepo: !Ref MetricsServiceImageRepo
+        MetricsServiceImageTag: !If [UseDefaultMetricsServiceTag, 'latest', !Ref MetricsServiceImageTag]
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-services
+
+  #============================================================================
+  # Load Generator Stack
+  # Deploys last — EC2 instance generating traffic through public CloudFront URLs
+  #============================================================================
+  LoadGeneratorStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: ServicesStack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplateS3Bucket}.s3.${AWS::Region}.amazonaws.com/${TemplateS3Prefix}load-generator-stack.yaml'
+      Parameters:
+        EnvironmentName: !Ref EnvironmentName
+        TemplateS3Bucket: !Ref TemplateS3Bucket
+        TemplateS3Prefix: !Ref TemplateS3Prefix
+        RegistryUrl: !GetAtt ComputeStack.Outputs.MainCloudFrontUrl
+        KeycloakCloudFrontUrl: !GetAtt ComputeStack.Outputs.KeycloakCloudFrontUrl
+        PublicSubnets: !GetAtt NetworkStack.Outputs.PublicSubnets
+        VpcId: !GetAtt NetworkStack.Outputs.VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-load-generator
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  # URL Outputs (CloudFront HTTPS)
+  MCPGatewayUrl:
+    Description: MCP Gateway URL (HTTPS via CloudFront)
+    Value: !GetAtt ComputeStack.Outputs.MainCloudFrontUrl
+
+  KeycloakUrl:
+    Description: Keycloak URL (HTTPS via CloudFront)
+    Value: !GetAtt ComputeStack.Outputs.KeycloakCloudFrontUrl
+
+  GrafanaUrl:
+    Description: Grafana Dashboard URL (HTTPS via CloudFront, anonymous access enabled)
+    Value: !Sub '${ComputeStack.Outputs.MainCloudFrontUrl}/grafana/dashboards/f/mcp-gateway/?orgId=1'
+
+  # Admin Credentials (SSM/Secrets Manager Console URLs)
+  MCPGatewayAdminPassword:
+    Description: Secrets Manager console URL for MCP Gateway Admin Password
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/secretsmanager/secret?name=${EnvironmentName}-admin-password&region=${AWS::Region}'
+
+  KeycloakAdminPassword:
+    Description: SSM Parameter Store console URL for Keycloak Admin Password
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/systems-manager/parameters/keycloak/admin_password/description?region=${AWS::Region}'
+
+  # Version Tracking
+  UpstreamVersion:
+    Description: Upstream mcp-gateway-registry version this deployment is based on
+    Value: !Ref UpstreamVersion
+    Export:
+      Name: !Sub ${EnvironmentName}-upstream-version
+
+
+

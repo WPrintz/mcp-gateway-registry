@@ -1,0 +1,3304 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Services Stack (Consolidated)
+  Creates all 8 ECS task definitions, services, auto scaling, and CloudWatch log groups.
+  Uses !ImportValue to reference outputs from network, data, and compute stacks.
+  Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources (must match network/data/compute stacks)
+
+  # Container Image Repositories (ECR URIs constructed dynamically using AWS::AccountId and AWS::Region)
+  RegistryImageRepo:
+    Type: String
+    Default: 'mcp-gateway-registry'
+    Description: ECR repository name for Registry service
+
+  RegistryImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Registry service
+
+  AuthServerImageRepo:
+    Type: String
+    Default: 'mcp-gateway-auth-server'
+    Description: ECR repository name for Auth Server
+
+  AuthServerImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Auth Server
+
+  KeycloakImageRepo:
+    Type: String
+    Default: 'mcp-gateway-keycloak'
+    Description: ECR repository name for Keycloak
+
+  KeycloakImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Keycloak
+
+  CurrentTimeImageRepo:
+    Type: String
+    Default: 'mcp-gateway-currenttime'
+    Description: ECR repository name for CurrentTime MCP server
+
+  CurrentTimeImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for CurrentTime MCP server
+
+  McpgwImageRepo:
+    Type: String
+    Default: 'mcp-gateway-mcpgw'
+    Description: ECR repository name for MCPGW MCP server
+
+  McpgwImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for MCPGW MCP server
+
+  RealServerFakeToolsImageRepo:
+    Type: String
+    Default: 'mcp-gateway-realserverfaketools'
+    Description: ECR repository name for RealServerFakeTools MCP server
+
+  RealServerFakeToolsImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for RealServerFakeTools MCP server
+
+  FlightBookingAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-flight-booking-agent'
+    Description: ECR repository name for Flight Booking Agent
+
+  FlightBookingAgentImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Flight Booking Agent
+
+  TravelAssistantAgentImageRepo:
+    Type: String
+    Default: 'mcp-gateway-travel-assistant-agent'
+    Description: ECR repository name for Travel Assistant Agent
+
+  TravelAssistantAgentImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Travel Assistant Agent
+
+  # Resource Configuration
+  ServiceCpu:
+    Type: String
+    Default: '1024'
+    Description: CPU units for main services (Auth, Registry)
+
+  ServiceMemory:
+    Type: String
+    Default: '2048'
+    Description: Memory (MB) for main services (Auth, Registry)
+
+  KeycloakCpu:
+    Type: String
+    Default: '1024'
+    Description: CPU units for Keycloak
+
+  KeycloakMemory:
+    Type: String
+    Default: '2048'
+    Description: Memory (MB) for Keycloak
+
+  KeycloakLogLevel:
+    Type: String
+    Default: 'INFO'
+    Description: Keycloak log level (matching Terraform var.keycloak_log_level)
+    AllowedValues:
+      - 'ALL'
+      - 'DEBUG'
+      - 'ERROR'
+      - 'FATAL'
+      - 'INFO'
+      - 'OFF'
+      - 'TRACE'
+      - 'WARN'
+
+  # Embeddings Configuration (matching Terraform v1.0.7)
+  EmbeddingsProvider:
+    Type: String
+    Default: 'sentence-transformers'
+    AllowedValues:
+      - 'sentence-transformers'
+      - 'litellm'
+    Description: Embeddings provider (sentence-transformers for local, litellm for API-based)
+
+  EmbeddingsModelName:
+    Type: String
+    Default: 'all-MiniLM-L6-v2'
+    Description: Name of the embeddings model
+
+  EmbeddingsModelDimensions:
+    Type: Number
+    Default: 384
+    Description: Dimension of the embeddings model (384 for MiniLM, 1536 for OpenAI)
+
+  EmbeddingsAwsRegion:
+    Type: String
+    Default: 'us-east-1'
+    Description: AWS region for Bedrock embeddings (only used with litellm provider)
+
+  # Session Cookie Security (matching Terraform v1.0.7)
+  SessionCookieSecure:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable secure flag on session cookies (HTTPS-only)
+
+  SessionCookieDomain:
+    Type: String
+    Default: ''
+    Description: Domain for session cookies (leave empty for single-domain deployments)
+
+  # Security Scanning Configuration (v1.0.9+)
+  SecurityScanEnabled:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable security scanning for MCP servers during registration
+
+  SecurityScanOnRegistration:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Automatically scan servers when they are registered
+
+  SecurityBlockUnsafeServers:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Block (disable) servers that fail security scans
+
+  SecurityAnalyzers:
+    Type: String
+    Default: 'yara'
+    Description: Comma-separated analyzers for security scanning (yara, llm, api). YARA requires no API key.
+
+  SecurityScanTimeout:
+    Type: Number
+    Default: 60
+    Description: Security scan timeout in seconds
+
+  SecurityAddPendingTag:
+    Type: String
+    Default: 'true'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Add security-pending tag to servers that fail security scan
+
+  # Auto Scaling Configuration
+  EnableAutoScaling:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable auto scaling for ECS services
+
+  MinCapacity:
+    Type: Number
+    Default: 1
+    Description: Minimum number of tasks
+
+  MaxCapacity:
+    Type: Number
+    Default: 4
+    Description: Maximum number of tasks
+
+  TargetCpuUtilization:
+    Type: Number
+    Default: 70
+    Description: Target CPU utilization percentage
+
+  TargetMemoryUtilization:
+    Type: Number
+    Default: 80
+    Description: Target memory utilization percentage
+
+  # Monitoring Configuration (matching Terraform monitoring.tf)
+  EnableMonitoring:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable CloudWatch monitoring alarms
+
+  AlarmEmail:
+    Type: String
+    Default: ''
+    Description: Email address for CloudWatch alarm notifications (leave empty to disable SNS)
+
+  # Observability Configuration (AMP + ADOT + Grafana + Metrics Service)
+  EnableObservability:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Enable full observability stack (Grafana OSS, metrics-service, ADOT).
+      When enabled, deploys Grafana with dashboards and metrics collection.
+
+  AMPRemoteWriteEndpoint:
+    Type: String
+    Default: ''
+    Description: >
+      Amazon Managed Prometheus remote write endpoint. If empty, auto-imports from compute-stack.
+      Format: https://aps-workspaces.<region>.amazonaws.com/workspaces/<workspace-id>/api/v1/remote_write
+
+  # Grafana Configuration (custom ECR image with dashboards pre-loaded)
+  GrafanaImageRepo:
+    Type: String
+    Default: 'mcp-gateway-grafana'
+    Description: ECR repository name for Grafana (with dashboards baked in)
+
+  GrafanaImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for Grafana
+
+  # Metrics Service Configuration
+  MetricsServiceImageRepo:
+    Type: String
+    Default: 'mcp-gateway-metrics-service'
+    Description: ECR repository name for metrics-service
+
+  MetricsServiceImageTag:
+    Type: String
+    Default: 'latest'
+    Description: Image tag for metrics-service
+
+  MetricsApiKey:
+    Type: String
+    Default: 'workshop-metrics-key-2026'
+    NoEcho: true
+    Description: >
+      Shared API key for metrics collection. Used by registry/auth-server to send metrics
+      and by metrics-service for authentication. Change this value to rotate the key.
+
+Conditions:
+  EnableAutoScalingCondition: !Equals [!Ref EnableAutoScaling, 'true']
+  EnableMonitoringCondition: !Equals [!Ref EnableMonitoring, 'true']
+  EnableObservabilityCondition: !Equals [!Ref EnableObservability, 'true']
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, '']]
+  CreateSnsTopicCondition: !And
+    - !Condition EnableMonitoringCondition
+    - !Condition HasAlarmEmail
+
+Resources:
+
+  #============================================================================
+  # CloudWatch Log Groups
+  #============================================================================
+  RegistryLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-registry
+      RetentionInDays: 30
+
+  AuthServerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-auth-server
+      RetentionInDays: 30
+
+  KeycloakLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-keycloak
+      RetentionInDays: 7
+
+  CurrentTimeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-currenttime
+      RetentionInDays: 30
+
+  McpgwLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-mcpgw
+      RetentionInDays: 30
+
+  RealServerFakeToolsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-realserverfaketools
+      RetentionInDays: 30
+
+  FlightBookingAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-flight-booking-agent
+      RetentionInDays: 30
+
+  TravelAssistantAgentLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-travel-assistant-agent
+      RetentionInDays: 30
+
+  # Observability Log Groups (Grafana, Metrics Service)
+  GrafanaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-grafana
+      RetentionInDays: 7
+
+  MetricsServiceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      LogGroupName: !Sub /ecs/${EnvironmentName}-metrics-service
+      RetentionInDays: 7
+
+
+  #============================================================================
+  # Task Definition: Auth Server
+  # Uses DocumentDB for scopes storage (mongodb-ce backend)
+  #============================================================================
+  AuthServerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-auth-server
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref ServiceCpu
+      Memory: !Ref ServiceMemory
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: auth-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${AuthServerImageRepo}:${AuthServerImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: auth-server
+              ContainerPort: 8888
+              Protocol: tcp
+          Environment:
+            - Name: REGISTRY_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-RegistryUrl
+            - Name: AUTH_SERVER_URL
+              Value: !Sub http://auth-server.${EnvironmentName}.local:8888
+            - Name: AUTH_SERVER_EXTERNAL_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-RegistryUrl
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AUTH_PROVIDER
+              Value: keycloak
+            - Name: KEYCLOAK_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
+            - Name: KEYCLOAK_EXTERNAL_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
+            - Name: KEYCLOAK_REALM
+              Value: mcp-gateway
+            - Name: KEYCLOAK_CLIENT_ID
+              Value: mcp-gateway-web
+            - Name: SESSION_COOKIE_SECURE
+              Value: !Ref SessionCookieSecure
+            - Name: SESSION_COOKIE_DOMAIN
+              Value: !Ref SessionCookieDomain
+            # DocumentDB Configuration (matching Terraform)
+            - Name: STORAGE_BACKEND
+              Value: documentdb
+            - Name: DOCUMENTDB_HOST
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-DocumentDBClusterEndpoint
+            - Name: DOCUMENTDB_PORT
+              Value: '27017'
+            - Name: DOCUMENTDB_DATABASE
+              Value: mcp_registry
+            - Name: DOCUMENTDB_NAMESPACE
+              Value: default
+            - Name: DOCUMENTDB_USE_TLS
+              Value: 'true'
+            - Name: DOCUMENTDB_USE_IAM
+              Value: 'false'
+            - Name: DOCUMENTDB_TLS_CA_FILE
+              Value: /app/global-bundle.pem
+            # Metrics Service Configuration
+            - Name: METRICS_SERVICE_URL
+              Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+            - Name: METRICS_API_KEY
+              Value: !Ref MetricsApiKey
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Sub
+                - '${SecretArn}:secret_key::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+            - Name: KEYCLOAK_CLIENT_SECRET
+              ValueFrom: !Sub
+                - '${SecretArn}:client_secret::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+            - Name: DOCUMENTDB_USERNAME
+              ValueFrom: !Sub
+                - '${SecretArn}:username::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+            - Name: DOCUMENTDB_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref AuthServerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:8888/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-server
+
+
+  #============================================================================
+  # Task Definition: Registry
+  # Uses DocumentDB for data storage (mongodb-ce backend)
+  #============================================================================
+  RegistryTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-registry
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref ServiceCpu
+      Memory: !Ref ServiceMemory
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: registry
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RegistryImageRepo}:${RegistryImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: http
+              ContainerPort: 80
+              Protocol: tcp
+            - Name: https
+              ContainerPort: 443
+              Protocol: tcp
+            - Name: registry
+              ContainerPort: 7860
+              Protocol: tcp
+          Environment:
+            - Name: GATEWAY_ADDITIONAL_SERVER_NAMES
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontDomain
+            - Name: EC2_PUBLIC_DNS
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontDomain
+            - Name: AUTH_SERVER_URL
+              Value: !Sub http://auth-server.${EnvironmentName}.local:8888
+            - Name: AUTH_SERVER_EXTERNAL_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontUrl
+            - Name: KEYCLOAK_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
+            - Name: KEYCLOAK_ENABLED
+              Value: 'true'
+            - Name: KEYCLOAK_REALM
+              Value: mcp-gateway
+            - Name: KEYCLOAK_CLIENT_ID
+              Value: mcp-gateway-web
+            - Name: AUTH_PROVIDER
+              Value: keycloak
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: EMBEDDINGS_PROVIDER
+              Value: !Ref EmbeddingsProvider
+            - Name: EMBEDDINGS_MODEL_NAME
+              Value: !Ref EmbeddingsModelName
+            - Name: EMBEDDINGS_MODEL_DIMENSIONS
+              Value: !Ref EmbeddingsModelDimensions
+            - Name: EMBEDDINGS_AWS_REGION
+              Value: !Ref EmbeddingsAwsRegion
+            - Name: SESSION_COOKIE_SECURE
+              Value: !Ref SessionCookieSecure
+            - Name: SESSION_COOKIE_DOMAIN
+              Value: !Ref SessionCookieDomain
+            # Security Scanning Configuration (v1.0.9+)
+            - Name: SECURITY_SCAN_ENABLED
+              Value: !Ref SecurityScanEnabled
+            - Name: SECURITY_SCAN_ON_REGISTRATION
+              Value: !Ref SecurityScanOnRegistration
+            - Name: SECURITY_BLOCK_UNSAFE_SERVERS
+              Value: !Ref SecurityBlockUnsafeServers
+            - Name: SECURITY_ANALYZERS
+              Value: !Ref SecurityAnalyzers
+            - Name: SECURITY_SCAN_TIMEOUT
+              Value: !Ref SecurityScanTimeout
+            - Name: SECURITY_ADD_PENDING_TAG
+              Value: !Ref SecurityAddPendingTag
+            # Keycloak Admin for Management API
+            - Name: KEYCLOAK_ADMIN
+              Value: admin
+            # DocumentDB Configuration (matching Terraform)
+            - Name: STORAGE_BACKEND
+              Value: documentdb
+            - Name: DOCUMENTDB_HOST
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-DocumentDBClusterEndpoint
+            - Name: DOCUMENTDB_PORT
+              Value: '27017'
+            - Name: DOCUMENTDB_DATABASE
+              Value: mcp_registry
+            - Name: DOCUMENTDB_NAMESPACE
+              Value: default
+            - Name: DOCUMENTDB_USE_TLS
+              Value: 'true'
+            - Name: DOCUMENTDB_USE_IAM
+              Value: 'false'
+            - Name: DOCUMENTDB_TLS_CA_FILE
+              Value: /app/global-bundle.pem
+            # Metrics Service Configuration
+            - Name: METRICS_SERVICE_URL
+              Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+            - Name: METRICS_API_KEY
+              Value: !Ref MetricsApiKey
+          Secrets:
+            - Name: SECRET_KEY
+              ValueFrom: !Sub
+                - '${SecretArn}:secret_key::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+            - Name: ADMIN_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:admin_password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+            - Name: KEYCLOAK_CLIENT_SECRET
+              ValueFrom: !Sub
+                - '${SecretArn}:client_secret::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+            - Name: KEYCLOAK_M2M_CLIENT_SECRET
+              ValueFrom: !Sub
+                - '${SecretArn}:client_secret::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+            - Name: KEYCLOAK_ADMIN_PASSWORD
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakAdminPasswordArn
+            - Name: EMBEDDINGS_API_KEY
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
+            - Name: DOCUMENTDB_USERNAME
+              ValueFrom: !Sub
+                - '${SecretArn}:username::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+            - Name: DOCUMENTDB_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RegistryLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:7860/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry
+
+
+  #============================================================================
+  # Task Definition: Keycloak (Matching Terraform keycloak-ecs.tf exactly)
+  #============================================================================
+  KeycloakTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-keycloak
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref KeycloakCpu
+      Memory: !Ref KeycloakMemory
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: keycloak
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${KeycloakImageRepo}:${KeycloakImageTag}'
+          Essential: true
+          ReadonlyRootFilesystem: false
+          PortMappings:
+            - Name: keycloak
+              ContainerPort: 8080
+              HostPort: 8080
+              Protocol: tcp
+            - Name: keycloak-management
+              ContainerPort: 9000
+              HostPort: 9000
+              Protocol: tcp
+          Environment:
+            # Matching Terraform keycloak_container_env exactly
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: KC_PROXY
+              Value: edge
+            - Name: KC_PROXY_ADDRESS_FORWARDING
+              Value: 'true'
+            - Name: KC_HOSTNAME_URL
+              Value: !Sub
+                - 'https://${Domain}'
+                - Domain: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontDomain
+            - Name: KC_HOSTNAME_ADMIN_URL
+              Value: !Sub
+                - 'https://${Domain}'
+                - Domain: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontDomain
+            - Name: KC_HOSTNAME_STRICT
+              Value: 'false'
+            - Name: KC_HOSTNAME_STRICT_HTTPS
+              Value: 'true'
+            - Name: KC_HEALTH_ENABLED
+              Value: 'true'
+            - Name: KC_METRICS_ENABLED
+              Value: 'true'
+            - Name: KEYCLOAK_LOGLEVEL
+              Value: !Ref KeycloakLogLevel
+          Secrets:
+            # Matching Terraform keycloak_container_secrets exactly (using SSM)
+            - Name: KEYCLOAK_ADMIN
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakAdminArn
+            - Name: KEYCLOAK_ADMIN_PASSWORD
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakAdminPasswordArn
+            - Name: KC_DB_URL
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakDatabaseUrlArn
+            - Name: KC_DB_USERNAME
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakDatabaseUsernameArn
+            - Name: KC_DB_PASSWORD
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-SsmKeycloakDatabasePasswordArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref KeycloakLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - exit 0
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak
+
+  #============================================================================
+  # Task Definition: CurrentTime MCP Server
+  #============================================================================
+  CurrentTimeTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-currenttime
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: currenttime-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${CurrentTimeImageRepo}:${CurrentTimeImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: currenttime
+              ContainerPort: 8000
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '8000'
+            - Name: MCP_TRANSPORT
+              Value: streamable-http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref CurrentTimeLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - nc -z localhost 8000 || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-currenttime
+
+
+  #============================================================================
+  # Task Definition: MCPGW MCP Server
+  #============================================================================
+  McpgwTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-mcpgw
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: mcpgw-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${McpgwImageRepo}:${McpgwImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: mcpgw
+              ContainerPort: 8003
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '8003'
+            - Name: REGISTRY_BASE_URL
+              Value: !Sub http://registry.${EnvironmentName}.local:7860
+            - Name: REGISTRY_USERNAME
+              Value: admin
+          Secrets:
+            - Name: REGISTRY_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:admin_password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref McpgwLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - nc -z localhost 8003 || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw
+
+  #============================================================================
+  # Task Definition: RealServerFakeTools MCP Server
+  #============================================================================
+  RealServerFakeToolsTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-realserverfaketools
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: realserverfaketools-server
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RealServerFakeToolsImageRepo}:${RealServerFakeToolsImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: realserverfaketools
+              ContainerPort: 8002
+              Protocol: tcp
+          Environment:
+            - Name: PORT
+              Value: '8002'
+            - Name: MCP_TRANSPORT
+              Value: streamable-http
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref RealServerFakeToolsLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - nc -z localhost 8002 || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-realserverfaketools
+
+  #============================================================================
+  # Task Definition: Flight Booking Agent
+  #============================================================================
+  FlightBookingAgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-flight-booking-agent
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: flight-booking-agent
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${FlightBookingAgentImageRepo}:${FlightBookingAgentImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: flight-booking
+              ContainerPort: 9000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref FlightBookingAgentLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:9000/ping || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-flight-booking-agent
+
+  #============================================================================
+  # Task Definition: Travel Assistant Agent
+  #============================================================================
+  TravelAssistantAgentTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub ${EnvironmentName}-travel-assistant-agent
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskExecutionRoleArn
+      TaskRoleArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTaskRoleArn
+      ContainerDefinitions:
+        - Name: travel-assistant-agent
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${TravelAssistantAgentImageRepo}:${TravelAssistantAgentImageTag}'
+          Essential: true
+          PortMappings:
+            - Name: travel-assistant
+              ContainerPort: 9000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref TravelAssistantAgentLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:9000/ping || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-travel-assistant-agent
+
+
+  #============================================================================
+  # ECS Services
+  #============================================================================
+
+  # Auth Server Service
+  AuthServerService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-auth-server
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref AuthServerTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-EcsTasksSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      LoadBalancers:
+        - ContainerName: auth-server
+          ContainerPort: 8888
+          TargetGroupArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-AuthTargetGroupArn
+      # Using DNS-based service discovery instead of Service Connect
+      # (Service Connect creates HTTP-type Cloud Map services that conflict with our DNS-type services)
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-AuthServerDiscoveryServiceArn
+          ContainerName: auth-server
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-auth-server
+
+  # Registry Service
+  RegistryService:
+    Type: AWS::ECS::Service
+    DependsOn: AuthServerService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-registry
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref RegistryTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-EcsTasksSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      LoadBalancers:
+        - ContainerName: registry
+          ContainerPort: 80
+          TargetGroupArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-RegistryTargetGroupArn
+        - ContainerName: registry
+          ContainerPort: 7860
+          TargetGroupArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-GradioTargetGroupArn
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-RegistryDiscoveryServiceArn
+          ContainerName: registry
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry
+
+  # Keycloak Service
+  KeycloakService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-keycloak
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakEcsClusterArn
+      TaskDefinition: !Ref KeycloakTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-KeycloakEcsSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      LoadBalancers:
+        - ContainerName: keycloak
+          ContainerPort: 8080
+          TargetGroupArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-KeycloakTargetGroupArn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak
+
+  # CurrentTime MCP Server Service
+  CurrentTimeService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-currenttime
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref CurrentTimeTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-McpServersSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-CurrentTimeDiscoveryServiceArn
+          ContainerName: currenttime-server
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-currenttime
+
+  # MCPGW MCP Server Service
+  McpgwService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-mcpgw
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref McpgwTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-McpServersSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-McpgwDiscoveryServiceArn
+          ContainerName: mcpgw-server
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcpgw
+
+  # RealServerFakeTools MCP Server Service
+  RealServerFakeToolsService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-realserverfaketools
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref RealServerFakeToolsTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-McpServersSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-RealServerFakeToolsDiscoveryServiceArn
+          ContainerName: realserverfaketools-server
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-realserverfaketools
+
+  # Flight Booking Agent Service
+  FlightBookingAgentService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-flight-booking-agent
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref FlightBookingAgentTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-McpServersSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-FlightBookingAgentDiscoveryServiceArn
+          ContainerName: flight-booking-agent
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-flight-booking-agent
+
+  # Travel Assistant Agent Service
+  TravelAssistantAgentService:
+    Type: AWS::ECS::Service
+    DependsOn: RegistryService
+    Properties:
+      ServiceName: !Sub ${EnvironmentName}-travel-assistant-agent
+      Cluster: !ImportValue
+        Fn::Sub: ${EnvironmentName}-MainEcsClusterArn
+      TaskDefinition: !Ref TravelAssistantAgentTaskDefinition
+      DesiredCount: !Ref MinCapacity
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-McpServersSG
+          Subnets: !Split
+            - ','
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnets
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: ${EnvironmentName}-TravelAssistantAgentDiscoveryServiceArn
+          ContainerName: travel-assistant-agent
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-travel-assistant-agent
+
+
+  #============================================================================
+  # Auto Scaling
+  #============================================================================
+
+  # Auth Server Auto Scaling
+  AuthServerScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-auth-server
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: AuthServerService
+
+  AuthServerCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-auth-server-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AuthServerScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  AuthServerMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-auth-server-memory
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref AuthServerScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: !Ref TargetMemoryUtilization
+
+  # Registry Auto Scaling
+  RegistryScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-registry
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: RegistryService
+
+  RegistryCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-registry-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref RegistryScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  RegistryMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-registry-memory
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref RegistryScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: !Ref TargetMemoryUtilization
+
+  # Keycloak Auto Scaling (matching Terraform keycloak-ecs.tf)
+  KeycloakScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: 4
+      MinCapacity: 1
+      ResourceId: !Sub service/${EnvironmentName}-keycloak-cluster/${EnvironmentName}-keycloak
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: KeycloakService
+
+  KeycloakCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-keycloak-cpu-autoscaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref KeycloakScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: 70.0
+
+  KeycloakMemoryScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-keycloak-memory-autoscaling
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref KeycloakScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        TargetValue: 80.0
+
+  # CurrentTime Auto Scaling
+  CurrentTimeScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-currenttime
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: CurrentTimeService
+
+  CurrentTimeCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-currenttime-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref CurrentTimeScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  # MCPGW Auto Scaling
+  McpgwScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-mcpgw
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: McpgwService
+
+  McpgwCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-mcpgw-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref McpgwScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  # RealServerFakeTools Auto Scaling
+  RealServerFakeToolsScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-realserverfaketools
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: RealServerFakeToolsService
+
+  RealServerFakeToolsCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-realserverfaketools-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref RealServerFakeToolsScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  # Flight Booking Agent Auto Scaling
+  FlightBookingAgentScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-flight-booking-agent
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: FlightBookingAgentService
+
+  FlightBookingAgentCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-flight-booking-agent-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref FlightBookingAgentScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  # Travel Assistant Agent Auto Scaling
+  TravelAssistantAgentScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: EnableAutoScalingCondition
+    Properties:
+      MaxCapacity: !Ref MaxCapacity
+      MinCapacity: !Ref MinCapacity
+      ResourceId: !Sub service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-travel-assistant-agent
+      RoleARN: !Sub arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService
+      ScalableDimension: ecs:service:DesiredCount
+      ServiceNamespace: ecs
+    DependsOn: TravelAssistantAgentService
+
+  TravelAssistantAgentCpuScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: EnableAutoScalingCondition
+    Properties:
+      PolicyName: !Sub ${EnvironmentName}-travel-assistant-agent-cpu
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref TravelAssistantAgentScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        TargetValue: !Ref TargetCpuUtilization
+
+  #============================================================================
+  # CloudWatch Monitoring and Alarms (matching Terraform monitoring.tf)
+  #============================================================================
+
+  # SNS Topic for Alarm Notifications
+  AlarmSnsTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateSnsTopicCondition
+    Properties:
+      TopicName: !Sub ${EnvironmentName}-alarms
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-alarms
+
+  AlarmSnsSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateSnsTopicCondition
+    Properties:
+      TopicArn: !Ref AlarmSnsTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # ECS Service CPU Alarms
+  AuthCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-auth-cpu-high
+      AlarmDescription: Auth service CPU utilization is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-auth-server
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  RegistryCpuHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-registry-cpu-high
+      AlarmDescription: Registry service CPU utilization is too high
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-registry
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  # ECS Service Memory Alarms
+  AuthMemoryHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-auth-memory-high
+      AlarmDescription: Auth service memory utilization is too high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-auth-server
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  RegistryMemoryHighAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-registry-memory-high
+      AlarmDescription: Registry service memory utilization is too high
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ClusterName
+          Value: !Sub ${EnvironmentName}-ecs-cluster
+        - Name: ServiceName
+          Value: !Sub ${EnvironmentName}-registry
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  # ALB Target Health Alarm
+  AlbUnhealthyTargetsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-alb-unhealthy-targets
+      AlarmDescription: ALB has unhealthy targets
+      MetricName: UnHealthyHostCount
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - 'loadbalancer/'
+              - !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainAlbArn
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  # ALB 5XX Error Rate Alarm
+  Alb5xxErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-alb-5xx-errors
+      AlarmDescription: ALB is receiving too many 5XX errors
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - 'loadbalancer/'
+              - !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainAlbArn
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+      TreatMissingData: notBreaching
+
+  # ALB Response Time Alarm
+  AlbResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: EnableMonitoringCondition
+    Properties:
+      AlarmName: !Sub ${EnvironmentName}-alb-response-time
+      AlarmDescription: ALB response time is too high
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 1
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !Select
+            - 1
+            - !Split
+              - 'loadbalancer/'
+              - !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainAlbArn
+      AlarmActions: !If
+        - CreateSnsTopicCondition
+        - [!Ref AlarmSnsTopic]
+        - []
+
+  #============================================================================
+  # Keycloak Realm Initialization (Lambda Custom Resource)
+  #============================================================================
+
+  # IAM Role for Keycloak Init Lambda
+  KeycloakInitLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-keycloak-init-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: KeycloakInitPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:UpdateSecret
+                  - secretsmanager:PutSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+              - Effect: Allow
+                Action:
+                  - ecs:UpdateService
+                Resource:
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-auth-server
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:service/${EnvironmentName}-ecs-cluster/${EnvironmentName}-registry
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-init-lambda-role
+
+  # Lambda Function for Keycloak Initialization
+  # This Lambda replicates the functionality of Terraform's init-keycloak.sh script
+  KeycloakInitLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-keycloak-init
+      Description: Initialize Keycloak realm, clients, groups, users, and scopes for MCP Gateway
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt KeycloakInitLambdaRole.Arn
+      Timeout: 600
+      MemorySize: 512
+      # No VPC config needed - Lambda accesses Keycloak via CloudFront HTTPS
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
+          """
+          Lambda function to initialize Keycloak realm for MCP Gateway.
+          Replicates Terraform's init-keycloak.sh functionality.
+          Used as a CloudFormation Custom Resource.
+          """
+          import json
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+          import ssl
+          import boto3
+          import cfnresponse
+          import time
+
+          # All groups to create (matches Terraform init-keycloak.sh)
+          ALL_GROUPS = [
+              'mcp-registry-admin',
+              'mcp-registry-user',
+              'mcp-registry-developer',
+              'mcp-registry-operator',
+              'mcp-servers-unrestricted',
+              'mcp-servers-restricted',
+              'a2a-agent-admin',
+              'a2a-agent-publisher',
+              'a2a-agent-user',
+              'registry-admins',
+              'registry-users-lob1',
+              'registry-users-lob2'
+          ]
+
+          # Custom MCP scopes
+          CUSTOM_SCOPES = [
+              'mcp-servers-unrestricted/read',
+              'mcp-servers-unrestricted/execute',
+              'mcp-servers-restricted/read',
+              'mcp-servers-restricted/execute'
+          ]
+
+          # Service account clients
+          SERVICE_ACCOUNTS = [
+              ('registry-admin-bot', 'registry-admins'),
+              ('lob1-bot', 'registry-users-lob1'),
+              ('lob2-bot', 'registry-users-lob2')
+          ]
+
+          def get_admin_token(keycloak_url, admin_user, admin_password):
+              """Get admin access token from Keycloak."""
+              url = f"{keycloak_url}/realms/master/protocol/openid-connect/token"
+              data = urllib.parse.urlencode({
+                  'username': admin_user,
+                  'password': admin_password,
+                  'grant_type': 'password',
+                  'client_id': 'admin-cli'
+              }).encode('utf-8')
+              req = urllib.request.Request(url, data=data, method='POST')
+              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+              ctx = ssl.create_default_context()
+              with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                  result = json.loads(response.read().decode('utf-8'))
+                  return result.get('access_token')
+
+          def keycloak_request(url, token, method='GET', data=None):
+              """Make authenticated request to Keycloak Admin API."""
+              req = urllib.request.Request(url, method=method)
+              req.add_header('Authorization', f'Bearer {token}')
+              req.add_header('Content-Type', 'application/json')
+              if data:
+                  req.data = json.dumps(data).encode('utf-8')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      if response.status in [200, 201, 204]:
+                          try:
+                              return json.loads(response.read().decode('utf-8'))
+                          except:
+                              return {}
+                      return {}
+              except urllib.error.HTTPError as e:
+                  if e.code == 409:
+                      return {'exists': True}
+                  raise
+
+          def realm_exists(keycloak_url, token, realm):
+              """Check if realm already exists."""
+              try:
+                  keycloak_request(f"{keycloak_url}/admin/realms/{realm}", token)
+                  return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return False
+                  raise
+
+          def wait_for_keycloak(keycloak_url, max_attempts=30):
+              """Wait for Keycloak to be ready."""
+              ctx = ssl.create_default_context()
+              for i in range(max_attempts):
+                  try:
+                      req = urllib.request.Request(f"{keycloak_url}/health/ready")
+                      with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+                          if response.status == 200:
+                              print(f"Keycloak ready after {i+1} attempts")
+                              return True
+                  except Exception as e:
+                      print(f"Attempt {i+1}: Keycloak not ready - {str(e)}")
+                  time.sleep(10)
+              return False
+
+          def get_client_uuid(keycloak_url, token, realm, client_id):
+              """Get client UUID by clientId."""
+              clients = keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/clients?clientId={client_id}",
+                  token
+              )
+              if clients and len(clients) > 0:
+                  return clients[0].get('id')
+              return None
+
+          def get_group_id(keycloak_url, token, realm, group_name):
+              """Get group ID by name."""
+              groups = keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/groups",
+                  token
+              )
+              for group in groups:
+                  if group.get('name') == group_name:
+                      return group.get('id')
+              return None
+
+          def get_user_id(keycloak_url, token, realm, username):
+              """Get user ID by username."""
+              users = keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/users?username={username}",
+                  token
+              )
+              if users and len(users) > 0:
+                  return users[0].get('id')
+              return None
+
+          def add_groups_mapper(keycloak_url, token, realm, client_uuid):
+              """Add groups mapper to client."""
+              keycloak_request(
+                  f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/protocol-mappers/models",
+                  token,
+                  method='POST',
+                  data={
+                      'name': 'groups',
+                      'protocol': 'openid-connect',
+                      'protocolMapper': 'oidc-group-membership-mapper',
+                      'consentRequired': False,
+                      'config': {
+                          'full.path': 'false',
+                          'id.token.claim': 'true',
+                          'access.token.claim': 'true',
+                          'claim.name': 'groups',
+                          'userinfo.token.claim': 'true'
+                      }
+                  }
+              )
+
+          def handler(event, context):
+              """CloudFormation Custom Resource handler."""
+              print(f"Event: {json.dumps(event)}")
+              request_type = event.get('RequestType')
+              properties = event.get('ResourceProperties', {})
+              keycloak_url = properties.get('KeycloakUrl')
+              registry_url = properties.get('RegistryUrl')
+              client_secret_arn = properties.get('ClientSecretArn')
+              m2m_client_secret_arn = properties.get('M2MClientSecretArn')
+              admin_password_arn = properties.get('AdminPasswordSecretArn')
+
+              if request_type == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  ssm = boto3.client('ssm')
+                  secrets = boto3.client('secretsmanager')
+                  admin_user = ssm.get_parameter(Name='/keycloak/admin', WithDecryption=True)['Parameter']['Value']
+                  admin_password = ssm.get_parameter(Name='/keycloak/admin_password', WithDecryption=True)['Parameter']['Value']
+
+                  # Get user password from Secrets Manager
+                  user_password_secret = json.loads(
+                      secrets.get_secret_value(SecretId=admin_password_arn)['SecretString']
+                  )
+                  user_password = user_password_secret.get('admin_password', 'changeme')
+                  print(f"Initializing Keycloak at {keycloak_url}")
+
+                  if not wait_for_keycloak(keycloak_url):
+                      raise Exception("Keycloak not ready after maximum attempts")
+
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+                  if not token:
+                      raise Exception("Failed to get admin token")
+                  print("Got admin token")
+
+                  realm = 'mcp-gateway'
+
+                  # 1. Create realm
+                  if not realm_exists(keycloak_url, token, realm):
+                      print("Creating realm...")
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms",
+                          token,
+                          method='POST',
+                          data={
+                              'realm': realm,
+                              'enabled': True,
+                              'registrationAllowed': False,
+                              'loginWithEmailAllowed': True,
+                              'duplicateEmailsAllowed': False,
+                              'resetPasswordAllowed': True,
+                              'editUsernameAllowed': False
+                          }
+                      )
+                      print("Realm created")
+                  else:
+                      print("Realm already exists")
+
+                  # Refresh token after realm creation
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+
+                  # 2. Create web client
+                  print("Creating web client...")
+                  keycloak_request(
+                      f"{keycloak_url}/admin/realms/{realm}/clients",
+                      token,
+                      method='POST',
+                      data={
+                          'clientId': 'mcp-gateway-web',
+                          'name': 'MCP Gateway Web Client',
+                          'enabled': True,
+                          'clientAuthenticatorType': 'client-secret',
+                          'redirectUris': [
+                              f"{registry_url}/oauth2/callback/keycloak",
+                              f"{registry_url}/*",
+                              "http://localhost:7860/*",
+                              "http://localhost:8888/*"
+                          ],
+                          'webOrigins': [registry_url, "http://localhost:7860", "+"],
+                          'protocol': 'openid-connect',
+                          'standardFlowEnabled': True,
+                          'implicitFlowEnabled': False,
+                          'directAccessGrantsEnabled': True,
+                          'serviceAccountsEnabled': False,
+                          'publicClient': False
+                      }
+                  )
+
+                  # 3. Create M2M client
+                  print("Creating M2M client...")
+                  keycloak_request(
+                      f"{keycloak_url}/admin/realms/{realm}/clients",
+                      token,
+                      method='POST',
+                      data={
+                          'clientId': 'mcp-gateway-m2m',
+                          'name': 'MCP Gateway M2M Client',
+                          'enabled': True,
+                          'clientAuthenticatorType': 'client-secret',
+                          'protocol': 'openid-connect',
+                          'standardFlowEnabled': False,
+                          'implicitFlowEnabled': False,
+                          'directAccessGrantsEnabled': False,
+                          'serviceAccountsEnabled': True,
+                          'publicClient': False
+                      }
+                  )
+
+                  # 4. Create custom scopes
+                  print("Creating custom scopes...")
+                  for scope in CUSTOM_SCOPES:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/client-scopes",
+                          token,
+                          method='POST',
+                          data={
+                              'name': scope,
+                              'description': f'MCP Gateway scope for {scope} access',
+                              'protocol': 'openid-connect'
+                          }
+                      )
+                      print(f"  Created scope: {scope}")
+
+                  # 5. Create all groups
+                  print("Creating groups...")
+                  for group in ALL_GROUPS:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/groups",
+                          token,
+                          method='POST',
+                          data={
+                              'name': group,
+                              'attributes': {'description': [f'{group} group for MCP Gateway access']}
+                          }
+                      )
+                      print(f"  Created group: {group}")
+
+                  # Refresh token
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+
+                  # 6. Create users
+                  # Admin user uses password from Secrets Manager, others use hardcoded passwords
+                  print("Creating users...")
+                  users_config = [
+                      ('admin', 'admin@example.com', 'Admin', 'User', user_password,
+                       ['mcp-registry-admin', 'mcp-servers-unrestricted', 'registry-admins']),
+                      ('testuser', 'testuser@example.com', 'Test', 'User', 'testpass',
+                       ['mcp-registry-user', 'mcp-registry-developer', 'mcp-registry-operator',
+                        'mcp-servers-unrestricted', 'mcp-servers-restricted']),
+                      ('lob1-user', 'lob1-user@example.com', 'LOB1', 'User', 'lob1pass',
+                       ['registry-users-lob1']),
+                      ('lob2-user', 'lob2-user@example.com', 'LOB2', 'User', 'lob2pass',
+                       ['registry-users-lob2'])
+                  ]
+
+                  for username, email, first, last, password, groups in users_config:
+                      result = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/users",
+                          token,
+                          method='POST',
+                          data={
+                              'username': username,
+                              'email': email,
+                              'enabled': True,
+                              'emailVerified': True,
+                              'firstName': first,
+                              'lastName': last,
+                              'credentials': [{'type': 'password', 'value': password, 'temporary': False}]
+                          }
+                      )
+                      if result and result.get('exists'):
+                          # User exists - reset password
+                          user_id = get_user_id(keycloak_url, token, realm, username)
+                          if user_id:
+                              keycloak_request(
+                                  f"{keycloak_url}/admin/realms/{realm}/users/{user_id}/reset-password",
+                                  token,
+                                  method='PUT',
+                                  data={'type': 'password', 'value': password, 'temporary': False}
+                              )
+                              print(f"  Reset password for existing user: {username}")
+                          else:
+                              print(f"  User exists but could not get ID: {username}")
+                      else:
+                          print(f"  Created user: {username}")
+
+                      # Assign user to groups
+                      user_id = get_user_id(keycloak_url, token, realm, username)
+                      if user_id:
+                          for group_name in groups:
+                              group_id = get_group_id(keycloak_url, token, realm, group_name)
+                              if group_id:
+                                  keycloak_request(
+                                      f"{keycloak_url}/admin/realms/{realm}/users/{user_id}/groups/{group_id}",
+                                      token,
+                                      method='PUT'
+                                  )
+                                  print(f"    Assigned to group: {group_name}")
+
+                  # 7. Create service account clients
+                  print("Creating service account clients...")
+                  for client_name, group_name in SERVICE_ACCOUNTS:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients",
+                          token,
+                          method='POST',
+                          data={
+                              'clientId': client_name,
+                              'name': f'{client_name} Service Account',
+                              'description': f'Service account for {client_name} operations',
+                              'enabled': True,
+                              'serviceAccountsEnabled': True,
+                              'standardFlowEnabled': False,
+                              'implicitFlowEnabled': False,
+                              'directAccessGrantsEnabled': False,
+                              'publicClient': False,
+                              'protocol': 'openid-connect'
+                          }
+                      )
+                      print(f"  Created client: {client_name}")
+
+                      # Get service account user and assign to group
+                      client_uuid = get_client_uuid(keycloak_url, token, realm, client_name)
+                      if client_uuid:
+                          sa_user = keycloak_request(
+                              f"{keycloak_url}/admin/realms/{realm}/clients/{client_uuid}/service-account-user",
+                              token
+                          )
+                          if sa_user and sa_user.get('id'):
+                              group_id = get_group_id(keycloak_url, token, realm, group_name)
+                              if group_id:
+                                  keycloak_request(
+                                      f"{keycloak_url}/admin/realms/{realm}/users/{sa_user['id']}/groups/{group_id}",
+                                      token,
+                                      method='PUT'
+                                  )
+                                  print(f"    Assigned to group: {group_name}")
+
+                          # Add groups mapper
+                          add_groups_mapper(keycloak_url, token, realm, client_uuid)
+                          print(f"    Added groups mapper")
+
+                  # Refresh token
+                  token = get_admin_token(keycloak_url, admin_user, admin_password)
+
+                  # 8. Add groups mapper to web and M2M clients
+                  print("Adding groups mappers to clients...")
+                  web_uuid = get_client_uuid(keycloak_url, token, realm, 'mcp-gateway-web')
+                  if web_uuid:
+                      add_groups_mapper(keycloak_url, token, realm, web_uuid)
+                      print("  Added groups mapper to web client")
+
+                  m2m_uuid = get_client_uuid(keycloak_url, token, realm, 'mcp-gateway-m2m')
+                  if m2m_uuid:
+                      add_groups_mapper(keycloak_url, token, realm, m2m_uuid)
+                      print("  Added groups mapper to M2M client")
+
+                  # 9. Assign custom scopes to M2M client
+                  print("Assigning scopes to M2M client...")
+                  if m2m_uuid:
+                      all_scopes = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/client-scopes",
+                          token
+                      )
+                      for scope in CUSTOM_SCOPES:
+                          scope_id = None
+                          for s in all_scopes:
+                              if s.get('name') == scope:
+                                  scope_id = s.get('id')
+                                  break
+                          if scope_id:
+                              keycloak_request(
+                                  f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/default-client-scopes/{scope_id}",
+                                  token,
+                                  method='PUT'
+                              )
+                              print(f"  Assigned scope: {scope}")
+
+                  # Assign M2M service account to groups
+                  if m2m_uuid:
+                      m2m_sa = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/service-account-user",
+                          token
+                      )
+                      if m2m_sa and m2m_sa.get('id'):
+                          # registry-admins needed for /api/servers/register and /api/agents/register
+                          for group_name in ['mcp-servers-unrestricted', 'a2a-agent-admin', 'registry-admins']:
+                              group_id = get_group_id(keycloak_url, token, realm, group_name)
+                              if group_id:
+                                  keycloak_request(
+                                      f"{keycloak_url}/admin/realms/{realm}/users/{m2m_sa['id']}/groups/{group_id}",
+                                      token,
+                                      method='PUT'
+                                  )
+                                  print(f"  M2M service account assigned to: {group_name}")
+
+                  # 10. Generate and store client secrets
+                  print("Generating client secrets...")
+                  secrets = boto3.client('secretsmanager')
+
+                  # Web client secret
+                  if web_uuid:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{web_uuid}/client-secret",
+                          token,
+                          method='POST'
+                      )
+                      secret_response = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{web_uuid}/client-secret",
+                          token
+                      )
+                      web_secret = secret_response.get('value')
+                      if web_secret and client_secret_arn:
+                          secrets.update_secret(
+                              SecretId=client_secret_arn,
+                              SecretString=json.dumps({
+                                  'client_id': 'mcp-gateway-web',
+                                  'client_secret': web_secret
+                              })
+                          )
+                          print("  Web client secret stored")
+
+                  # M2M client secret
+                  if m2m_uuid:
+                      keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/client-secret",
+                          token,
+                          method='POST'
+                      )
+                      secret_response = keycloak_request(
+                          f"{keycloak_url}/admin/realms/{realm}/clients/{m2m_uuid}/client-secret",
+                          token
+                      )
+                      m2m_secret = secret_response.get('value')
+                      if m2m_secret and m2m_client_secret_arn:
+                          secrets.update_secret(
+                              SecretId=m2m_client_secret_arn,
+                              SecretString=json.dumps({
+                                  'client_id': 'mcp-gateway-m2m',
+                                  'client_secret': m2m_secret
+                              })
+                          )
+                          print("  M2M client secret stored")
+
+                  # 11. Restart auth-server and registry services
+                  print("Restarting services...")
+                  ecs_cluster = properties.get('EcsClusterName')
+                  auth_service = properties.get('AuthServiceName')
+                  registry_service = properties.get('RegistryServiceName')
+                  ecs = boto3.client('ecs')
+                  if ecs_cluster and auth_service:
+                      ecs.update_service(
+                          cluster=ecs_cluster,
+                          service=auth_service,
+                          forceNewDeployment=True
+                      )
+                      print("  Auth-server restart triggered")
+                  if ecs_cluster and registry_service:
+                      ecs.update_service(
+                          cluster=ecs_cluster,
+                          service=registry_service,
+                          forceNewDeployment=True
+                      )
+                      print("  Registry restart triggered")
+
+                  print("Keycloak initialization complete!")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'Realm': realm,
+                      'WebClientId': 'mcp-gateway-web',
+                      'M2MClientId': 'mcp-gateway-m2m'
+                  })
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-init
+
+  # Custom Resource to trigger Keycloak initialization
+  # Must run after DocumentDB init to ensure scope mappings exist before auth-server restart
+  KeycloakRealmInit:
+    Type: Custom::KeycloakInit
+    DependsOn:
+      - KeycloakService
+      - AuthServerService
+      - RegistryService
+      - DocumentDBInitTrigger
+    Properties:
+      ServiceToken: !GetAtt KeycloakInitLambda.Arn
+      # Use CloudFront URL for HTTPS access to Keycloak
+      KeycloakUrl: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
+      RegistryUrl: !ImportValue
+        Fn::Sub: ${EnvironmentName}-RegistryUrl
+      ClientSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakClientSecretArn
+      M2MClientSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+      # Admin password secret for user creation
+      AdminPasswordSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-AdminPasswordSecretArn
+      # ECS cluster and service names for restarting services after initialization
+      EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      AuthServiceName: !Sub ${EnvironmentName}-auth-server
+      RegistryServiceName: !Sub ${EnvironmentName}-registry
+      # Force re-run on stack updates by including a timestamp or version
+      # v5.0: Added registry-admins group to M2M service account for server registration
+      Version: '5.0'
+
+  #============================================================================
+  # DocumentDB Initialization (Custom Resource)
+  # Triggers the DocumentDB init Lambda to create indexes and registry-admins scope
+  #============================================================================
+  DocumentDBInitTrigger:
+    Type: Custom::DocumentDBInit
+    DependsOn:
+      - RegistryService
+    Properties:
+      ServiceToken: !ImportValue
+        Fn::Sub: ${EnvironmentName}-DocumentDBInitLambdaArn
+      # ECS configuration for running init task
+      EcsClusterName: !Sub ${EnvironmentName}-ecs-cluster
+      TaskFamily: !Sub ${EnvironmentName}-registry
+      ContainerName: registry
+      Subnets: !Join
+        - ','
+        - - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+          - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+      SecurityGroups: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTasksSG
+      # Force re-run on stack updates
+      Version: '1.0'
+
+  #============================================================================
+  # MCP Server and Agent Auto-Registration (Custom Resource)
+  # Registers all deployed MCP servers and A2A agents with the registry
+  # Runs after KeycloakRealmInit to ensure M2M client is available
+  #============================================================================
+  MCPServerRegistrationLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-mcp-registration-lambda-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MCPRegistrationPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcp-registration-lambda-role
+
+  MCPServerRegistrationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-mcp-registration
+      Description: Auto-register MCP servers and A2A agents with the registry
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt MCPServerRegistrationLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+      Code:
+        ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
+          """
+          Lambda function to auto-register MCP servers and A2A agents.
+          Used as a CloudFormation Custom Resource.
+          """
+          import json
+          import urllib.request
+          import urllib.parse
+          import urllib.error
+          import ssl
+          import boto3
+          import cfnresponse
+          import time
+
+          # MCP Servers to register (form data fields for /api/servers/register)
+          MCP_SERVERS = [
+              {
+                  'name': 'Current Time API',
+                  'description': 'A simple API that returns the current server time in various formats.',
+                  'path': '/currenttime/',
+                  'proxy_pass_url': 'http://currenttime-server.{namespace}.local:8000/',
+                  'tags': 'time,timezone,datetime,api,utility',
+                  'num_tools': '1',
+                  'is_python': 'true',
+                  'license': 'MIT-0'
+              },
+              {
+                  'name': 'MCP Gateway Tools',
+                  'description': 'Provides tools to interact with the MCP Gateway Registry API.',
+                  'path': '/mcpgw/',
+                  'proxy_pass_url': 'http://mcpgw-server.{namespace}.local:8003/',
+                  'tags': 'registry,management,admin,gateway,mcp-tools',
+                  'num_tools': '11',
+                  'is_python': 'true',
+                  'license': 'MIT'
+              },
+              {
+                  'name': 'Real Server Fake Tools',
+                  'description': 'A collection of fake tools with interesting names for testing.',
+                  'path': '/realserverfaketools/',
+                  'proxy_pass_url': 'http://realserverfaketools-server.{namespace}.local:8002/',
+                  'tags': 'demo,fake,tools,testing',
+                  'num_tools': '6',
+                  'is_python': 'true',
+                  'license': 'MIT'
+              }
+          ]
+
+          # A2A Agents to register
+          A2A_AGENTS = [
+              {
+                  'name': 'Flight Booking Agent',
+                  'description': 'Flight booking and reservation management agent',
+                  'url': 'http://flight-booking-agent.{namespace}.local:9000/',
+                  'path': '/flight-booking-agent',
+                  'protocolVersion': '0.3.0',
+                  'version': '0.0.1',
+                  'capabilities': {'streaming': True},
+                  'defaultInputModes': ['text/plain', 'application/json'],
+                  'defaultOutputModes': ['text/plain', 'application/json'],
+                  'provider': {'organization': 'MCP Gateway Workshop', 'url': 'https://example.com'},
+                  'skills': [
+                      {'id': 'check_availability', 'name': 'Check Availability', 'description': 'Check seat availability for a flight.', 'tags': ['flight', 'availability']},
+                      {'id': 'reserve_flight', 'name': 'Reserve Flight', 'description': 'Reserve seats on a flight.', 'tags': ['flight', 'reservation']},
+                      {'id': 'confirm_booking', 'name': 'Confirm Booking', 'description': 'Confirm and finalize a booking.', 'tags': ['flight', 'confirmation']},
+                      {'id': 'process_payment', 'name': 'Process Payment', 'description': 'Process payment (simulated).', 'tags': ['payment']},
+                      {'id': 'manage_reservation', 'name': 'Manage Reservation', 'description': 'Update or cancel reservations.', 'tags': ['reservation', 'management']}
+                  ],
+                  'tags': ['travel', 'flight-booking', 'reservation'],
+                  'visibility': 'public',
+                  'license': 'MIT'
+              },
+              {
+                  'name': 'Travel Assistant Agent',
+                  'description': 'Flight search and trip planning agent',
+                  'url': 'http://travel-assistant-agent.{namespace}.local:9000/',
+                  'path': '/travel-assistant-agent',
+                  'protocolVersion': '0.3.0',
+                  'version': '0.0.1',
+                  'capabilities': {'streaming': True},
+                  'defaultInputModes': ['text'],
+                  'defaultOutputModes': ['text'],
+                  'provider': {'organization': 'MCP Gateway Workshop', 'url': 'https://example.com'},
+                  'skills': [
+                      {'id': 'search_flights', 'name': 'Search Flights', 'description': 'Search for available flights.', 'tags': ['flight', 'search']},
+                      {'id': 'check_prices', 'name': 'Check Prices', 'description': 'Get pricing and availability.', 'tags': ['pricing']},
+                      {'id': 'get_recommendations', 'name': 'Get Recommendations', 'description': 'Get flight recommendations.', 'tags': ['recommendations']},
+                      {'id': 'create_trip_plan', 'name': 'Create Trip Plan', 'description': 'Create a trip planning record.', 'tags': ['planning']}
+                  ],
+                  'tags': ['travel', 'flight-search', 'trip-planning'],
+                  'visibility': 'public',
+                  'license': 'MIT'
+              }
+          ]
+
+          def get_m2m_token(keycloak_url, client_id, client_secret):
+              """Get M2M access token from Keycloak."""
+              url = f"{keycloak_url}/realms/mcp-gateway/protocol/openid-connect/token"
+              data = urllib.parse.urlencode({
+                  'grant_type': 'client_credentials',
+                  'client_id': client_id,
+                  'client_secret': client_secret
+              }).encode('utf-8')
+              req = urllib.request.Request(url, data=data, method='POST')
+              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+              ctx = ssl.create_default_context()
+              with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                  result = json.loads(response.read().decode('utf-8'))
+                  return result.get('access_token')
+
+          def api_request_form(url, token, form_data, max_retries=5):
+              """Make authenticated POST request with form data to Registry API."""
+              encoded_data = urllib.parse.urlencode(form_data).encode('utf-8')
+              ctx = ssl.create_default_context()
+              last_error = None
+
+              for attempt in range(max_retries):
+                  req = urllib.request.Request(url, data=encoded_data, method='POST')
+                  req.add_header('Authorization', f'Bearer {token}')
+                  req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+                  try:
+                      with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                          if response.status in [200, 201, 204]:
+                              try:
+                                  return json.loads(response.read().decode('utf-8'))
+                              except:
+                                  return {'success': True}
+                          return {'success': True}
+                  except urllib.error.HTTPError as e:
+                      if e.code == 409:
+                          return {'exists': True, 'success': False}
+                      if e.code in [400, 422]:
+                          body = e.read().decode('utf-8')
+                          if 'already' in body.lower() or 'exists' in body.lower():
+                              return {'exists': True, 'success': False}
+                          print(f"API error {e.code}: {body}")
+                          return {'success': False, 'error': body}
+                      # Retry on transient errors (502, 503, 504)
+                      if e.code in [502, 503, 504]:
+                          last_error = e
+                          wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8, 16 seconds
+                          print(f"    Transient error {e.code}, retry {attempt + 1}/{max_retries} in {wait_time}s...")
+                          time.sleep(wait_time)
+                          continue
+                      raise
+                  except (urllib.error.URLError, TimeoutError) as e:
+                      last_error = e
+                      wait_time = 2 ** attempt
+                      print(f"    Connection error, retry {attempt + 1}/{max_retries} in {wait_time}s: {str(e)}")
+                      time.sleep(wait_time)
+                      continue
+
+              # All retries exhausted
+              if last_error:
+                  raise last_error
+              raise Exception(f"Request failed after {max_retries} attempts")
+
+          def delete_server(registry_url, token, server_name):
+              """Delete a server from the registry by name."""
+              url = f"{registry_url}/api/v1/servers/remove?name={urllib.parse.quote(server_name)}"
+              req = urllib.request.Request(url, method='DELETE')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      print(f"    Deleted existing server: {server_name}")
+                      return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return True  # Already gone
+                  print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
+                  return False
+              except Exception as e:
+                  print(f"    Delete error: {str(e)}")
+                  return False
+
+          def delete_agent(registry_url, token, agent_name):
+              """Delete an agent from the registry by name."""
+              url = f"{registry_url}/api/agents/remove?name={urllib.parse.quote(agent_name)}"
+              req = urllib.request.Request(url, method='DELETE')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      print(f"    Deleted existing agent: {agent_name}")
+                      return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return True  # Already gone
+                  print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
+                  return False
+              except Exception as e:
+                  print(f"    Delete error: {str(e)}")
+                  return False
+
+          def api_request_json(url, token, json_data, max_retries=5):
+              """Make authenticated POST request with JSON data to Registry API."""
+              ctx = ssl.create_default_context()
+              data = json.dumps(json_data).encode('utf-8')
+              last_error = None
+
+              for attempt in range(max_retries):
+                  req = urllib.request.Request(url, method='POST')
+                  req.add_header('Authorization', f'Bearer {token}')
+                  req.add_header('Content-Type', 'application/json')
+                  req.data = data
+                  try:
+                      with urllib.request.urlopen(req, context=ctx, timeout=60) as response:
+                          if response.status in [200, 201, 204]:
+                              try:
+                                  return json.loads(response.read().decode('utf-8'))
+                              except:
+                                  return {'success': True}
+                          return {'success': True}
+                  except urllib.error.HTTPError as e:
+                      if e.code == 409:
+                          return {'exists': True, 'success': False}
+                      if e.code in [400, 422]:
+                          body = e.read().decode('utf-8')
+                          if 'already' in body.lower() or 'exists' in body.lower():
+                              return {'exists': True, 'success': False}
+                          print(f"API error {e.code}: {body}")
+                          return {'success': False, 'error': body}
+                      # Retry on transient errors (502, 503, 504)
+                      if e.code in [502, 503, 504]:
+                          last_error = e
+                          wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8, 16 seconds
+                          print(f"    Transient error {e.code}, retry {attempt + 1}/{max_retries} in {wait_time}s...")
+                          time.sleep(wait_time)
+                          continue
+                      raise
+                  except (urllib.error.URLError, TimeoutError) as e:
+                      last_error = e
+                      wait_time = 2 ** attempt
+                      print(f"    Connection error, retry {attempt + 1}/{max_retries} in {wait_time}s: {str(e)}")
+                      time.sleep(wait_time)
+                      continue
+
+              # All retries exhausted
+              if last_error:
+                  raise last_error
+              raise Exception(f"Request failed after {max_retries} attempts")
+
+          def wait_for_registry(registry_url, max_attempts=30):
+              """Wait for Registry API to be ready using health endpoint."""
+              ctx = ssl.create_default_context()
+              for i in range(max_attempts):
+                  try:
+                      # Use /health endpoint which doesn't require auth
+                      req = urllib.request.Request(f"{registry_url}/health")
+                      with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+                          if response.status == 200:
+                              print(f"Registry ready after {i+1} attempts")
+                              return True
+                  except Exception as e:
+                      print(f"Attempt {i+1}: Registry not ready - {str(e)}")
+                  time.sleep(5)
+              return False
+
+          def handler(event, context):
+              """CloudFormation Custom Resource handler."""
+              print(f"Event: {json.dumps(event)}")
+              request_type = event.get('RequestType')
+              properties = event.get('ResourceProperties', {})
+              registry_url = properties.get('RegistryUrl')
+              keycloak_url = properties.get('KeycloakUrl')
+              m2m_secret_arn = properties.get('M2MClientSecretArn')
+              namespace = properties.get('EnvironmentName', 'mcp-gateway')
+
+              if request_type == 'Delete':
+                  # Don't delete registrations on stack delete
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                  return
+
+              try:
+                  secrets = boto3.client('secretsmanager')
+
+                  # Get M2M client credentials
+                  m2m_secret = json.loads(
+                      secrets.get_secret_value(SecretId=m2m_secret_arn)['SecretString']
+                  )
+                  client_id = m2m_secret.get('client_id', 'mcp-gateway-m2m')
+                  client_secret = m2m_secret.get('client_secret')
+
+                  print(f"Getting M2M token from {keycloak_url}")
+                  token = get_m2m_token(keycloak_url, client_id, client_secret)
+                  if not token:
+                      raise Exception("Failed to get M2M token")
+                  print("Got M2M token")
+
+                  # Wait for registry to be ready (uses /health endpoint, no auth needed)
+                  if not wait_for_registry(registry_url):
+                      raise Exception("Registry not ready after maximum attempts")
+
+                  # Additional warm-up delay to let upstream services stabilize
+                  print("Waiting 10 seconds for services to fully stabilize...")
+                  time.sleep(10)
+
+                  # Register MCP Servers (uses form data)
+                  # Uses delete-then-create pattern to ensure config updates are applied
+                  print("Registering MCP Servers...")
+                  servers_registered = 0
+                  for server in MCP_SERVERS:
+                      # Replace namespace placeholder
+                      server_data = server.copy()
+                      server_data['proxy_pass_url'] = server_data['proxy_pass_url'].replace('{namespace}', namespace)
+
+                      print(f"  Registering: {server_data['name']}")
+                      result = api_request_form(
+                          f"{registry_url}/api/servers/register",
+                          token,
+                          server_data
+                      )
+                      if result.get('success'):
+                          print(f"    OK (created)")
+                          servers_registered += 1
+                      elif result.get('exists'):
+                          # Server exists - delete and re-create with updated config
+                          print(f"    Server exists, updating...")
+                          if delete_server(registry_url, token, server_data['name']):
+                              # Re-register with new config
+                              result = api_request_form(
+                                  f"{registry_url}/api/servers/register",
+                                  token,
+                                  server_data
+                              )
+                              if result.get('success'):
+                                  print(f"    OK (updated)")
+                                  servers_registered += 1
+                              else:
+                                  print(f"    Re-register failed: {result}")
+                          else:
+                              print(f"    Delete failed, skipping update")
+                      else:
+                          print(f"    Failed: {result}")
+
+                  # Register A2A Agents (uses JSON data)
+                  # Uses delete-then-create pattern to ensure config updates are applied
+                  print("Registering A2A Agents...")
+                  agents_registered = 0
+                  for agent in A2A_AGENTS:
+                      # Replace namespace placeholder
+                      agent_data = agent.copy()
+                      agent_data['url'] = agent_data['url'].replace('{namespace}', namespace)
+
+                      print(f"  Registering: {agent_data['name']}")
+                      result = api_request_json(
+                          f"{registry_url}/api/agents/register",
+                          token,
+                          agent_data
+                      )
+                      if result.get('success'):
+                          print(f"    OK (created)")
+                          agents_registered += 1
+                      elif result.get('exists'):
+                          # Agent exists - delete and re-create with updated config
+                          print(f"    Agent exists, updating...")
+                          if delete_agent(registry_url, token, agent_data['name']):
+                              # Re-register with new config
+                              result = api_request_json(
+                                  f"{registry_url}/api/agents/register",
+                                  token,
+                                  agent_data
+                              )
+                              if result.get('success'):
+                                  print(f"    OK (updated)")
+                                  agents_registered += 1
+                              else:
+                                  print(f"    Re-register failed: {result}")
+                          else:
+                              print(f"    Delete failed, skipping update")
+                      else:
+                          print(f"    Failed: {result}")
+
+                  print(f"Registration complete: {servers_registered} servers, {agents_registered} agents")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'ServersRegistered': servers_registered,
+                      'AgentsRegistered': agents_registered
+                  })
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  import traceback
+                  traceback.print_exc()
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-mcp-registration
+
+  # Custom Resource to trigger MCP server and agent registration
+  MCPServerRegistration:
+    Type: Custom::MCPServerRegistration
+    DependsOn:
+      - KeycloakRealmInit
+      - CurrentTimeService
+      - McpgwService
+      - RealServerFakeToolsService
+      - FlightBookingAgentService
+      - TravelAssistantAgentService
+    Properties:
+      ServiceToken: !GetAtt MCPServerRegistrationLambda.Arn
+      RegistryUrl: !ImportValue
+        Fn::Sub: ${EnvironmentName}-RegistryUrl
+      KeycloakUrl: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakCloudFrontUrl
+      M2MClientSecretArn: !ImportValue
+        Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
+      EnvironmentName: !Ref EnvironmentName
+      # Increment to force re-registration on stack updates
+      # v1.3: Fixed to use form data instead of JSON for server registration
+      # v1.4: Fixed proxy_pass_url to use -server suffix matching CloudMap DNS
+      # v1.5: Added upsert support - delete-then-create to update existing registrations
+      # v1.6: Fixed proxy_pass_url to include /mcp path for MCP server routing
+      # v1.7: Added retry logic with exponential backoff for transient 502/503/504 errors
+      Version: '1.7'
+
+  #============================================================================
+  # ADOT Collector Log Group (sidecar in metrics-service task)
+  #============================================================================
+  ADOTCollectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      LogGroupName: !Sub '/ecs/${EnvironmentName}/adot-collector'
+      RetentionInDays: 7
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-adot-collector'
+
+  #============================================================================
+  # Grafana OSS (Uses public image grafana/grafana, no custom ECR build)
+  # Provides dashboards for MCP Analytics and AWS Infrastructure monitoring
+  #============================================================================
+
+  GrafanaTaskRole:
+    Type: AWS::IAM::Role
+    Condition: EnableObservabilityCondition
+    Properties:
+      RoleName: !Sub '${EnvironmentName}-grafana-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: GrafanaAMPAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - aps:QueryMetrics
+                  - aps:GetSeries
+                  - aps:GetLabels
+                  - aps:GetMetricMetadata
+                Resource: !ImportValue
+                  Fn::Sub: '${EnvironmentName}-PrometheusWorkspaceArn'
+        - PolicyName: GrafanaCloudWatchAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:DescribeAlarmsForMetric
+                  - cloudwatch:DescribeAlarmHistory
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListMetrics
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:GetMetricStatistics
+                  - cloudwatch:GetInsightRuleReport
+                  - logs:DescribeLogGroups
+                  - logs:GetLogGroupFields
+                  - logs:StartQuery
+                  - logs:StopQuery
+                  - logs:GetQueryResults
+                  - logs:GetLogEvents
+                  - ec2:DescribeTags
+                  - ec2:DescribeInstances
+                  - ec2:DescribeRegions
+                  - tag:GetResources
+                # These read-only CloudWatch, Logs describe, and EC2 describe actions
+                # do not support resource-level permissions per AWS documentation.
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana-task-role'
+
+  GrafanaTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: EnableObservabilityCondition
+    Properties:
+      Family: !Sub '${EnvironmentName}-grafana'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskExecutionRoleArn'
+      TaskRoleArn: !Ref GrafanaTaskRole
+      ContainerDefinitions:
+        - Name: grafana
+          # Custom ECR image with dashboards and datasources pre-loaded
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${GrafanaImageRepo}:${GrafanaImageTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 3000
+              Protocol: tcp
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
+            # Enable AWS SDK config loading for credential discovery
+            - Name: AWS_SDK_LOAD_CONFIG
+              Value: '1'
+            # Enable SigV4 authentication for AWS datasources (required for AMP)
+            - Name: GF_AUTH_SIGV4_AUTH_ENABLED
+              Value: 'true'
+            # AMP endpoint for Prometheus datasource (auto-configured)
+            - Name: AMP_ENDPOINT
+              Value: !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrometheusQueryEndpoint'
+            # Server configuration for CloudFront path-based routing
+            - Name: GF_SERVER_ROOT_URL
+              Value: '%(protocol)s://%(domain)s/grafana/'
+            - Name: GF_SERVER_SERVE_FROM_SUB_PATH
+              Value: 'true'
+            # Authentication - anonymous access for workshop simplicity
+            - Name: GF_AUTH_ANONYMOUS_ENABLED
+              Value: 'true'
+            - Name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              Value: 'Admin'
+            - Name: GF_AUTH_DISABLE_LOGIN_FORM
+              Value: 'false'
+            - Name: GF_SECURITY_ADMIN_PASSWORD
+              Value: 'admin'
+            - Name: GF_USERS_ALLOW_SIGN_UP
+              Value: 'false'
+            # Embedding settings
+            - Name: GF_SECURITY_ALLOW_EMBEDDING
+              Value: 'true'
+            # AWS auth provider for SigV4 datasources (ec2_iam_role uses ECS task credentials)
+            - Name: GF_AWS_ALLOWED_AUTH_PROVIDERS
+              Value: 'default,ec2_iam_role'
+            # Logging
+            - Name: GF_LOG_MODE
+              Value: 'console'
+            - Name: GF_LOG_LEVEL
+              Value: 'info'
+            # Performance settings
+            - Name: GF_DASHBOARDS_MIN_REFRESH_INTERVAL
+              Value: '10s'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref GrafanaLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: grafana
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - wget -q --spider http://localhost:3000/api/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 60
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana'
+
+  GrafanaTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Condition: EnableObservabilityCondition
+    Properties:
+      Name: !Sub '${EnvironmentName}-grafana-tg'
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !ImportValue
+        Fn::Sub: '${EnvironmentName}-VpcId'
+      TargetType: ip
+      HealthCheckPath: /api/health
+      HealthCheckProtocol: HTTP
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher:
+        HttpCode: '200'
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana-tg'
+
+  GrafanaListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Condition: EnableObservabilityCondition
+    Properties:
+      ListenerArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainAlbHttpListenerArn'
+      Priority: 15
+      Conditions:
+        - Field: path-pattern
+          Values:
+            - '/grafana/*'
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref GrafanaTargetGroup
+
+  GrafanaService:
+    Type: AWS::ECS::Service
+    Condition: EnableObservabilityCondition
+    DependsOn: GrafanaListenerRule
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-grafana'
+      Cluster: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainEcsClusterArn'
+      TaskDefinition: !Ref GrafanaTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-GrafanaSG'
+          Subnets: !Split
+            - ','
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrivateSubnets'
+      LoadBalancers:
+        - ContainerName: grafana
+          ContainerPort: 3000
+          TargetGroupArn: !Ref GrafanaTargetGroup
+      HealthCheckGracePeriodSeconds: 120
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-grafana'
+
+  #============================================================================
+  # Metrics Service for MCP Analytics
+  # Collects and aggregates metrics from registry and auth-server
+  #============================================================================
+
+  MetricsServiceTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Condition: EnableObservabilityCondition
+    Properties:
+      Family: !Sub '${EnvironmentName}-metrics-service'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '512'
+      Memory: '1024'
+      ExecutionRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskExecutionRoleArn'
+      TaskRoleArn: !ImportValue
+        Fn::Sub: '${EnvironmentName}-EcsTaskRoleArn'
+      ContainerDefinitions:
+        - Name: metrics-service
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${MetricsServiceImageRepo}:${MetricsServiceImageTag}'
+          Essential: true
+          PortMappings:
+            - ContainerPort: 8890
+              Protocol: tcp
+            - ContainerPort: 9465
+              Protocol: tcp
+          Environment:
+            - Name: METRICS_SERVICE_HOST
+              Value: '0.0.0.0'
+            - Name: METRICS_SERVICE_PORT
+              Value: '8890'
+            - Name: OTEL_SERVICE_NAME
+              Value: 'mcp-metrics-service'
+            - Name: OTEL_PROMETHEUS_ENABLED
+              Value: 'true'
+            - Name: OTEL_PROMETHEUS_PORT
+              Value: '9465'
+            - Name: METRICS_RATE_LIMIT
+              Value: '5000'
+            - Name: HISTOGRAM_BUCKET_BOUNDARIES
+              Value: '0.005,0.01,0.025,0.05,0.1,0.25,0.5,1.0,2.5,5.0,10.0,30.0,60.0,120.0,300.0'
+            - Name: SQLITE_DB_PATH
+              Value: '/tmp/metrics.db'
+            # API keys for authentication - must match METRICS_API_KEY_* pattern for auto-registration
+            # The setup_preshared_api_keys() function registers keys from METRICS_API_KEY_<SERVICE> env vars
+            - Name: METRICS_API_KEY_REGISTRY
+              Value: !Ref MetricsApiKey
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref MetricsServiceLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: metrics
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - curl -f http://localhost:8890/health || exit 1
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 30
+        - Name: adot-collector
+          Image: public.ecr.aws/aws-observability/aws-otel-collector:latest
+          Essential: false
+          DependsOn:
+            - ContainerName: metrics-service
+              Condition: HEALTHY
+          Command:
+            - '--config=env:AOT_CONFIG_CONTENT'
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AOT_CONFIG_CONTENT
+              Value: !Sub
+                - |
+                  extensions:
+                    sigv4auth:
+                      region: ${AWS::Region}
+                      service: aps
+                  receivers:
+                    prometheus:
+                      config:
+                        global:
+                          scrape_interval: 15s
+                          scrape_timeout: 10s
+                        scrape_configs:
+                          - job_name: 'metrics-service'
+                            static_configs:
+                              - targets:
+                                  - 'localhost:9465'
+                                labels:
+                                  environment: '${EnvironmentName}'
+                                  service: 'metrics-service'
+                  processors:
+                    batch:
+                      timeout: 10s
+                      send_batch_size: 1000
+                    resource:
+                      attributes:
+                        - key: environment
+                          value: '${EnvironmentName}'
+                          action: upsert
+                  exporters:
+                    prometheusremotewrite:
+                      endpoint: '${AMPEndpoint}'
+                      auth:
+                        authenticator: sigv4auth
+                      resource_to_telemetry_conversion:
+                        enabled: true
+                  service:
+                    extensions: [sigv4auth]
+                    pipelines:
+                      metrics:
+                        receivers: [prometheus]
+                        processors: [batch, resource]
+                        exporters: [prometheusremotewrite]
+                - AMPEndpoint: !ImportValue
+                    Fn::Sub: '${EnvironmentName}-PrometheusRemoteWriteEndpoint'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ADOTCollectorLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: adot
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-metrics-service'
+
+  MetricsServiceEcsService:
+    Type: AWS::ECS::Service
+    Condition: EnableObservabilityCondition
+    Properties:
+      ServiceName: !Sub '${EnvironmentName}-metrics-service'
+      Cluster: !ImportValue
+        Fn::Sub: '${EnvironmentName}-MainEcsClusterArn'
+      TaskDefinition: !Ref MetricsServiceTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          SecurityGroups:
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-MetricsServiceSG'
+          Subnets: !Split
+            - ','
+            - !ImportValue
+                Fn::Sub: '${EnvironmentName}-PrivateSubnets'
+      ServiceRegistries:
+        - RegistryArn: !ImportValue
+            Fn::Sub: '${EnvironmentName}-MetricsServiceDiscoveryServiceArn'
+          ContainerName: metrics-service
+      Tags:
+        - Key: Name
+          Value: !Sub '${EnvironmentName}-metrics-service'
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  AuthServerServiceArn:
+    Description: Auth Server ECS Service ARN
+    Value: !Ref AuthServerService
+    Export:
+      Name: !Sub ${EnvironmentName}-AuthServerServiceArn
+
+  RegistryServiceArn:
+    Description: Registry ECS Service ARN
+    Value: !Ref RegistryService
+    Export:
+      Name: !Sub ${EnvironmentName}-RegistryServiceArn
+
+  KeycloakServiceArn:
+    Description: Keycloak ECS Service ARN
+    Value: !Ref KeycloakService
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakServiceArn
+
+  CurrentTimeServiceArn:
+    Description: CurrentTime MCP Server ECS Service ARN
+    Value: !Ref CurrentTimeService
+    Export:
+      Name: !Sub ${EnvironmentName}-CurrentTimeServiceArn
+
+  McpgwServiceArn:
+    Description: MCPGW MCP Server ECS Service ARN
+    Value: !Ref McpgwService
+    Export:
+      Name: !Sub ${EnvironmentName}-McpgwServiceArn
+
+  RealServerFakeToolsServiceArn:
+    Description: RealServerFakeTools MCP Server ECS Service ARN
+    Value: !Ref RealServerFakeToolsService
+    Export:
+      Name: !Sub ${EnvironmentName}-RealServerFakeToolsServiceArn
+
+  FlightBookingAgentServiceArn:
+    Description: Flight Booking Agent ECS Service ARN
+    Value: !Ref FlightBookingAgentService
+    Export:
+      Name: !Sub ${EnvironmentName}-FlightBookingAgentServiceArn
+
+  TravelAssistantAgentServiceArn:
+    Description: Travel Assistant Agent ECS Service ARN
+    Value: !Ref TravelAssistantAgentService
+    Export:
+      Name: !Sub ${EnvironmentName}-TravelAssistantAgentServiceArn
+
+  # Monitoring Outputs
+  AlarmSnsTopicArn:
+    Condition: CreateSnsTopicCondition
+    Description: SNS Topic ARN for CloudWatch Alarms
+    Value: !Ref AlarmSnsTopic
+    Export:
+      Name: !Sub ${EnvironmentName}-AlarmSnsTopicArn
+
+  # Observability Outputs (Grafana, Metrics Service)
+  GrafanaServiceArn:
+    Condition: EnableObservabilityCondition
+    Description: Grafana OSS ECS Service ARN
+    Value: !Ref GrafanaService
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaServiceArn
+
+  GrafanaTargetGroupArn:
+    Condition: EnableObservabilityCondition
+    Description: Grafana OSS Target Group ARN (for CloudFront integration)
+    Value: !Ref GrafanaTargetGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaTargetGroupArn
+
+  MetricsServiceServiceArn:
+    Condition: EnableObservabilityCondition
+    Description: Metrics Service ECS Service ARN
+    Value: !Ref MetricsServiceEcsService
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceServiceArn
+
+  MetricsServiceEndpoint:
+    Condition: EnableObservabilityCondition
+    Description: Metrics service internal endpoint (for METRICS_SERVICE_URL env var)
+    Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServiceEndpoint
+
+  MetricsServicePrometheusEndpoint:
+    Condition: EnableObservabilityCondition
+    Description: Metrics service Prometheus endpoint (ADOT sidecar scrapes localhost:9465)
+    Value: 'localhost:9465'
+    Export:
+      Name: !Sub ${EnvironmentName}-MetricsServicePrometheusEndpoint

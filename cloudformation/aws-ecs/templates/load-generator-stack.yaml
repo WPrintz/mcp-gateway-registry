@@ -1,0 +1,206 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Load Generator Stack
+  Deploys an EC2 instance that generates continuous traffic through the public
+  gateway endpoints (CloudFront) to populate Grafana dashboards with realistic metrics.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+
+  TemplateS3Bucket:
+    Type: String
+    Description: S3 bucket containing templates and scripts
+
+  TemplateS3Prefix:
+    Type: String
+    Description: S3 prefix (e.g. abc123/assets/) — static files at ../static/
+
+  RegistryUrl:
+    Type: String
+    Description: Public MCP Gateway URL (CloudFront HTTPS)
+
+  KeycloakCloudFrontUrl:
+    Type: String
+    Description: Public Keycloak URL (CloudFront HTTPS)
+
+  PublicSubnets:
+    Type: CommaDelimitedList
+    Description: Public subnet IDs for EC2 placement
+
+  VpcId:
+    Type: String
+    Description: VPC ID for security group
+
+  InstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small]
+
+  LoadRate:
+    Type: String
+    Default: '2'
+    Description: Requests per second
+
+  SshCidr:
+    Type: String
+    Default: ''
+    Description: CIDR for SSH access (leave empty to disable SSH)
+
+Conditions:
+  EnableSsh: !Not [!Equals [!Ref SshCidr, '']]
+
+Resources:
+  #============================================================================
+  # IAM Role — SecretsManager read + S3 read for load-generator.sh
+  #============================================================================
+  LoadGeneratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-load-generator-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SecretsManagerRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvironmentName}-keycloak-m2m-client-secret-*
+        - PolicyName: S3ReadScripts
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${TemplateS3Bucket}/*
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref LoadGeneratorRole]
+
+  #============================================================================
+  # Security Group — outbound only (+ optional SSH)
+  #============================================================================
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${EnvironmentName} load generator
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-load-generator-sg
+
+  SshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: EnableSsh
+    Properties:
+      GroupId: !Ref SecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SshCidr
+      Description: SSH access
+
+  #============================================================================
+  # EC2 Instance — AL2023, pulls load-generator.sh from S3, runs in tmux
+  #============================================================================
+  LoadGeneratorInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !Select [0, !Ref PublicSubnets]
+      SecurityGroupIds: [!Ref SecurityGroup]
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-load-generator
+        - Key: Environment
+          Value: !Ref EnvironmentName
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -ex
+
+            yum install -y tmux
+
+            # Download load generator script from S3 static folder
+            aws s3 cp "s3://${TemplateS3Bucket}/${StaticS3Prefix}load-generator.sh" /home/ec2-user/load-generator.sh
+            chmod +x /home/ec2-user/load-generator.sh
+
+            # Create environment file — fetches M2M creds from Secrets Manager
+            cat > /home/ec2-user/load-env.sh << 'ENVEOF'
+            #!/bin/bash
+            export REGISTRY_URL="${RegistryUrl}"
+            export KEYCLOAK_URL="${KeycloakCloudFrontUrl}"
+            export CLIENT_ID="mcp-gateway-m2m"
+            export CLIENT_SECRET=""
+            SECRET_JSON=$(aws secretsmanager get-secret-value \
+                --secret-id ${EnvironmentName}-keycloak-m2m-client-secret \
+                --region ${AWS::Region} \
+                --query 'SecretString' --output text 2>/dev/null)
+            if [ $? -eq 0 ]; then
+                export CLIENT_ID=$(echo "$SECRET_JSON" | jq -r '.client_id')
+                export CLIENT_SECRET=$(echo "$SECRET_JSON" | jq -r '.client_secret')
+            else
+                echo "ERROR: Failed to fetch secret from Secrets Manager"
+                exit 1
+            fi
+            ENVEOF
+            chmod +x /home/ec2-user/load-env.sh
+
+            # Create infinite loop wrapper — 6h cycles, auto-restart
+            cat > /home/ec2-user/run-load-forever.sh << 'LOOPEOF'
+            #!/bin/bash
+            set -e
+            SCRIPT_DIR="$(cd "$(dirname "${!BASH_SOURCE[0]}")" && pwd)"
+            LOG_FILE="$HOME/load-generator-output.log"
+            source "$SCRIPT_DIR/load-env.sh"
+            while true; do
+                echo "=== Starting 6-hour load cycle at $(date) ===" | tee -a "$LOG_FILE"
+                "$SCRIPT_DIR/load-generator.sh" --duration 21600 --rate ${LoadRate} 2>&1 | tee -a "$LOG_FILE"
+                EC=$?
+                if [ $EC -ne 0 ]; then
+                    echo "Exited $EC, restarting in 10s..." | tee -a "$LOG_FILE"
+                    sleep 10
+                else
+                    sleep 5
+                fi
+            done
+            LOOPEOF
+            chmod +x /home/ec2-user/run-load-forever.sh
+
+            chown ec2-user:ec2-user /home/ec2-user/load-generator.sh \
+                /home/ec2-user/load-env.sh /home/ec2-user/run-load-forever.sh
+
+            # Start load generator as ec2-user in a tmux session
+            sudo -u ec2-user tmux new-session -d -s workshop-load \
+                '/home/ec2-user/run-load-forever.sh'
+          - StaticS3Prefix: !Join
+              - ''
+              - - !Select [0, !Split ['assets/', !Ref TemplateS3Prefix]]
+                - 'static/'
+
+Outputs:
+  InstanceId:
+    Description: Load generator EC2 instance ID
+    Value: !Ref LoadGeneratorInstance
+
+  PublicIp:
+    Description: Load generator public IP
+    Value: !GetAtt LoadGeneratorInstance.PublicIp
+
+  SshCommand:
+    Condition: EnableSsh
+    Description: SSH command to connect
+    Value: !Sub 'ssh ec2-user@${LoadGeneratorInstance.PublicIp}'

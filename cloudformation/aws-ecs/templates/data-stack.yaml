@@ -1,0 +1,1216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Data Stack (Consolidated)
+  Creates DocumentDB, Aurora Serverless v2 (for Keycloak), RDS Proxy, Secrets Manager, SSM Parameters, and KMS.
+  Matches terraform/aws-ecs/documentdb.tf, secrets.tf and keycloak-database.tf
+  Target Region: us-west-2
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+    Description: Name prefix for all resources (must match network stack)
+
+  # Network references (passed from main-stack or use ImportValue)
+  VpcId:
+    Type: String
+    Default: ''
+    Description: VPC ID (leave empty to use ImportValue)
+
+  VpcCidr:
+    Type: String
+    Default: ''
+    Description: VPC CIDR block (leave empty to use ImportValue)
+
+  PrivateSubnet1:
+    Type: String
+    Default: ''
+    Description: Private Subnet 1 ID (leave empty to use ImportValue)
+
+  PrivateSubnet2:
+    Type: String
+    Default: ''
+    Description: Private Subnet 2 ID (leave empty to use ImportValue)
+
+  PrivateSubnet3:
+    Type: String
+    Default: ''
+    Description: Private Subnet 3 ID (leave empty to use ImportValue)
+
+  DatabaseSecurityGroupId:
+    Type: String
+    Default: ''
+    Description: Database Security Group ID (leave empty to use ImportValue)
+
+  # Keycloak Database credentials (NoEcho for security)
+  KeycloakDatabaseUsername:
+    Type: String
+    Default: keycloak
+    Description: Keycloak database username
+    NoEcho: true
+
+  KeycloakDatabasePassword:
+    Type: String
+    Default: KeycloakDbPass123!
+    Description: Keycloak database password
+    NoEcho: true
+    MinLength: 8
+
+  KeycloakAdminPassword:
+    Type: String
+    Default: KeycloakAdmin123!
+    Description: Keycloak admin password
+    NoEcho: true
+    MinLength: 12
+
+  # DocumentDB credentials
+  DocumentDBUsername:
+    Type: String
+    Default: docdbadmin
+    Description: DocumentDB admin username
+    NoEcho: true
+
+  DocumentDBPassword:
+    Type: String
+    Default: DocDBPass123!
+    Description: DocumentDB admin password (min 8 characters)
+    NoEcho: true
+    MinLength: 8
+
+  # DocumentDB instance configuration
+  DocumentDBInstanceClass:
+    Type: String
+    Default: db.t3.medium
+    Description: DocumentDB instance class (db.t3.medium = 2 vCPU, 4 GB RAM)
+    AllowedValues:
+      - db.t3.medium
+      - db.r5.large
+      - db.r5.xlarge
+      - db.r5.2xlarge
+
+  # Aurora Serverless scaling
+  DatabaseMinACU:
+    Type: Number
+    Default: 0.5
+    Description: Minimum Aurora Capacity Units
+
+  DatabaseMaxACU:
+    Type: Number
+    Default: 2
+    Description: Maximum Aurora Capacity Units
+
+Conditions:
+  UseVpcIdParam: !Not [!Equals [!Ref VpcId, '']]
+  UsePrivateSubnet1Param: !Not [!Equals [!Ref PrivateSubnet1, '']]
+  UsePrivateSubnet2Param: !Not [!Equals [!Ref PrivateSubnet2, '']]
+  UsePrivateSubnet3Param: !Not [!Equals [!Ref PrivateSubnet3, '']]
+  UseDatabaseSgParam: !Not [!Equals [!Ref DatabaseSecurityGroupId, '']]
+
+Resources:
+
+  #============================================================================
+  # KMS Keys for Encryption
+  #============================================================================
+
+  # KMS Key for RDS (Aurora/Keycloak) Encryption
+  RdsKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for RDS encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'  # In a KMS key policy, '*' means "this key" (standard AWS pattern)
+          - Sid: Allow RDS to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'  # In a KMS key policy, '*' means "this key"
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rds-kms
+
+  RdsKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/${EnvironmentName}-rds
+      TargetKeyId: !Ref RdsKmsKey
+
+  # KMS Key for DocumentDB Encryption
+  DocumentDBKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for DocumentDB cluster encryption
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: kms:*
+            Resource: '*'  # In a KMS key policy, '*' means "this key" (standard AWS pattern)
+          - Sid: Allow DocumentDB to use the key
+            Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: '*'  # In a KMS key policy, '*' means "this key"
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-kms
+        - Key: Component
+          Value: documentdb
+
+  DocumentDBKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub alias/${EnvironmentName}-documentdb
+      TargetKeyId: !Ref DocumentDBKmsKey
+
+  #============================================================================
+  # DocumentDB Security Group
+  #============================================================================
+  DocumentDBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${EnvironmentName}-documentdb-sg
+      GroupDescription: Security group for DocumentDB Cluster
+      VpcId: !If
+        - UseVpcIdParam
+        - !Ref VpcId
+        - !ImportValue
+          Fn::Sub: ${EnvironmentName}-VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-sg
+        - Key: Component
+          Value: documentdb
+
+  # Ingress from ECS Tasks (Registry and Auth services share EcsTasksSG)
+  DocumentDBIngressFromEcsTasks:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref DocumentDBSecurityGroup
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      SourceSecurityGroupId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTasksSG
+      Description: Allow MongoDB protocol from ECS tasks (Registry, Auth) to DocumentDB
+
+  # Egress rule
+  DocumentDBEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref DocumentDBSecurityGroup
+      IpProtocol: '-1'
+      CidrIp: 0.0.0.0/0
+      Description: Allow all outbound traffic
+
+  # ECS Tasks -> DocumentDB egress rule
+  EcsTasksToDocumentDBEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !ImportValue
+        Fn::Sub: ${EnvironmentName}-EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 27017
+      ToPort: 27017
+      DestinationSecurityGroupId: !Ref DocumentDBSecurityGroup
+      Description: Allow ECS tasks to connect to DocumentDB
+
+  #============================================================================
+  # DocumentDB Cluster
+  #============================================================================
+
+  # DocumentDB Subnet Group
+  DocumentDBSubnetGroup:
+    Type: AWS::DocDB::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub ${EnvironmentName}-documentdb-subnet-group
+      DBSubnetGroupDescription: Subnet group for MCP Gateway Registry DocumentDB cluster
+      SubnetIds:
+        - !If
+          - UsePrivateSubnet1Param
+          - !Ref PrivateSubnet1
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !If
+          - UsePrivateSubnet2Param
+          - !Ref PrivateSubnet2
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !If
+          - UsePrivateSubnet3Param
+          - !Ref PrivateSubnet3
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-subnet-group
+        - Key: Component
+          Value: documentdb
+
+  # DocumentDB Cluster Parameter Group
+  DocumentDBClusterParameterGroup:
+    Type: AWS::DocDB::DBClusterParameterGroup
+    Properties:
+      Name: !Sub ${EnvironmentName}-documentdb-params
+      Family: docdb5.0
+      Description: DocumentDB cluster parameter group for MCP Gateway Registry
+      Parameters:
+        tls: enabled
+        audit_logs: disabled
+        ttl_monitor: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-params
+        - Key: Component
+          Value: documentdb
+
+  # DocumentDB Cluster
+  DocumentDBCluster:
+    Type: AWS::DocDB::DBCluster
+    DependsOn: DocumentDBCredentialsSecret
+    Properties:
+      DBClusterIdentifier: !Sub ${EnvironmentName}-registry
+      EngineVersion: '5.0.0'
+      MasterUsername: !Ref DocumentDBUsername
+      MasterUserPassword: !Ref DocumentDBPassword
+      DBSubnetGroupName: !Ref DocumentDBSubnetGroup
+      DBClusterParameterGroupName: !Ref DocumentDBClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !Ref DocumentDBSecurityGroup
+      Port: 27017
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: 02:00-04:00
+      PreferredMaintenanceWindow: sun:04:00-sun:05:00
+      StorageEncrypted: true
+      KmsKeyId: !GetAtt DocumentDBKmsKey.Arn
+      DeletionProtection: false
+      EnableCloudwatchLogsExports:
+        - audit
+        - profiler
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-docdb
+        - Key: Component
+          Value: documentdb
+        - Key: Service
+          Value: mcp-gateway-registry
+
+  # DocumentDB Primary Instance
+  DocumentDBInstance:
+    Type: AWS::DocDB::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub ${EnvironmentName}-registry-primary
+      DBClusterIdentifier: !Ref DocumentDBCluster
+      DBInstanceClass: !Ref DocumentDBInstanceClass
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-registry-primary
+        - Key: Component
+          Value: documentdb
+        - Key: Role
+          Value: primary
+
+  #============================================================================
+  # Secrets Manager Secrets
+  #============================================================================
+
+  # DocumentDB credentials secret
+  DocumentDBCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}/documentdb/credentials
+      Description: DocumentDB Cluster admin credentials
+      SecretString: !Sub |
+        {
+          "username": "${DocumentDBUsername}",
+          "password": "${DocumentDBPassword}",
+          "engine": "docdb"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-credentials
+        - Key: Component
+          Value: documentdb
+
+  # Keycloak Database credentials secret
+  KeycloakDbSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}/keycloak/database
+      Description: Keycloak database credentials
+      SecretString: !Sub |
+        {
+          "username": "${KeycloakDatabaseUsername}",
+          "password": "${KeycloakDatabasePassword}"
+        }
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-secret
+
+  # Application secret key
+  SecretKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-secret-key
+      Description: Secret key for MCP Gateway Registry
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: secret_key
+        PasswordLength: 64
+        ExcludeCharacters: '"@/\'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-secret-key
+
+  # Admin password secret
+  AdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-admin-password
+      Description: Admin password for MCP Gateway Registry
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: admin_password
+        PasswordLength: 32
+        RequireEachIncludedType: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-admin-password
+
+  # Keycloak client secret (placeholder, updated by init script)
+  KeycloakClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-client-secret
+      Description: Keycloak web client secret (updated by init script after deployment)
+      SecretString: '{"client_secret": "placeholder-will-be-updated-by-init-script"}'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-client-secret
+
+  # Keycloak M2M client secret (placeholder, updated by init script)
+  KeycloakM2MClientSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-keycloak-m2m-client-secret
+      Description: Keycloak M2M client secret (updated by init script after deployment)
+      SecretString: '{"client_secret": "placeholder-will-be-updated-by-init-script"}'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-m2m-client-secret
+
+  # Embeddings API key (for litellm provider - OpenAI, Anthropic, etc.)
+  # Default is dummy key since sentence-transformers (default) doesn't need it
+  EmbeddingsApiKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-embeddings-api-key
+      Description: API key for embeddings provider (only used with litellm provider)
+      SecretString: 'not-configured-using-local-embeddings'
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-embeddings-api-key
+
+  #============================================================================
+  # Aurora Serverless v2 Database (for Keycloak)
+  #============================================================================
+
+  # DB Subnet Group
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupName: !Sub ${EnvironmentName}-keycloak-subnet-group
+      DBSubnetGroupDescription: Subnet group for Keycloak Aurora cluster
+      SubnetIds:
+        - !If
+          - UsePrivateSubnet1Param
+          - !Ref PrivateSubnet1
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !If
+          - UsePrivateSubnet2Param
+          - !Ref PrivateSubnet2
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !If
+          - UsePrivateSubnet3Param
+          - !Ref PrivateSubnet3
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-subnet-group
+
+  # RDS Cluster Parameter Group
+  DbClusterParameterGroup:
+    Type: AWS::RDS::DBClusterParameterGroup
+    Properties:
+      DBClusterParameterGroupName: !Sub ${EnvironmentName}-keycloak-params
+      Description: Keycloak Aurora MySQL parameter group
+      Family: aurora-mysql8.0
+      Parameters:
+        character_set_server: utf8mb4
+        collation_server: utf8mb4_unicode_ci
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-params
+
+  # Aurora Serverless v2 Cluster
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    DependsOn: KeycloakDbSecret
+    Properties:
+      DBClusterIdentifier: !Sub ${EnvironmentName}-keycloak
+      Engine: aurora-mysql
+      EngineVersion: 8.0.mysql_aurora.3.08.2
+      DatabaseName: keycloak
+      MasterUsername: !Ref KeycloakDatabaseUsername
+      MasterUserPassword: !Ref KeycloakDatabasePassword
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      DBClusterParameterGroupName: !Ref DbClusterParameterGroup
+      VpcSecurityGroupIds:
+        - !If
+          - UseDatabaseSgParam
+          - !Ref DatabaseSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-DatabaseSG
+      BackupRetentionPeriod: 7
+      PreferredBackupWindow: 02:00-04:00
+      PreferredMaintenanceWindow: sun:04:00-sun:05:00
+      StorageEncrypted: true
+      KmsKeyId: !GetAtt RdsKmsKey.Arn
+      DeletionProtection: false
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: !Ref DatabaseMinACU
+        MaxCapacity: !Ref DatabaseMaxACU
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-cluster
+
+  # Aurora Cluster Instance (Serverless v2)
+  AuroraInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub ${EnvironmentName}-keycloak-instance
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-mysql
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-instance
+
+
+  #============================================================================
+  # RDS Proxy (for Keycloak)
+  #============================================================================
+
+  # IAM Role for RDS Proxy
+  RdsProxyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-rds-proxy-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: rds.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RdsProxySecretsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref KeycloakDbSecret
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-rds-proxy-role
+
+  # RDS Proxy
+  RdsProxy:
+    Type: AWS::RDS::DBProxy
+    DependsOn: AuroraInstance
+    Properties:
+      DBProxyName: !Sub ${EnvironmentName}-keycloak-proxy
+      EngineFamily: MYSQL
+      Auth:
+        - AuthScheme: SECRETS
+          SecretArn: !Ref KeycloakDbSecret
+          IAMAuth: DISABLED
+      RoleArn: !GetAtt RdsProxyRole.Arn
+      VpcSubnetIds:
+        - !If
+          - UsePrivateSubnet1Param
+          - !Ref PrivateSubnet1
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+        - !If
+          - UsePrivateSubnet2Param
+          - !Ref PrivateSubnet2
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet2
+        - !If
+          - UsePrivateSubnet3Param
+          - !Ref PrivateSubnet3
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-PrivateSubnet3
+      VpcSecurityGroupIds:
+        - !If
+          - UseDatabaseSgParam
+          - !Ref DatabaseSecurityGroupId
+          - !ImportValue
+            Fn::Sub: ${EnvironmentName}-DatabaseSG
+      RequireTLS: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-proxy
+
+  # RDS Proxy Target Group
+  RdsProxyTargetGroup:
+    Type: AWS::RDS::DBProxyTargetGroup
+    Properties:
+      DBProxyName: !Ref RdsProxy
+      TargetGroupName: default
+      DBClusterIdentifiers:
+        - !Ref AuroraCluster
+
+  #============================================================================
+  # SSM Parameters
+  #============================================================================
+
+  # SSM SecureString Lambda (for creating SecureString parameters)
+  SsmSecureStringLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-ssm-securestring-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: SsmSecureStringPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*
+              - Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:DeleteParameter
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                  - ssm:ListTagsForResource
+                Resource:
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/*
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${EnvironmentName}/*
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ssm-securestring-role
+
+  SsmSecureStringLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-ssm-securestring
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt SsmSecureStringLambdaRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
+          import boto3
+          import cfnresponse
+
+          def handler(event, context):
+              print(f"Event: {event}")
+              ssm = boto3.client('ssm')
+
+              try:
+                  name = event['ResourceProperties']['Name']
+
+                  if event['RequestType'] == 'Delete':
+                      try:
+                          ssm.delete_parameter(Name=name)
+                          print(f"Deleted parameter: {name}")
+                      except ssm.exceptions.ParameterNotFound:
+                          print(f"Parameter not found (already deleted): {name}")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {})
+                      return
+
+                  # Create or Update
+                  value = event['ResourceProperties']['Value']
+                  description = event['ResourceProperties'].get('Description', '')
+                  tags = event['ResourceProperties'].get('Tags', [])
+
+                  ssm.put_parameter(
+                      Name=name,
+                      Value=value,
+                      Type='SecureString',
+                      Description=description,
+                      Overwrite=True
+                  )
+                  print(f"Created/Updated SecureString parameter: {name}")
+
+                  # Add tags if provided
+                  if tags:
+                      ssm.add_tags_to_resource(
+                          ResourceType='Parameter',
+                          ResourceId=name,
+                          Tags=tags
+                      )
+
+                  # Return the ARN
+                  region = context.invoked_function_arn.split(':')[3]
+                  account = context.invoked_function_arn.split(':')[4]
+                  arn = f"arn:aws:ssm:{region}:{account}:parameter{name}"
+
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {'Arn': arn})
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-ssm-securestring
+
+  # Keycloak SSM Parameters
+  SsmKeycloakDatabaseUrl:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/database/url
+      Value: !Sub jdbc:mysql://${AuroraCluster.Endpoint.Address}:3306/keycloak
+      Description: Keycloak database JDBC URL
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-url
+
+  SsmKeycloakDatabaseUsername:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/database/username
+      Value: !Ref KeycloakDatabaseUsername
+      Description: Keycloak database username
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-username
+
+  SsmKeycloakDatabasePassword:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/database/password
+      Value: !Ref KeycloakDatabasePassword
+      Description: Keycloak database password
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-db-password
+
+  SsmKeycloakAdmin:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/admin
+      Value: admin
+      Description: Keycloak admin username
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-admin
+
+  SsmKeycloakAdminPassword:
+    Type: Custom::SsmSecureString
+    DependsOn: SsmSecureStringLambda
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: /keycloak/admin_password
+      Value: !Ref KeycloakAdminPassword
+      Description: Keycloak admin password
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-keycloak-admin-password
+
+  # DocumentDB SSM Parameters
+  SsmDocumentDBEndpoint:
+    Type: Custom::SsmSecureString
+    DependsOn:
+      - SsmSecureStringLambda
+      - DocumentDBCluster
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: !Sub /${EnvironmentName}/documentdb/endpoint
+      Value: !GetAtt DocumentDBCluster.Endpoint
+      Description: DocumentDB Cluster endpoint
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-endpoint
+        - Key: Component
+          Value: documentdb
+
+  SsmDocumentDBReaderEndpoint:
+    Type: Custom::SsmSecureString
+    DependsOn:
+      - SsmSecureStringLambda
+      - DocumentDBCluster
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: !Sub /${EnvironmentName}/documentdb/reader_endpoint
+      Value: !GetAtt DocumentDBCluster.ReadEndpoint
+      Description: DocumentDB Cluster reader endpoint
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-reader-endpoint
+        - Key: Component
+          Value: documentdb
+
+  SsmDocumentDBConnectionString:
+    Type: Custom::SsmSecureString
+    DependsOn:
+      - SsmSecureStringLambda
+      - DocumentDBCluster
+    Properties:
+      ServiceToken: !GetAtt SsmSecureStringLambda.Arn
+      Name: !Sub /${EnvironmentName}/documentdb/connection_string
+      Value: !Sub >-
+        mongodb://${DocumentDBUsername}:${DocumentDBPassword}@${DocumentDBCluster.Endpoint}:27017/?authMechanism=SCRAM-SHA-1&authSource=admin&tls=true&tlsCAFile=global-bundle.pem&replicaSet=rs0&readPreference=secondaryPreferred&retryWrites=false
+      Description: DocumentDB Cluster connection string
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-connection-string
+        - Key: Component
+          Value: documentdb
+
+  #============================================================================
+  # DocumentDB Initialization Lambda
+  # Creates indexes and loads registry-admins scope into DocumentDB
+  # This is the CloudFormation equivalent of Terraform's run-documentdb-init.sh
+  #============================================================================
+  DocumentDBInitLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-documentdb-init-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: DocumentDBInitPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DocumentDBCredentialsSecret
+              - Effect: Allow
+                Action:
+                  - ecs:RunTask
+                Resource:
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/${EnvironmentName}-*
+              - Effect: Allow
+                Action:
+                  - ecs:DescribeTasks
+                Resource:
+                  - !Sub arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task/${EnvironmentName}-*/*
+              - Effect: Allow
+                Action:
+                  - iam:PassRole
+                Resource:
+                  # Must match role names defined in compute-stack.yaml
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-task-execution
+                  - !Sub arn:aws:iam::${AWS::AccountId}:role/${EnvironmentName}-task-role
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-init-role
+
+  # Lambda Layer for pymongo (DocumentDB driver)
+  # Note: In production, you would create this layer with pymongo installed
+  # For now, we use the boto3 layer and make HTTP calls to a sidecar or use ECS task
+
+  DocumentDBInitLambda:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - DocumentDBInstance
+    Properties:
+      FunctionName: !Sub ${EnvironmentName}-documentdb-init
+      Description: Initialize DocumentDB collections, indexes, and registry-admins scope
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt DocumentDBInitLambdaRole.Arn
+      Timeout: 300
+      MemorySize: 256
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref DocumentDBSecurityGroup
+        SubnetIds:
+          - !If
+            - UsePrivateSubnet1Param
+            - !Ref PrivateSubnet1
+            - !ImportValue
+              Fn::Sub: ${EnvironmentName}-PrivateSubnet1
+      Environment:
+        Variables:
+          DOCUMENTDB_HOST: !GetAtt DocumentDBCluster.Endpoint
+          DOCUMENTDB_PORT: '27017'
+          DOCUMENTDB_DATABASE: mcp_registry
+          DOCUMENTDB_NAMESPACE: default
+          DOCUMENTDB_SECRET_ARN: !Ref DocumentDBCredentialsSecret
+      Code:
+        ZipFile: |
+          # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+          # SPDX-License-Identifier: Apache-2.0
+          """
+          DocumentDB Initialization Lambda for MCP Gateway Registry.
+
+          This Lambda initializes DocumentDB by triggering an ECS task that runs
+          the init-documentdb-indexes.py script. Lambda cannot directly connect to
+          DocumentDB with pymongo due to layer size limits, so we delegate to ECS.
+
+          The ECS task will:
+          1. Create all required collections with indexes
+          2. Load the registry-admins scope into mcp_scopes_default collection
+          """
+          import json
+          import boto3
+          import cfnresponse
+          import os
+          import time
+
+          def handler(event, context):
+              print(f"Event: {json.dumps(event)}")
+
+              request_type = event.get('RequestType')
+              properties = event.get('ResourceProperties', {})
+
+              # For Delete, just return success
+              if request_type == 'Delete':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'Message': 'Delete request - no action needed'
+                  })
+                  return
+
+              try:
+                  ecs = boto3.client('ecs')
+
+                  # Get ECS configuration from properties
+                  cluster_name = properties.get('EcsClusterName')
+                  task_family = properties.get('TaskFamily', 'mcp-gateway-registry')
+                  container_name = properties.get('ContainerName', 'registry')
+                  subnets = properties.get('Subnets', '').split(',')
+                  security_groups = properties.get('SecurityGroups', '').split(',')
+
+                  # Get DocumentDB connection info
+                  docdb_host = os.environ.get('DOCUMENTDB_HOST')
+                  docdb_port = os.environ.get('DOCUMENTDB_PORT', '27017')
+                  docdb_database = os.environ.get('DOCUMENTDB_DATABASE', 'mcp_registry')
+                  docdb_namespace = os.environ.get('DOCUMENTDB_NAMESPACE', 'default')
+                  secret_arn = os.environ.get('DOCUMENTDB_SECRET_ARN')
+
+                  # Get credentials from Secrets Manager
+                  secrets = boto3.client('secretsmanager')
+                  secret_response = secrets.get_secret_value(SecretId=secret_arn)
+                  credentials = json.loads(secret_response['SecretString'])
+                  docdb_username = credentials.get('username')
+                  docdb_password = credentials.get('password')
+
+                  print(f"Starting DocumentDB init ECS task...")
+                  print(f"  Cluster: {cluster_name}")
+                  print(f"  Task Family: {task_family}")
+                  print(f"  DocumentDB Host: {docdb_host}")
+
+                  # Build the init command
+                  init_command = (
+                      "source /app/.venv/bin/activate && "
+                      "cd /app/scripts && "
+                      "python init-documentdb-indexes.py"
+                  )
+
+                  # Run the ECS task
+                  response = ecs.run_task(
+                      cluster=cluster_name,
+                      taskDefinition=task_family,
+                      launchType='FARGATE',
+                      networkConfiguration={
+                          'awsvpcConfiguration': {
+                              'subnets': subnets,
+                              'securityGroups': security_groups,
+                              'assignPublicIp': 'DISABLED'
+                          }
+                      },
+                      overrides={
+                          'containerOverrides': [{
+                              'name': container_name,
+                              'command': ['/bin/bash', '-c', init_command],
+                              'environment': [
+                                  {'name': 'RUN_INIT_SCRIPTS', 'value': 'true'},
+                                  {'name': 'DOCUMENTDB_HOST', 'value': docdb_host},
+                                  {'name': 'DOCUMENTDB_PORT', 'value': docdb_port},
+                                  {'name': 'DOCUMENTDB_USERNAME', 'value': docdb_username},
+                                  {'name': 'DOCUMENTDB_PASSWORD', 'value': docdb_password},
+                                  {'name': 'DOCUMENTDB_DATABASE', 'value': docdb_database},
+                                  {'name': 'DOCUMENTDB_NAMESPACE', 'value': docdb_namespace},
+                                  {'name': 'DOCUMENTDB_USE_TLS', 'value': 'true'},
+                                  {'name': 'DOCUMENTDB_USE_IAM', 'value': 'false'},
+                                  {'name': 'DOCUMENTDB_TLS_CA_FILE', 'value': '/app/global-bundle.pem'}
+                              ]
+                          }]
+                      }
+                  )
+
+                  if not response.get('tasks'):
+                      failures = response.get('failures', [])
+                      raise Exception(f"Failed to start ECS task: {failures}")
+
+                  task_arn = response['tasks'][0]['taskArn']
+                  task_id = task_arn.split('/')[-1]
+                  print(f"Started ECS task: {task_id}")
+
+                  # Wait for task to complete (with timeout)
+                  max_wait_seconds = 180
+                  wait_interval = 10
+                  elapsed = 0
+
+                  while elapsed < max_wait_seconds:
+                      time.sleep(wait_interval)
+                      elapsed += wait_interval
+
+                      describe_response = ecs.describe_tasks(
+                          cluster=cluster_name,
+                          tasks=[task_arn]
+                      )
+
+                      if describe_response['tasks']:
+                          task = describe_response['tasks'][0]
+                          status = task.get('lastStatus', 'UNKNOWN')
+                          print(f"Task status: {status} (elapsed: {elapsed}s)")
+
+                          if status == 'STOPPED':
+                              # Check exit code
+                              containers = task.get('containers', [])
+                              if containers:
+                                  exit_code = containers[0].get('exitCode')
+                                  if exit_code == 0:
+                                      print("DocumentDB initialization completed successfully!")
+                                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                                          'TaskId': task_id,
+                                          'Status': 'SUCCESS',
+                                          'Message': 'DocumentDB indexes and registry-admins scope created'
+                                      })
+                                      return
+                                  else:
+                                      raise Exception(f"ECS task failed with exit code: {exit_code}")
+                              break
+
+                  # If we get here, task didn't complete in time
+                  print(f"Warning: Task still running after {max_wait_seconds}s, returning success anyway")
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'TaskId': task_id,
+                      'Status': 'PENDING',
+                      'Message': 'DocumentDB init task started but not yet completed'
+                  })
+
+              except Exception as e:
+                  print(f"Error: {str(e)}")
+                  # Don't fail the stack on init errors - the init can be run manually
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      'Status': 'WARNING',
+                      'Error': str(e),
+                      'Message': 'DocumentDB init failed but stack creation continues. Run init manually.'
+                  })
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-documentdb-init
+        - Key: Component
+          Value: documentdb
+
+  # Note: The DocumentDBInitTrigger custom resource is defined in services-stack.yaml
+  # after the Registry ECS service is created, since it needs to run an ECS task
+  # using the registry task definition.
+
+#============================================================================
+# Outputs
+#============================================================================
+Outputs:
+  # DocumentDB Outputs
+  DocumentDBClusterEndpoint:
+    Description: DocumentDB cluster endpoint
+    Value: !GetAtt DocumentDBCluster.Endpoint
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBClusterEndpoint
+
+  DocumentDBClusterPort:
+    Description: DocumentDB cluster port
+    Value: !GetAtt DocumentDBCluster.Port
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBClusterPort
+
+  DocumentDBClusterReadEndpoint:
+    Description: DocumentDB cluster reader endpoint
+    Value: !GetAtt DocumentDBCluster.ReadEndpoint
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBClusterReadEndpoint
+
+  DocumentDBSecurityGroupId:
+    Description: DocumentDB security group ID
+    Value: !Ref DocumentDBSecurityGroup
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBSecurityGroupId
+
+  DocumentDBCredentialsSecretArn:
+    Description: DocumentDB credentials secret ARN
+    Value: !Ref DocumentDBCredentialsSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBCredentialsSecretArn
+
+  DocumentDBInitLambdaArn:
+    Description: DocumentDB initialization Lambda ARN
+    Value: !GetAtt DocumentDBInitLambda.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBInitLambdaArn
+
+  # Aurora (Keycloak) Database Outputs
+  AuroraClusterEndpoint:
+    Description: Aurora cluster endpoint
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+    Export:
+      Name: !Sub ${EnvironmentName}-AuroraClusterEndpoint
+
+  AuroraClusterPort:
+    Description: Aurora cluster port
+    Value: !GetAtt AuroraCluster.Endpoint.Port
+    Export:
+      Name: !Sub ${EnvironmentName}-AuroraClusterPort
+
+  RdsProxyEndpoint:
+    Description: RDS Proxy endpoint
+    Value: !GetAtt RdsProxy.Endpoint
+    Export:
+      Name: !Sub ${EnvironmentName}-RdsProxyEndpoint
+
+  # Secrets Outputs
+  KeycloakDbSecretArn:
+    Description: Keycloak database secret ARN
+    Value: !Ref KeycloakDbSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakDbSecretArn
+
+  SecretKeySecretArn:
+    Description: Application secret key ARN
+    Value: !Ref SecretKeySecret
+    Export:
+      Name: !Sub ${EnvironmentName}-SecretKeySecretArn
+
+  AdminPasswordSecretArn:
+    Description: Admin password secret ARN
+    Value: !Ref AdminPasswordSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-AdminPasswordSecretArn
+
+  KeycloakClientSecretArn:
+    Description: Keycloak client secret ARN
+    Value: !Ref KeycloakClientSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakClientSecretArn
+
+  KeycloakM2MClientSecretArn:
+    Description: Keycloak M2M client secret ARN
+    Value: !Ref KeycloakM2MClientSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-KeycloakM2MClientSecretArn
+
+  EmbeddingsApiKeySecretArn:
+    Description: Embeddings API key secret ARN (for litellm provider)
+    Value: !Ref EmbeddingsApiKeySecret
+    Export:
+      Name: !Sub ${EnvironmentName}-EmbeddingsApiKeySecretArn
+
+  # SSM Parameter Outputs (for Keycloak - matching Terraform)
+  SsmKeycloakAdminArn:
+    Description: SSM Parameter ARN for Keycloak admin username
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/admin
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakAdminArn
+
+  SsmKeycloakAdminPasswordArn:
+    Description: SSM Parameter ARN for Keycloak admin password
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/admin_password
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakAdminPasswordArn
+
+  SsmKeycloakDatabaseUrlArn:
+    Description: SSM Parameter ARN for Keycloak database URL
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/url
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakDatabaseUrlArn
+
+  SsmKeycloakDatabaseUsernameArn:
+    Description: SSM Parameter ARN for Keycloak database username
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/username
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakDatabaseUsernameArn
+
+  SsmKeycloakDatabasePasswordArn:
+    Description: SSM Parameter ARN for Keycloak database password
+    Value: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/keycloak/database/password
+    Export:
+      Name: !Sub ${EnvironmentName}-SsmKeycloakDatabasePasswordArn
+
+  # KMS Outputs
+  RdsKmsKeyArn:
+    Description: RDS KMS key ARN
+    Value: !GetAtt RdsKmsKey.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-RdsKmsKeyArn
+
+  DocumentDBKmsKeyArn:
+    Description: DocumentDB KMS key ARN
+    Value: !GetAtt DocumentDBKmsKey.Arn
+    Export:
+      Name: !Sub ${EnvironmentName}-DocumentDBKmsKeyArn
