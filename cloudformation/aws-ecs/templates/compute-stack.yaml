@@ -95,8 +95,8 @@ Parameters:
 
   GitHubBranch:
     Type: String
-    Default: v1.0.15
-    Description: GitHub branch to build from (e.g., main, v1.0.15)
+    Default: cloudformation/workshop-v1.0.15
+    Description: GitHub branch to build from (e.g., main, cloudformation/workshop-v1.0.15)
 
   UpstreamVersion:
     Type: String
