@@ -446,6 +446,26 @@ Resources:
               Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
             - Name: METRICS_API_KEY
               Value: !Ref MetricsApiKey
+            # v1.0.15 Feature Configuration
+            - Name: KEYCLOAK_M2M_CLIENT_ID
+              Value: mcp-gateway-m2m
+            - Name: REGISTRY_ID
+              Value: !Ref EnvironmentName
+            - Name: AUDIT_LOG_ENABLED
+              Value: 'true'
+            - Name: AUDIT_LOG_MONGODB_TTL_DAYS
+              Value: '7'
+            - Name: OAUTH_STORE_TOKENS_IN_SESSION
+              Value: 'false'
+            - Name: REGISTRY_STATIC_TOKEN_AUTH_ENABLED
+              Value: 'false'
+            - Name: REGISTRY_API_TOKEN
+              Value: ''
+            # Federation Configuration (disabled defaults; Anthropic public registry needs no auth)
+            - Name: FEDERATION_STATIC_TOKEN_AUTH_ENABLED
+              Value: 'false'
+            - Name: FEDERATION_STATIC_TOKEN
+              Value: ''
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
@@ -467,6 +487,11 @@ Resources:
                 - '${SecretArn}:password::'
                 - SecretArn: !ImportValue
                     Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
+            - Name: KEYCLOAK_M2M_CLIENT_SECRET
+              ValueFrom: !Sub
+                - '${SecretArn}:client_secret::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -593,6 +618,30 @@ Resources:
               Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
             - Name: METRICS_API_KEY
               Value: !Ref MetricsApiKey
+            # v1.0.15 Feature Configuration
+            - Name: DEPLOYMENT_MODE
+              Value: with-gateway
+            - Name: REGISTRY_MODE
+              Value: full
+            - Name: REGISTRY_ID
+              Value: !Ref EnvironmentName
+            - Name: AUDIT_LOG_ENABLED
+              Value: 'true'
+            - Name: AUDIT_LOG_MONGODB_TTL_DAYS
+              Value: '7'
+            - Name: OAUTH_STORE_TOKENS_IN_SESSION
+              Value: 'false'
+            - Name: REGISTRY_STATIC_TOKEN_AUTH_ENABLED
+              Value: 'false'
+            - Name: REGISTRY_API_TOKEN
+              Value: ''
+            - Name: MAX_TOKENS_PER_USER_PER_HOUR
+              Value: '100'
+            # Federation Configuration (disabled defaults; Anthropic public registry needs no auth)
+            - Name: FEDERATION_STATIC_TOKEN_AUTH_ENABLED
+              Value: 'false'
+            - Name: FEDERATION_STATIC_TOKEN
+              Value: ''
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
