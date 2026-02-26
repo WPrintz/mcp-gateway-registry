@@ -280,30 +280,6 @@ if [ -n "${SERVICE_CONNECT_NAMESPACE:-}" ]; then
     echo "Added FQDN aliases for Service Connect entries (namespace: ${SERVICE_CONNECT_NAMESPACE})"
 fi
 
-# Resolve auth-server hostname for nginx proxy_pass.
-# The nginx config template hardcodes "proxy_pass http://auth-server:8888/..."
-# (bare hostname).  In docker-compose and Service Connect, "auth-server" resolves
-# directly.  In CloudFormation with Cloud Map DNS, only the FQDN resolves
-# (e.g., "auth-server.mcp-gateway.local").  We extract the FQDN from
-# AUTH_SERVER_URL, resolve it to IPv4, and add a bare-name /etc/hosts entry
-# so nginx can find the upstream without config changes.
-if [ -n "${AUTH_SERVER_URL:-}" ]; then
-    auth_host=$(echo "$AUTH_SERVER_URL" | sed 's|http://||;s|:.*||')
-    # Only resolve if it's an FQDN (contains dots), not already a bare name
-    if echo "$auth_host" | grep -q '\.'; then
-        resolved=$(getent ahostsv4 "$auth_host" 2>/dev/null | head -1 | awk '{print $1}')
-        if [ -n "$resolved" ]; then
-            # Extract bare service name (first segment before the dot)
-            bare_name=$(echo "$auth_host" | cut -d. -f1)
-            # Add /etc/hosts entry so nginx can resolve the bare hostname
-            echo "$resolved $bare_name" >> /etc/hosts
-            echo "Resolved auth-server for nginx: $auth_host -> $resolved (added $bare_name to /etc/hosts)"
-        else
-            echo "WARNING: Could not resolve $auth_host to IPv4 -- nginx auth proxy may fail"
-        fi
-    fi
-fi
-
 echo "Starting Nginx..."
 nginx
 
