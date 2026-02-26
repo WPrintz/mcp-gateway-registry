@@ -506,6 +506,17 @@ class NginxConfigService:
             root_path = os.environ.get("ROOT_PATH", "").rstrip("/")
             config_content = config_content.replace("{{ROOT_PATH}}", root_path)
 
+            # Replace auth-server upstream with AUTH_SERVER_URL if set.
+            # The nginx config template uses bare "auth-server:8888" which only resolves
+            # in docker-compose (Docker DNS) and Terraform (Service Connect).
+            # CloudFormation uses Cloud Map DNS where only FQDNs resolve.
+            auth_server_url = os.environ.get("AUTH_SERVER_URL", "")
+            if auth_server_url:
+                auth_upstream = auth_server_url.replace("http://", "").replace("https://", "").rstrip("/")
+                if auth_upstream != "auth-server:8888":
+                    config_content = config_content.replace("auth-server:8888", auth_upstream)
+                    logger.info(f"Replaced auth-server upstream with: {auth_upstream}")
+
             # Write config file
             with open(settings.nginx_config_path, "w") as f:
                 f.write(config_content)
