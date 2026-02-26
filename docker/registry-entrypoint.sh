@@ -280,6 +280,21 @@ if [ -n "${SERVICE_CONNECT_NAMESPACE:-}" ]; then
     echo "Added FQDN aliases for Service Connect entries (namespace: ${SERVICE_CONNECT_NAMESPACE})"
 fi
 
+# Rewrite auth-server upstream in nginx config using AUTH_SERVER_URL.
+# The nginx config template uses bare "auth-server" hostname which only resolves
+# in docker-compose (Docker DNS) and Terraform (Service Connect).  CloudFormation
+# uses Cloud Map DNS where only the FQDN resolves (e.g., auth-server.mcp-gateway.local).
+# AUTH_SERVER_URL is set by the ECS task definition with the correct FQDN for the
+# deployment mode, so we derive the upstream from it.
+if [ -n "${AUTH_SERVER_URL:-}" ]; then
+    # Strip protocol to get host:port (e.g., "auth-server.mcp-gateway.local:8888")
+    auth_upstream=$(echo "$AUTH_SERVER_URL" | sed 's|^https\?://||;s|/$||')
+    if [ "$auth_upstream" != "auth-server:8888" ]; then
+        sed -i "s|http://auth-server:8888|http://${auth_upstream}|g" /etc/nginx/conf.d/nginx_rev_proxy.conf
+        echo "Rewrote auth-server upstream in nginx config: auth-server:8888 -> ${auth_upstream}"
+    fi
+fi
+
 echo "Starting Nginx..."
 nginx
 
