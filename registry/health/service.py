@@ -1,6 +1,7 @@
 import json
 import asyncio
 import logging
+import os
 import httpx
 from datetime import datetime, timezone
 from typing import Dict, Set, Optional, Tuple
@@ -198,13 +199,40 @@ class HealthMonitoringService:
         self._cache_timestamp = 0
         self._cache_ttl = settings.websocket_cache_ttl_seconds
         
+    async def _check_secret_key_persistence(self):
+        """Warn if servers have encrypted credentials but SECRET_KEY is auto-generated."""
+        if os.environ.get("SECRET_KEY"):
+            return
+
+        try:
+            from ..services.server_service import server_service
+
+            all_servers = await server_service.get_all_servers(
+                include_federated=False, include_credentials=True
+            )
+            servers_with_creds = [
+                path for path, info in all_servers.items()
+                if info.get("auth_credential_encrypted")
+            ]
+            if servers_with_creds:
+                logger.warning(
+                    f"SECRET_KEY not explicitly set but {len(servers_with_creds)} "
+                    f"server(s) have encrypted credentials. Set SECRET_KEY in .env "
+                    f"to persist credentials across restarts."
+                )
+        except Exception as e:
+            logger.debug(f"Could not check encrypted credentials at startup: {e}")
+
     async def initialize(self):
         """Initialize the health monitoring service."""
         logger.info("Initializing health monitoring service...")
-        
+
+        # Check SECRET_KEY persistence for servers with encrypted credentials
+        await self._check_secret_key_persistence()
+
         # Start background health checks
         self.health_check_task = asyncio.create_task(self._run_health_checks())
-        
+
         logger.info("Health monitoring service initialized!")
         
     async def shutdown(self):
@@ -325,7 +353,9 @@ class HealthMonitoringService:
             # Batch process enabled services
             check_tasks = []
             for service_path in enabled_services:
-                server_info = await server_service.get_server_info(service_path)
+                server_info = await server_service.get_server_info(
+                    service_path, include_credentials=True
+                )
                 if server_info and server_info.get("proxy_pass_url"):
                     check_tasks.append(self._check_single_service(client, service_path, server_info))
             
@@ -450,6 +480,30 @@ class HealthMonitoringService:
                 if isinstance(header_dict, dict):
                     headers.update(header_dict)
                     logger.debug(f"Added server headers: {header_dict}")
+
+        # Inject auth header from encrypted credentials (if present)
+        auth_scheme = server_info.get("auth_scheme", "none")
+        encrypted_credential = server_info.get("auth_credential_encrypted")
+
+        if auth_scheme != "none" and encrypted_credential:
+            from ..utils.credential_encryption import decrypt_credential
+
+            credential = decrypt_credential(encrypted_credential)
+            if credential:
+                if auth_scheme == "bearer":
+                    header_name = server_info.get("auth_header_name", "Authorization")
+                    headers[header_name] = f"Bearer {credential}"
+                    logger.debug("Added Bearer auth header for health check")
+                elif auth_scheme == "api_key":
+                    header_name = server_info.get("auth_header_name", "X-API-Key")
+                    headers[header_name] = credential
+                    logger.debug(f"Added API key header '{header_name}' for health check")
+            else:
+                logger.warning(
+                    f"Could not decrypt credential for "
+                    f"'{server_info.get('path', 'unknown')}'. "
+                    f"Health check will proceed without auth."
+                )
 
         return headers
 
@@ -669,7 +723,7 @@ class HealthMonitoringService:
                 ping_payload = '{ "jsonrpc": "2.0", "id": "0", "method": "ping" }'
 
                 logger.info(f"[TRACE] Sending ping to endpoint: {endpoint}")
-                logger.info(f"[TRACE] Headers being sent: {headers}")
+                logger.info(f"[TRACE] Headers being sent: {self._mask_sensitive_headers(headers)}")
                 response = await client.post(endpoint, headers=headers, content=ping_payload, follow_redirects=True)
                 logger.info(f"[TRACE] Response status: {response.status_code}")
 
@@ -753,7 +807,7 @@ class HealthMonitoringService:
 
             try:
                 logger.info(f"[TRACE] Trying default endpoint: {endpoint}")
-                logger.info(f"[TRACE] Headers being sent: {headers}")
+                logger.info(f"[TRACE] Headers being sent: {self._mask_sensitive_headers(headers)}")
                 response = await client.post(endpoint, headers=headers, content=ping_payload, follow_redirects=True)
                 logger.info(f"[TRACE] Response status: {response.status_code}")
                 if self._is_mcp_endpoint_healthy_streamable(response):
@@ -790,6 +844,30 @@ class HealthMonitoringService:
                 pass
         
         return False, "unhealthy: all transport checks failed"
+
+
+    def _mask_sensitive_headers(
+        self,
+        headers: Dict[str, str]
+    ) -> Dict[str, str]:
+        """
+        Mask sensitive authentication headers for logging.
+
+        Args:
+            headers: Dictionary of HTTP headers
+
+        Returns:
+            Dictionary with sensitive headers masked
+        """
+        masked = headers.copy()
+        sensitive_headers = ['Authorization', 'X-API-Key', 'X-Api-Key', 'Api-Key']
+
+        for key in masked:
+            # Check for common auth headers (case-insensitive)
+            if key in sensitive_headers or key.lower() in [h.lower() for h in sensitive_headers]:
+                masked[key] = "***REDACTED***"
+
+        return masked
 
 
     def _is_mcp_endpoint_healthy_streamable(self, response) -> bool:
@@ -897,8 +975,8 @@ class HealthMonitoringService:
             # that don't allow multiple concurrent sessions on the same endpoint
             await asyncio.sleep(0.5)
 
-            # Get server info to pass transport configuration
-            server_info = await server_service.get_server_info(service_path)
+            # Get server info to pass transport configuration and credentials
+            server_info = await server_service.get_server_info(service_path, include_credentials=True)
             logger.info(f"Fetching tools from {proxy_pass_url} for {service_path}")
 
             # Use the new connection result function to get both tools and server info
