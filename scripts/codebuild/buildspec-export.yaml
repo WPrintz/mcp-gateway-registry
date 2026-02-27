@@ -1,0 +1,111 @@
+version: 0.2
+env:
+  variables:
+    IMAGE_TAG: "v1.0.15"
+    S3_DEST_BUCKET: ""
+    S3_DEST_PREFIX: ""
+    S3_DEST_DATE: ""
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      # Pre-pull base images to cache them before parallel builds
+      - echo Pre-pulling base images for layer caching...
+      - docker pull public.ecr.aws/docker/library/python:3.12-slim
+      # Tag ECR Public image as Docker Hub equivalent so Dockerfiles that reference
+      # python:3.12-slim (Dockerfile.auth, Dockerfile.mcp-server) find it locally
+      # and don't hit Docker Hub unauthenticated pull rate limits
+      - docker tag public.ecr.aws/docker/library/python:3.12-slim python:3.12-slim
+      - docker pull quay.io/keycloak/keycloak:23.0
+      - docker pull grafana/grafana:12.3.1
+      # Setup A2A agent dependencies
+      - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
+      - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/travel-assistant-agent/.tmp/
+  build:
+    commands:
+      - echo Building container images in parallel...
+      - |
+        echo "Using image tag: $IMAGE_TAG"
+
+        # Build function - local only, no ECR push (export handles distribution)
+        # Passes BUILD_VERSION as build arg for version display in UI
+        build_image() {
+          local name=$1
+          local dockerfile=$2
+          local context=$3
+          echo "Starting build: $name"
+          if docker build -t $name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context; then
+            echo "Built: $name"
+          else
+            echo "FAILED: $name"
+            return 1
+          fi
+        }
+
+        # Start all builds in parallel
+        # Using CPU-only Dockerfiles for registry and mcpgw (smaller images, no GPU required)
+        build_image mcp-gateway-registry docker/Dockerfile.registry-cpu . &
+        build_image mcp-gateway-auth-server docker/Dockerfile.auth . &
+        build_image mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
+        (docker build -t mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && echo "Built: mcp-gateway-mcpgw" || { echo "FAILED: mcp-gateway-mcpgw"; exit 1; }) &
+        build_image mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
+        build_image mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
+        build_image mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &
+        build_image mcp-gateway-keycloak docker/keycloak/Dockerfile docker/keycloak &
+        build_image mcp-gateway-grafana cloudformation/aws-ecs/grafana/Dockerfile cloudformation/aws-ecs/grafana &
+        build_image mcp-gateway-metrics-service metrics-service/Dockerfile metrics-service &
+
+        # Wait for all builds
+        FAILED=0
+        for job in $(jobs -p); do
+          wait $job || FAILED=$((FAILED+1))
+        done
+
+        if [ $FAILED -gt 0 ]; then
+          echo "$FAILED build(s) failed"
+          exit 1
+        fi
+        echo "All builds completed successfully"
+  post_build:
+    commands:
+      - echo Exporting container images as split tarballs...
+      - mkdir -p /tmp/container-exports
+      - |
+        IMAGES="mcp-gateway-registry mcp-gateway-auth-server mcp-gateway-currenttime mcp-gateway-mcpgw mcp-gateway-realserverfaketools mcp-gateway-flight-booking-agent mcp-gateway-travel-assistant-agent mcp-gateway-keycloak mcp-gateway-grafana mcp-gateway-metrics-service"
+
+        # Export all images in parallel, splitting into 900MB parts
+        # Workshop Studio S3 buckets have a 1GB per-object size limit
+        for img in $IMAGES; do
+          (
+            echo "Exporting: $img"
+            docker save $img:$IMAGE_TAG | gzip | split -b 900M - /tmp/container-exports/$img.tar.gz.part-
+            echo "Exported: $img ($(du -ch /tmp/container-exports/$img.tar.gz.part-* | tail -1 | cut -f1) total)"
+          ) &
+        done
+
+        # Wait for all exports
+        FAILED=0
+        for job in $(jobs -p); do
+          wait $job || FAILED=$((FAILED+1))
+        done
+
+        if [ $FAILED -gt 0 ]; then
+          echo "$FAILED export(s) failed"
+          exit 1
+        fi
+
+        echo "All exports completed"
+        ls -lh /tmp/container-exports/
+
+      - echo Uploading split tarballs to S3...
+      - |
+        if [ -z "$S3_DEST_DATE" ]; then
+          S3_DEST_DATE=$(date +%Y-%m-%d)
+        fi
+        S3_FULL_PREFIX="${S3_DEST_PREFIX}/${IMAGE_TAG}-${S3_DEST_DATE}"
+        echo "Upload prefix: s3://$S3_DEST_BUCKET/$S3_FULL_PREFIX/"
+      - aws s3 cp /tmp/container-exports/ s3://$S3_DEST_BUCKET/$S3_FULL_PREFIX/ --recursive
+      - echo "Upload complete. Files at s3://$S3_DEST_BUCKET/$S3_FULL_PREFIX/"
+      - aws s3 ls s3://$S3_DEST_BUCKET/$S3_FULL_PREFIX/ --human-readable --summarize
