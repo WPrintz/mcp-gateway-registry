@@ -563,7 +563,7 @@ def mock_scope_repository_with_data(mock_scopes_config):
     mock_repo.get_server_scopes.side_effect = get_server_scopes_side_effect
     mock_repo.get_group_mappings.side_effect = get_group_mappings_side_effect
     mock_repo.load_all = AsyncMock()
-    mock_repo.list_groups.return_value = {}
+    mock_repo.list_groups.return_value = {"total_count": 0, "groups": {}}
     mock_repo.get_group.return_value = None
     mock_repo.get_scope_definition.return_value = None
     mock_repo.list_scope_definitions.return_value = []

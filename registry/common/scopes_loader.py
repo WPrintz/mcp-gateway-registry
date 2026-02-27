@@ -49,7 +49,10 @@ async def load_scopes_from_repository(
             await scope_repo.load_all()
 
             # Get all groups and build scopes configuration
-            groups_dict = await scope_repo.list_groups()
+            groups_data = await scope_repo.list_groups()
+            # list_groups() returns {"total_count": N, "groups": {...}}
+            # Extract the inner groups dict for iteration
+            groups_dict = groups_data.get("groups", groups_data)
 
             group_mappings = {}
             scopes_config = {}
