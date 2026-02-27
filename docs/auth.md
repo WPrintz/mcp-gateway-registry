@@ -431,6 +431,8 @@ ENCRYPTION_KEY=your-base64-encoded-fernet-key-here
    - For `api_key`: Specify the **header name** (e.g., `CONTEXT7_API_KEY`, `X-API-Key`)
 5. Click **Register**
 
+![Server Registration with Authentication Scheme](img/auth-scheme.gif)
+
 The credential is automatically encrypted and stored securely.
 
 #### Method 2: REST API
