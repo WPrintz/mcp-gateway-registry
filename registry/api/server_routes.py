@@ -645,8 +645,11 @@ async def register_service(
     # Broadcast health status update to WebSocket clients
     await health_service.broadcast_health_update(path)
 
-    # Security scanning if enabled
-    await _perform_security_scan_on_registration(path, proxy_pass_url, server_entry)
+    # Security scanning if enabled (non-blocking — scan is non-fatal, don't block response)
+    scan_url = server_entry.get("mcp_endpoint", proxy_pass_url)
+    asyncio.create_task(
+        _perform_security_scan_on_registration(path, scan_url, server_entry)
+    )
 
     logger.info(
         f"New service registered: '{name}' at path '{path}' by user '{user_context['username']}'"
