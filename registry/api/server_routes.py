@@ -3083,7 +3083,9 @@ async def get_group_api(
                 detail=f"Group '{group_name}' not found",
             )
 
-        return JSONResponse(status_code=200, content=group_data)
+        # Serialize with default=str to handle datetime objects from DocumentDB
+        serialized = json.loads(json.dumps(group_data, default=str))
+        return JSONResponse(status_code=200, content=serialized)
 
     except HTTPException:
         raise
@@ -3397,6 +3399,12 @@ async def get_server_security_scan(
 
     # Check if server exists
     server_info = await server_service.get_server_info(path)
+    # Try with trailing slash if not found (path normalization)
+    if not server_info and not path.endswith("/"):
+        path_with_slash = path + "/"
+        server_info = await server_service.get_server_info(path_with_slash)
+        if server_info:
+            path = path_with_slash
     if not server_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -3464,6 +3472,12 @@ async def rescan_server(
 
     # Check if server exists
     server_info = await server_service.get_server_info(path)
+    # Try with trailing slash if not found (path normalization)
+    if not server_info and not path.endswith("/"):
+        path_with_slash = path + "/"
+        server_info = await server_service.get_server_info(path_with_slash)
+        if server_info:
+            path = path_with_slash
     if not server_info:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
