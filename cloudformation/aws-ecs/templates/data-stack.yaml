@@ -386,6 +386,19 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-secret-key
 
+  # Federation encryption key (Fernet-compatible; used to encrypt peer tokens before storage)
+  FederationEncryptionKeySecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-federation-encryption-key
+      Description: Encryption key for federation peer tokens (auto-generated)
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-federation-encryption-key
+
   # Admin password secret
   AdminPasswordSecret:
     Type: AWS::SecretsManager::Secret
@@ -1166,6 +1179,12 @@ Outputs:
     Value: !Ref KeycloakM2MClientSecret
     Export:
       Name: !Sub ${EnvironmentName}-KeycloakM2MClientSecretArn
+
+  FederationEncryptionKeySecretArn:
+    Description: Federation encryption key secret ARN
+    Value: !Ref FederationEncryptionKeySecret
+    Export:
+      Name: !Sub ${EnvironmentName}-FederationEncryptionKeySecretArn
 
   EmbeddingsApiKeySecretArn:
     Description: Embeddings API key secret ARN (for litellm provider)

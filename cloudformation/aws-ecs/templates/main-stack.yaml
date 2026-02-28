@@ -405,6 +405,46 @@ Conditions:
   UseDefaultMetricsServiceTag: !Equals [!Ref MetricsServiceImageTag, '']
   UseDefaultGrafanaTag: !Equals [!Ref GrafanaImageTag, '']
 
+Mappings:
+  # Workshop Studio replicates static assets to region-specific S3 buckets.
+  # Bucket names are not predictable (contain a hash suffix per region).
+  # This mapping is derived from the WSS asset-static-urls CSV export.
+  WssAssetsBuckets:
+    us-east-1:
+      BucketName: ws-assets-prod-iad-r-iad-ed304a55c2ca1aee
+    us-east-2:
+      BucketName: ws-assets-prod-iad-r-cmh-8d6e9c21a4dec77d
+    us-west-1:
+      BucketName: ws-assets-prod-iad-r-sfo-f61fc67057535f1b
+    us-west-2:
+      BucketName: ws-assets-prod-iad-r-pdx-f3b3f9f1a7d6a3d0
+    ca-central-1:
+      BucketName: ws-assets-prod-iad-r-yul-5c2977cd61bca1f3
+    eu-west-1:
+      BucketName: ws-assets-prod-iad-r-dub-85e3be25bd827406
+    eu-west-2:
+      BucketName: ws-assets-prod-iad-r-lhr-cc4472a651221311
+    eu-west-3:
+      BucketName: ws-assets-prod-iad-r-cdg-9e76383c31ad6229
+    eu-central-1:
+      BucketName: ws-assets-prod-iad-r-fra-b129423e91500967
+    eu-north-1:
+      BucketName: ws-assets-prod-iad-r-arn-580aeca3990cef5a
+    ap-northeast-1:
+      BucketName: ws-assets-prod-iad-r-nrt-2cb4b4649d0e0f94
+    ap-northeast-2:
+      BucketName: ws-assets-prod-iad-r-icn-ced060f0d38bc0b0
+    ap-northeast-3:
+      BucketName: ws-assets-prod-iad-r-kix-c2a28ad4e55ea53a
+    ap-southeast-1:
+      BucketName: ws-assets-prod-iad-r-sin-694a125e41645312
+    ap-southeast-2:
+      BucketName: ws-assets-prod-iad-r-syd-b04c62a5f16f7b2e
+    ap-south-1:
+      BucketName: ws-assets-prod-iad-r-bom-431207042d319a2d
+    sa-east-1:
+      BucketName: ws-assets-prod-iad-r-gru-527b8c19222c1182
+
 Resources:
 
   #============================================================================
@@ -468,6 +508,9 @@ Resources:
         UseRegionalDomains: !Ref UseRegionalDomains
         UpstreamVersion: !Ref UpstreamVersion
         BuildTriggerVersion: !Ref BuildTriggerVersion
+        ContainerAssetsS3Url: !Sub
+          - 'https://${Bucket}.s3.${AWS::Region}.amazonaws.com/0c3265a6-1a4a-467b-ae56-e4d019184b0e/containers'
+          - Bucket: !FindInMap [WssAssetsBuckets, !Ref 'AWS::Region', BucketName]
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-compute

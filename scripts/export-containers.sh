@@ -24,7 +24,7 @@
 #   S3_DEST_DATE         - Date stamp for versioned subfolder (default: today, YYYY-MM-DD)
 #   WS_S3_BUCKET         - Workshop Studio S3 bucket for --download-only (default: ws-assets-us-east-1)
 #   WS_S3_PREFIX         - Workshop Studio S3 prefix (default: <update-with-wss-guid>/containers)
-#   AWS_REGION           - region (default: us-east-1)
+#   AWS_REGION           - region (default: us-west-2)
 
 set -euo pipefail
 
@@ -36,7 +36,7 @@ CODEBUILD_PROJECT="${CODEBUILD_PROJECT:-mcp-gateway-export-containers}"
 SOURCE_VERSION="${SOURCE_VERSION:-cloudformation/workshop-v1.0.15}"
 IMAGE_TAG="${IMAGE_TAG:-v1.0.15}"
 ACCOUNT_ID=$(aws sts get-caller-identity --profile "$AWS_PROFILE_BUILD" --query 'Account' --output text 2>/dev/null || echo "UNKNOWN")
-S3_DEST_BUCKET="${S3_DEST_BUCKET:-mcp-gateway-codebuild-cache-${ACCOUNT_ID}}"
+S3_DEST_BUCKET="${S3_DEST_BUCKET:-mcp-gateway-export-us-east-1-${ACCOUNT_ID}}"
 S3_DEST_PREFIX="${S3_DEST_PREFIX:-container-exports}"
 S3_DEST_DATE="${S3_DEST_DATE:-$(date +%Y-%m-%d)}"
 S3_FULL_PREFIX="${S3_DEST_PREFIX}/${IMAGE_TAG}-${S3_DEST_DATE}"

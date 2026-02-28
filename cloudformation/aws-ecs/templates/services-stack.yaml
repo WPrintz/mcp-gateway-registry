@@ -472,6 +472,9 @@ Resources:
                 - '${SecretArn}:secret_key::'
                 - SecretArn: !ImportValue
                     Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+            - Name: FEDERATION_ENCRYPTION_KEY
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-FederationEncryptionKeySecretArn
             - Name: KEYCLOAK_CLIENT_SECRET
               ValueFrom: !Sub
                 - '${SecretArn}:client_secret::'
@@ -648,6 +651,9 @@ Resources:
                 - '${SecretArn}:secret_key::'
                 - SecretArn: !ImportValue
                     Fn::Sub: ${EnvironmentName}-SecretKeySecretArn
+            - Name: FEDERATION_ENCRYPTION_KEY
+              ValueFrom: !ImportValue
+                Fn::Sub: ${EnvironmentName}-FederationEncryptionKeySecretArn
             - Name: ADMIN_PASSWORD
               ValueFrom: !Sub
                 - '${SecretArn}:admin_password::'
@@ -2442,7 +2448,7 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: !Sub ${EnvironmentName}-mcp-registration
-      Description: Auto-register MCP servers and A2A agents with the registry
+      Description: Auto-register MCP servers, A2A agents, and agent skills with the registry
       Runtime: python3.12
       Handler: index.handler
       Role: !GetAtt MCPServerRegistrationLambdaRole.Arn
@@ -2499,6 +2505,42 @@ Resources:
                   'num_tools': '6',
                   'is_python': 'true',
                   'license': 'MIT'
+              }
+          ]
+
+          # Virtual MCP Servers to register (aggregates tools from multiple backends)
+          VIRTUAL_SERVERS = [
+              {
+                  'server_name': 'Dev Tools',
+                  'path': '/virtual/dev-tools',
+                  'description': 'A curated set of developer utilities combining time lookups and intelligent tool discovery from across the registry.',
+                  'tool_mappings': [
+                      {
+                          'tool_name': 'current_time_by_timezone',
+                          'backend_server_path': '/currenttime/',
+                      },
+                      {
+                          'tool_name': 'intelligent_tool_finder',
+                          'backend_server_path': '/mcpgw/',
+                      },
+                  ],
+                  'tags': ['developer', 'utility', 'curated'],
+              }
+          ]
+
+          # Agent Skills to register (SKILL.md-based capabilities)
+          AGENT_SKILLS = [
+              {
+                  'name': 'frontend-design',
+                  'description': 'Create distinctive, production-grade frontend interfaces with high design quality.',
+                  'skill_md_url': 'https://raw.githubusercontent.com/anthropics/skills/refs/heads/main/skills/frontend-design/SKILL.md',
+                  'tags': ['design', 'frontend', 'ui'],
+              },
+              {
+                  'name': 'canvas-design',
+                  'description': 'Create beautiful visual art in .png and .pdf documents using design philosophy.',
+                  'skill_md_url': 'https://raw.githubusercontent.com/anthropics/skills/refs/heads/main/skills/canvas-design/SKILL.md',
+                  'tags': ['design', 'canvas', 'art'],
               }
           ]
 
@@ -2630,6 +2672,25 @@ Resources:
                   print(f"    Delete error: {str(e)}")
                   return False
 
+          def delete_virtual_server(registry_url, token, vs_path):
+              """Delete a virtual server from the registry by path."""
+              url = f"{registry_url}/api/virtual-servers/{vs_path.lstrip('/')}"
+              req = urllib.request.Request(url, method='DELETE')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      print(f"    Deleted existing virtual server: {vs_path}")
+                      return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return True  # Already gone
+                  print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
+                  return False
+              except Exception as e:
+                  print(f"    Delete error: {str(e)}")
+                  return False
+
           def delete_agent(registry_url, token, agent_name):
               """Delete an agent from the registry by name."""
               url = f"{registry_url}/api/agents/remove?name={urllib.parse.quote(agent_name)}"
@@ -2639,6 +2700,25 @@ Resources:
               try:
                   with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
                       print(f"    Deleted existing agent: {agent_name}")
+                      return True
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return True  # Already gone
+                  print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
+                  return False
+              except Exception as e:
+                  print(f"    Delete error: {str(e)}")
+                  return False
+
+          def delete_skill(registry_url, token, skill_path):
+              """Delete a skill from the registry by path."""
+              url = f"{registry_url}/api/skills/{skill_path.lstrip('/')}"
+              req = urllib.request.Request(url, method='DELETE')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      print(f"    Deleted existing skill: {skill_path}")
                       return True
               except urllib.error.HTTPError as e:
                   if e.code == 404:
@@ -2828,10 +2908,106 @@ Resources:
                       else:
                           print(f"    Failed: {result}")
 
-                  print(f"Registration complete: {servers_registered} servers, {agents_registered} agents")
+                  # Register Virtual MCP Servers (uses JSON data)
+                  # Uses delete-then-create pattern to ensure config updates are applied
+                  print("Registering Virtual MCP Servers...")
+                  virtual_servers_registered = 0
+                  for vs in VIRTUAL_SERVERS:
+                      vs_data = vs.copy()
+                      print(f"  Registering: {vs_data['server_name']}")
+                      result = api_request_json(
+                          f"{registry_url}/api/virtual-servers",
+                          token,
+                          vs_data
+                      )
+                      if result.get('success') or result.get('path'):
+                          print(f"    OK (created)")
+                          virtual_servers_registered += 1
+                      elif result.get('exists'):
+                          # Virtual server exists - delete and re-create
+                          print(f"    Virtual server exists, updating...")
+                          if delete_virtual_server(registry_url, token, vs_data['path']):
+                              result = api_request_json(
+                                  f"{registry_url}/api/virtual-servers",
+                                  token,
+                                  vs_data
+                              )
+                              if result.get('success') or result.get('path'):
+                                  print(f"    OK (updated)")
+                                  virtual_servers_registered += 1
+                              else:
+                                  print(f"    Re-register failed: {result}")
+                          else:
+                              print(f"    Delete failed, skipping update")
+                      else:
+                          print(f"    Failed: {result}")
+
+                      # Enable the virtual server
+                      vs_path = vs_data['path'].lstrip('/')
+                      print(f"    Enabling virtual server: {vs_data['path']}")
+                      toggle_result = api_request_json(
+                          f"{registry_url}/api/virtual-servers/{vs_path}/toggle",
+                          token,
+                          {'enabled': True}
+                      )
+                      if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
+                          print(f"    Enabled")
+                      else:
+                          print(f"    Enable failed: {toggle_result}")
+
+                  # Register Agent Skills (uses JSON data)
+                  # Uses delete-then-create pattern to ensure config updates are applied
+                  print("Registering Agent Skills...")
+                  skills_registered = 0
+                  for skill in AGENT_SKILLS:
+                      skill_data = skill.copy()
+                      print(f"  Registering: {skill_data['name']}")
+                      result = api_request_json(
+                          f"{registry_url}/api/skills",
+                          token,
+                          skill_data
+                      )
+                      if result.get('path'):
+                          print(f"    OK (created)")
+                          skills_registered += 1
+                      elif result.get('exists'):
+                          # Skill exists - delete and re-create with updated config
+                          print(f"    Skill exists, updating...")
+                          if delete_skill(registry_url, token, skill_data['name']):
+                              result = api_request_json(
+                                  f"{registry_url}/api/skills",
+                                  token,
+                                  skill_data
+                              )
+                              if result.get('path'):
+                                  print(f"    OK (updated)")
+                                  skills_registered += 1
+                              else:
+                                  print(f"    Re-register failed: {result}")
+                          else:
+                              print(f"    Delete failed, skipping update")
+                      else:
+                          print(f"    Failed: {result}")
+
+                      # Enable the skill
+                      skill_name = skill_data['name']
+                      print(f"    Enabling skill: {skill_name}")
+                      toggle_result = api_request_json(
+                          f"{registry_url}/api/skills/{skill_name}/toggle",
+                          token,
+                          {'enabled': True}
+                      )
+                      if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
+                          print(f"    Enabled")
+                      else:
+                          print(f"    Enable failed: {toggle_result}")
+
+                  print(f"Registration complete: {servers_registered} servers, {agents_registered} agents, {virtual_servers_registered} virtual servers, {skills_registered} skills")
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                       'ServersRegistered': servers_registered,
-                      'AgentsRegistered': agents_registered
+                      'AgentsRegistered': agents_registered,
+                      'VirtualServersRegistered': virtual_servers_registered,
+                      'SkillsRegistered': skills_registered
                   })
 
               except Exception as e:
@@ -2870,7 +3046,9 @@ Resources:
       # v1.5: Added upsert support - delete-then-create to update existing registrations
       # v1.6: Fixed proxy_pass_url to include /mcp path for MCP server routing
       # v1.7: Added retry logic with exponential backoff for transient 502/503/504 errors
-      Version: '1.7'
+      # v1.8: Added Virtual MCP Server registration (Dev Tools) with auto-enable
+      # v1.9: Added Agent Skills registration (frontend-design, canvas-design) with auto-enable
+      Version: '1.9'
 
   #============================================================================
   # ADOT Collector Log Group (sidecar in metrics-service task)

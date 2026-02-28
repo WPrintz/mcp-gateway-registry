@@ -9,6 +9,7 @@ phases:
   pre_build:
     commands:
       - echo Logging in to Amazon ECR...
+      - export DOCKER_BUILDKIT=1
       - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
       # Pre-pull base images to cache them before parallel builds
       - echo Pre-pulling base images for layer caching...
@@ -19,6 +20,13 @@ phases:
       - docker tag public.ecr.aws/docker/library/python:3.12-slim python:3.12-slim
       - docker pull quay.io/keycloak/keycloak:23.0
       - docker pull grafana/grafana:12.3.1
+      # Pre-pull previous builds from ECR as cache sources (silent fail on first run)
+      - echo Pre-pulling previous builds from ECR for layer caching...
+      - |
+        IMAGES="mcp-gateway-registry mcp-gateway-auth-server mcp-gateway-currenttime mcp-gateway-mcpgw mcp-gateway-realserverfaketools mcp-gateway-flight-booking-agent mcp-gateway-travel-assistant-agent mcp-gateway-keycloak mcp-gateway-grafana mcp-gateway-metrics-service"
+        for img in $IMAGES; do
+          docker pull $ECR_REGISTRY/$img:$IMAGE_TAG 2>/dev/null && echo "Cache hit: $img" || echo "Cache miss: $img (first build or tag changed)"
+        done
       # Setup A2A agent dependencies
       - mkdir -p agents/a2a/src/flight-booking-agent/.tmp agents/a2a/src/travel-assistant-agent/.tmp
       - cp agents/a2a/pyproject.toml agents/a2a/uv.lock agents/a2a/src/flight-booking-agent/.tmp/
@@ -29,15 +37,25 @@ phases:
       - |
         echo "Using image tag: $IMAGE_TAG"
 
-        # Build function - local only, no ECR push (export handles distribution)
-        # Passes BUILD_VERSION as build arg for version display in UI
+        # Build function with ECR layer caching
+        # --cache-from pulls layers from previous ECR build
+        # --build-arg BUILDKIT_INLINE_CACHE=1 embeds cache metadata in the image
+        # After build, pushes to ECR so next build can use it as cache
         build_image() {
           local name=$1
           local dockerfile=$2
           local context=$3
           echo "Starting build: $name"
-          if docker build -t $name:$IMAGE_TAG --build-arg BUILD_VERSION=$IMAGE_TAG -f $dockerfile $context; then
+          if DOCKER_BUILDKIT=1 docker build \
+               --cache-from $ECR_REGISTRY/$name:$IMAGE_TAG \
+               --build-arg BUILDKIT_INLINE_CACHE=1 \
+               --build-arg BUILD_VERSION=$IMAGE_TAG \
+               -t $name:$IMAGE_TAG \
+               -f $dockerfile $context; then
             echo "Built: $name"
+            # Push to ECR as cache for next build
+            docker tag $name:$IMAGE_TAG $ECR_REGISTRY/$name:$IMAGE_TAG
+            docker push $ECR_REGISTRY/$name:$IMAGE_TAG && echo "Cache pushed: $name" || echo "Cache push failed: $name (non-fatal)"
           else
             echo "FAILED: $name"
             return 1
@@ -49,7 +67,16 @@ phases:
         build_image mcp-gateway-registry docker/Dockerfile.registry-cpu . &
         build_image mcp-gateway-auth-server docker/Dockerfile.auth . &
         build_image mcp-gateway-currenttime docker/Dockerfile.mcp-server servers/currenttime &
-        (docker build -t mcp-gateway-mcpgw:$IMAGE_TAG --build-arg SERVER_DIR=servers/mcpgw --build-arg BUILD_VERSION=$IMAGE_TAG -f docker/Dockerfile.mcp-server-cpu . && echo "Built: mcp-gateway-mcpgw" || { echo "FAILED: mcp-gateway-mcpgw"; exit 1; }) &
+        (DOCKER_BUILDKIT=1 docker build \
+          --cache-from $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG \
+          --build-arg BUILDKIT_INLINE_CACHE=1 \
+          --build-arg SERVER_DIR=servers/mcpgw \
+          --build-arg BUILD_VERSION=$IMAGE_TAG \
+          -t mcp-gateway-mcpgw:$IMAGE_TAG \
+          -f docker/Dockerfile.mcp-server-cpu . && \
+          docker tag mcp-gateway-mcpgw:$IMAGE_TAG $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && \
+          docker push $ECR_REGISTRY/mcp-gateway-mcpgw:$IMAGE_TAG && \
+          echo "Built + cached: mcp-gateway-mcpgw" || { echo "FAILED: mcp-gateway-mcpgw"; exit 1; }) &
         build_image mcp-gateway-realserverfaketools docker/Dockerfile.mcp-server servers/realserverfaketools &
         build_image mcp-gateway-flight-booking-agent agents/a2a/src/flight-booking-agent/Dockerfile agents/a2a/src/flight-booking-agent &
         build_image mcp-gateway-travel-assistant-agent agents/a2a/src/travel-assistant-agent/Dockerfile agents/a2a/src/travel-assistant-agent &

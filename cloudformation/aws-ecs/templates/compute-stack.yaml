@@ -88,15 +88,9 @@ Parameters:
       - 'false'
     Description: Use region-based domain names
 
-  GitHubRepoUrl:
+  ContainerAssetsS3Url:
     Type: String
-    Default: https://github.com/WPrintz/mcp-gateway-registry.git
-    Description: GitHub repository URL for source code (public repo, no auth needed)
-
-  GitHubBranch:
-    Type: String
-    Default: cloudformation/workshop-v1.0.15
-    Description: GitHub branch to build from (e.g., main, cloudformation/workshop-v1.0.15)
+    Description: S3 URL base for pre-built container image tarballs (no trailing slash). Constructed by main-stack from WssAssetsBuckets mapping.
 
   UpstreamVersion:
     Type: String
@@ -499,6 +493,8 @@ Resources:
                   - !ImportValue
                     Fn::Sub: ${EnvironmentName}-EmbeddingsApiKeySecretArn
                   - !ImportValue
+                    Fn::Sub: ${EnvironmentName}-FederationEncryptionKeySecretArn
+                  - !ImportValue
                     Fn::Sub: ${EnvironmentName}-DocumentDBCredentialsSecretArn
               - Effect: Allow
                 Action:
@@ -835,11 +831,168 @@ Resources:
             Value: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com
           - Name: IMAGE_TAG
             Value: !Ref UpstreamVersion
-      SourceVersion: !Ref GitHubBranch
+          - Name: CONTAINER_ASSETS_URL
+            Value: !Ref ContainerAssetsS3Url
       Source:
-        Type: GITHUB
-        Location: !Ref GitHubRepoUrl
-        BuildSpec: scripts/codebuild/buildspec.yaml
+        Type: NO_SOURCE
+        BuildSpec: |
+          version: 0.2
+          phases:
+            pre_build:
+              commands:
+                - echo Logging in to Amazon ECR...
+                - aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+                - mkdir -p /tmp/containers
+            build:
+              commands:
+                - echo "Downloading and loading pre-built container images..."
+                - |
+                  IMAGES="mcp-gateway-registry mcp-gateway-auth-server mcp-gateway-currenttime mcp-gateway-mcpgw mcp-gateway-realserverfaketools mcp-gateway-flight-booking-agent mcp-gateway-travel-assistant-agent mcp-gateway-keycloak mcp-gateway-grafana mcp-gateway-metrics-service"
+
+                  # Discover available parts for an image using HEAD requests.
+                  # Parts are 900MB each, suffixes aa-aj = 10 parts = ~9GB max per image.
+                  discover_parts() {
+                    local img=$1
+                    local parts=""
+                    local suffix
+                    for suffix in aa ab ac ad ae af ag ah ai aj; do
+                      local part="${img}.tar.gz.part-${suffix}"
+                      local http_code=$(curl -sI -o /dev/null -w "%{http_code}" "$CONTAINER_ASSETS_URL/$part")
+                      if [ "$http_code" = "200" ]; then
+                        parts="$parts $part"
+                      else
+                        break
+                      fi
+                    done
+                    echo "$parts"
+                  }
+
+                  # Download a single file with retries (handles WSS sync delays)
+                  download_with_retry() {
+                    local url=$1
+                    local dest=$2
+                    local max_retries=3
+                    local attempt
+                    for attempt in $(seq 1 $max_retries); do
+                      local http_code=$(curl -sL -o "$dest" -w "%{http_code}" "$url")
+                      if [ "$http_code" = "200" ]; then
+                        return 0
+                      fi
+                      if [ "$attempt" -lt "$max_retries" ]; then
+                        echo "  Retry $attempt/$max_retries (HTTP $http_code)..."
+                        sleep $((attempt * 5))
+                      fi
+                    done
+                    rm -f "$dest"
+                    return 1
+                  }
+
+                  process_image() {
+                    local img=$1
+                    local parts=$2
+                    local start_ts=$(date +%s)
+                    local part_count=$(echo $parts | wc -w | tr -d ' ')
+                    echo "[$img] Starting pipeline ($part_count part(s))"
+
+                    # 1. Download all parts in parallel
+                    echo "[$img] Downloading..."
+                    local part
+                    for part in $parts; do
+                      download_with_retry "$CONTAINER_ASSETS_URL/$part" "/tmp/containers/$part" &
+                    done
+                    wait
+
+                    # Verify all parts were downloaded
+                    for part in $parts; do
+                      if [ ! -f "/tmp/containers/$part" ]; then
+                        echo "[$img] FAILED: download failed for $part"
+                        rm -f /tmp/containers/$img.tar.gz.part-*
+                        return 1
+                      fi
+                    done
+                    echo "[$img] Downloaded ($(du -ch /tmp/containers/$img.tar.gz.part-* | tail -1 | cut -f1))"
+
+                    # 2. Verify archive integrity, then load into Docker daemon
+                    echo "[$img] Verifying archive integrity..."
+                    if ! cat /tmp/containers/$img.tar.gz.part-* | gzip -t 2>/dev/null; then
+                      echo "[$img] FAILED: archive integrity check failed (missing parts or corrupt download)"
+                      rm -f /tmp/containers/$img.tar.gz.part-*
+                      return 1
+                    fi
+
+                    echo "[$img] Loading into Docker..."
+                    local load_output
+                    load_output=$(cat /tmp/containers/$img.tar.gz.part-* | docker load 2>&1)
+                    if [ $? -ne 0 ]; then
+                      echo "[$img] FAILED: docker load error: $load_output"
+                      rm -f /tmp/containers/$img.tar.gz.part-*
+                      return 1
+                    fi
+                    rm -f /tmp/containers/$img.tar.gz.part-*
+                    echo "[$img] $load_output"
+
+                    # 3. Extract loaded tag from docker load output and re-tag for ECR
+                    local loaded_tag=$(echo "$load_output" | grep "Loaded image:" | sed 's/Loaded image: //')
+                    if [ -z "$loaded_tag" ]; then
+                      echo "[$img] FAILED: could not parse loaded image tag from: $load_output"
+                      return 1
+                    fi
+                    docker tag "$loaded_tag" "$ECR_REGISTRY/$img:$IMAGE_TAG"
+                    docker tag "$loaded_tag" "$ECR_REGISTRY/$img:latest"
+
+                    # 4. Push both tags to ECR
+                    echo "[$img] Pushing to ECR..."
+                    docker push "$ECR_REGISTRY/$img:$IMAGE_TAG"
+                    docker push "$ECR_REGISTRY/$img:latest"
+
+                    # 5. Cleanup local images
+                    docker rmi "$loaded_tag" "$ECR_REGISTRY/$img:$IMAGE_TAG" "$ECR_REGISTRY/$img:latest" 2>/dev/null || true
+
+                    local elapsed=$(( $(date +%s) - start_ts ))
+                    echo "[$img] Done (${elapsed}s)"
+                  }
+
+                  # Discover all parts upfront via HEAD requests (fast, ~1s total)
+                  echo "Discovering available parts..."
+                  declare -A IMAGE_PARTS
+                  MISSING=""
+                  for img in $IMAGES; do
+                    parts=$(discover_parts "$img")
+                    if [ -z "$parts" ]; then
+                      echo "  $img: NOT FOUND"
+                      MISSING="$MISSING $img"
+                    else
+                      IMAGE_PARTS[$img]="$parts"
+                      echo "  $img: $(echo $parts | wc -w | tr -d ' ') part(s)"
+                    fi
+                  done
+
+                  if [ -n "$MISSING" ]; then
+                    echo "FATAL: missing container images:$MISSING"
+                    exit 1
+                  fi
+
+                  # Launch all 10 pipelines in parallel
+                  PIDS=""
+                  for img in $IMAGES; do
+                    process_image "$img" "${IMAGE_PARTS[$img]}" &
+                    PIDS="$PIDS $!"
+                  done
+
+                  # Wait for all and collect failures
+                  FAILED=0
+                  for pid in $PIDS; do
+                    wait $pid || FAILED=$((FAILED+1))
+                  done
+
+                  if [ $FAILED -gt 0 ]; then
+                    echo "$FAILED image pipeline(s) failed"
+                    exit 1
+                  fi
+                  echo "All 10 image pipelines completed successfully"
+            post_build:
+              commands:
+                - echo "Container image load and push completed on $(date)"
       TimeoutInMinutes: 30
       Tags:
         - Key: Name

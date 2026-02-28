@@ -9,6 +9,8 @@ The encryption key must be a valid Fernet key (32 url-safe base64-encoded bytes)
 Generate one with: python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 """
 
+import base64
+import hashlib
 import logging
 import os
 from typing import Optional
@@ -29,6 +31,10 @@ ENCRYPTED_FIELD: str = "federation_token_encrypted"
 def _get_fernet() -> Optional[Fernet]:
     """Get a Fernet instance from the FEDERATION_ENCRYPTION_KEY env var.
 
+    Accepts either a native Fernet key (base64url-encoded 32 bytes) or any
+    high-entropy string (e.g. from CloudFormation GenerateSecretString).
+    Non-Fernet strings are deterministically converted via SHA-256 derivation.
+
     Returns:
         Fernet instance, or None if key is not configured.
     """
@@ -36,11 +42,23 @@ def _get_fernet() -> Optional[Fernet]:
     if not key:
         return None
 
+    # Try the value directly as a Fernet key
     try:
         return Fernet(key.encode())
+    except Exception:
+        pass
+
+    # Derive a valid Fernet key from an arbitrary high-entropy string.
+    # SHA-256 produces 32 bytes — exactly what Fernet requires (16-byte
+    # signing key + 16-byte encryption key).
+    try:
+        derived = base64.urlsafe_b64encode(
+            hashlib.sha256(key.encode()).digest()
+        )
+        return Fernet(derived)
     except Exception as e:
         logger.error(
-            f"Invalid {FEDERATION_ENCRYPTION_KEY_ENV}: {e}. "
+            f"Failed to derive Fernet key from {FEDERATION_ENCRYPTION_KEY_ENV}: {e}. "
             "Generate a valid key with: python3 -c "
             "\"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
         )
