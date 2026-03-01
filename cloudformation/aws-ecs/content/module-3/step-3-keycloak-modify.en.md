@@ -13,14 +13,14 @@ First, you'll change *which scope applies* to a user by modifying their Keycloak
 
 ### Step 1: Get Keycloak Admin Credentials
 
-::alert[**Tip:** You can run these commands in AWS CloudShell, accessible from the terminal icon in the bottom toolbar of the AWS Console. CloudShell provides a browser-based shell with the AWS CLI pre-installed and authenticated with your current session.]{type="info"}
+::alert[**Tip:** You can run these commands in AWS CloudShell — the browser-based terminal in the AWS Console. If you haven't used CloudShell yet, see [Step 1.1](/module-1/step-1-cloudformation-outputs) for instructions on how to open it.]{type="info"}
 
 :::code{language=bash showCopyAction=true}
-aws ssm get-parameter --name /keycloak/admin --with-decryption --query 'Parameter.Value' --output text --region us-west-2
+aws ssm get-parameter --name /keycloak/admin --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION
 :::
 
 :::code{language=bash showCopyAction=true}
-aws ssm get-parameter --name /keycloak/admin_password --with-decryption --query 'Parameter.Value' --output text --region us-west-2
+aws ssm get-parameter --name /keycloak/admin_password --with-decryption --query 'Parameter.Value' --output text --region $AWS_REGION
 :::
 
 ### Step 2: Add lob1-user to a Second Group
@@ -67,8 +67,8 @@ Now you'll change *what a scope allows* by updating the scope document in Docume
 First, retrieve the Keycloak URL and Gateway URL from CloudFormation outputs and set them as environment variables:
 
 :::code{language=bash showCopyAction=true}
-export KEYCLOAK_URL=$(aws cloudformation describe-stacks --stack-name main-stack --region us-west-2 --query 'Stacks[0].Outputs[?OutputKey==`KeycloakUrl`].OutputValue' --output text)
-export GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name main-stack --region us-west-2 --query 'Stacks[0].Outputs[?OutputKey==`MCPGatewayUrl`].OutputValue' --output text)
+export KEYCLOAK_URL=$(aws cloudformation describe-stacks --stack-name main-stack --region $AWS_REGION --query 'Stacks[0].Outputs[?OutputKey==`KeycloakUrl`].OutputValue' --output text)
+export GATEWAY_URL=$(aws cloudformation describe-stacks --stack-name main-stack --region $AWS_REGION --query 'Stacks[0].Outputs[?OutputKey==`MCPGatewayUrl`].OutputValue' --output text)
 echo "Keycloak URL: $KEYCLOAK_URL"
 echo "Gateway URL: $GATEWAY_URL"
 :::
@@ -81,7 +81,7 @@ curl -o get-m2m-token.sh https://raw.githubusercontent.com/agentic-community/mcp
 chmod +x get-m2m-token.sh
 
 # Get admin token
-./get-m2m-token.sh --aws-region us-west-2 --keycloak-url $KEYCLOAK_URL --output-file /tmp/admin-token registry-admin-bot
+./get-m2m-token.sh --aws-region $AWS_REGION --keycloak-url $KEYCLOAK_URL --output-file /tmp/admin-token registry-admin-bot
 :::
 
 ### Step 5: View Current Scopes
@@ -101,7 +101,7 @@ Before modifying the scope, let's verify that LOB1 users cannot access the Cloud
 
 :::code{language=bash showCopyAction=true}
 # Get LOB1 user token
-./get-m2m-token.sh --aws-region us-west-2 --keycloak-url $KEYCLOAK_URL --output-file /tmp/lob1-token lob1-bot
+./get-m2m-token.sh --aws-region $AWS_REGION --keycloak-url $KEYCLOAK_URL --output-file /tmp/lob1-token lob1-bot
 :::
 
 Now try to initialize an MCP session with the Cloudflare Documentation server:
