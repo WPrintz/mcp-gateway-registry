@@ -66,6 +66,8 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
       Policies:
         - PolicyName: SecretsManagerRead
           PolicyDocument:
@@ -204,3 +206,7 @@ Outputs:
     Condition: EnableSsh
     Description: SSH command to connect
     Value: !Sub 'ssh ec2-user@${LoadGeneratorInstance.PublicIp}'
+
+  SsmCommand:
+    Description: SSM Session Manager command to connect
+    Value: !Sub 'aws ssm start-session --target ${LoadGeneratorInstance} --region ${AWS::Region}'
