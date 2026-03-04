@@ -323,7 +323,7 @@ mcp_call_tool() {
             args='{"timeframe": {"start": "2024-01-01T00:00:00Z", "end": "2024-01-02T00:00:00Z"}}'
             ;;
         user_profile_analyzer)
-            args='{"profile": {"user_id": "user123", "name": "Test User", "email": "test@example.com"}}'
+            args='{"profile": {"username": "test_user_123", "email": "test@example.com", "age": 30, "interests": ["technology", "science"]}}'
             ;;
         synthetic_data_generator)
             args='{"schema": {"type": "object", "properties": {"name": {"type": "string"}}}}'
@@ -623,16 +623,16 @@ main() {
     log "Load generation started..."
 
     while [[ $(date +%s) -lt $end_time ]]; do
-        # Traffic distribution: 55% MCP, 25% Agent, 10% Server Search, 8% Auth Failures, 2% spare
+        # Traffic distribution: 61% MCP, 25% Agent, 10% Server Search, 2% Auth Failures, 2% spare
         local rand=$((RANDOM % 100))
-        
-        if [[ $rand -lt 55 ]]; then
+
+        if [[ $rand -lt 61 ]]; then
             run_mcp_scenario
             ((mcp_count++))
-        elif [[ $rand -lt 80 ]]; then
+        elif [[ $rand -lt 86 ]]; then
             run_agent_scenario
             ((agent_count++))
-        elif [[ $rand -lt 90 ]]; then
+        elif [[ $rand -lt 96 ]]; then
             run_server_search_scenario
         elif [[ $rand -lt 98 ]]; then
             run_failed_auth_scenario

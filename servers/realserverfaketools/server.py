@@ -5,6 +5,7 @@ These tools are stubbed out and return mock responses for demonstration purposes
 
 import os
 import time
+import asyncio
 import secrets  # Replaced random with secrets
 import argparse
 import logging
@@ -135,7 +136,7 @@ You can use any of the available tools provided by the real_server_fake_tools MC
 
 
 @mcp.tool()
-def quantum_flux_analyzer(
+async def quantum_flux_analyzer(
     energy_level: Annotated[int, Field(
         ge=1, le=10,
         description="Energy level for quantum analysis (1-10)"
@@ -159,8 +160,8 @@ def quantum_flux_analyzer(
         str: JSON response with mock quantum flux analysis results
     """
     # Simulate processing time
-    time.sleep(secure_uniform(0.5, 1.5))
-    
+    await asyncio.sleep(secure_uniform(0.5, 1.5))
+
     # Generate mock response
     result = {
         "analysis_id": f"QFA-{10000 + secrets.randbelow(90000)}",
@@ -180,7 +181,7 @@ def quantum_flux_analyzer(
 
 
 @mcp.tool()
-def neural_pattern_synthesizer(
+async def neural_pattern_synthesizer(
     input_patterns: Annotated[List[str], Field(
         description="List of neural patterns to synthesize"
     )],
@@ -205,7 +206,7 @@ def neural_pattern_synthesizer(
         Dict[str, Any]: Dictionary with mock neural pattern synthesis results
     """
     # Simulate processing time
-    time.sleep(secure_uniform(0.8, 2.0))
+    await asyncio.sleep(secure_uniform(0.8, 2.0))
     
     # Generate mock response
     pattern_count = len(input_patterns)
@@ -237,7 +238,7 @@ def neural_pattern_synthesizer(
 
 
 @mcp.tool()
-def hyper_dimensional_mapper(
+async def hyper_dimensional_mapper(
     coordinates: Annotated[GeoCoordinates, Field(
         description="Geographical coordinates to map to hyper-dimensions"
     )],
@@ -262,7 +263,7 @@ def hyper_dimensional_mapper(
         str: JSON response with mock hyper-dimensional mapping results
     """
     # Simulate processing time
-    time.sleep(secure_uniform(1.0, 2.5))
+    await asyncio.sleep(secure_uniform(1.0, 2.5))
     
     # Generate mock response
     hyper_coords = [secure_uniform(-100, 100) for _ in range(dimension_count)]
@@ -292,7 +293,7 @@ def hyper_dimensional_mapper(
 
 
 @mcp.tool()
-def temporal_anomaly_detector(
+async def temporal_anomaly_detector(
     timeframe: Annotated[Dict[str, str], Field(
         description="Start and end times for anomaly detection"
     )],
@@ -316,7 +317,7 @@ def temporal_anomaly_detector(
         Dict[str, Any]: Dictionary with mock temporal anomaly detection results
     """
     # Simulate processing time
-    time.sleep(secure_uniform(1.2, 3.0))
+    await asyncio.sleep(secure_uniform(1.2, 3.0))
     
     # Generate mock response
     anomaly_count = secrets.randbelow(sensitivity + 1)
@@ -354,7 +355,7 @@ def temporal_anomaly_detector(
 
 
 @mcp.tool()
-def user_profile_analyzer(
+async def user_profile_analyzer(
     profile: Annotated[UserProfile, Field(
         description="User profile to analyze"
     )],
@@ -373,7 +374,7 @@ def user_profile_analyzer(
         str: JSON response with mock user profile analysis results
     """
     # Simulate processing time
-    time.sleep(secure_uniform(0.7, 1.8))
+    await asyncio.sleep(secure_uniform(0.7, 1.8))
     
     # Generate mock response
     result = {
@@ -417,7 +418,7 @@ def user_profile_analyzer(
 
 
 @mcp.tool()
-def synthetic_data_generator(
+async def synthetic_data_generator(
     schema: Annotated[Dict[str, Any], Field(
         description="Schema defining the structure of synthetic data"
     )],
@@ -444,7 +445,7 @@ def synthetic_data_generator(
     # For this demo, we'll acknowledge the seed parameter but not use it, as secrets doesn't support seeding
     
     # Simulate processing time
-    time.sleep(secure_uniform(0.5, 2.0))
+    await asyncio.sleep(secure_uniform(0.5, 2.0))
     
     # Generate mock response
     result = {

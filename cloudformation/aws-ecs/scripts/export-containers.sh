@@ -10,9 +10,9 @@
 # --download-only fetches from Workshop Studio S3 using environment creds.
 #
 # Usage:
-#   ./scripts/export-containers.sh                    # trigger build, wait
-#   ./scripts/export-containers.sh --download         # trigger build, wait, download
-#   ./scripts/export-containers.sh --download-only    # skip build, download from S3
+#   ./cloudformation/aws-ecs/scripts/export-containers.sh                    # trigger build, wait
+#   ./cloudformation/aws-ecs/scripts/export-containers.sh --download         # trigger build, wait, download
+#   ./cloudformation/aws-ecs/scripts/export-containers.sh --download-only    # skip build, download from S3
 #
 # Environment variables (override defaults):
 #   AWS_PROFILE_BUILD    - AWS CLI profile for CodeBuild (default: printw-Admin)
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 AWS_PROFILE_BUILD="${AWS_PROFILE_BUILD:-printw-Admin}"
 CODEBUILD_PROJECT="${CODEBUILD_PROJECT:-mcp-gateway-export-containers}"
