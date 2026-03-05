@@ -39,7 +39,7 @@ import tempfile
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -85,15 +85,12 @@ def pytest_configure(config):
     # (AWS DocumentDB requires TLS, but local MongoDB CE does not)
     os.environ["DOCUMENTDB_USE_TLS"] = "false"
 
-    print(
-        "Test environment configured: DOCUMENTDB_HOST=localhost, STORAGE_BACKEND=mongodb-ce, DOCUMENTDB_DIRECT_CONNECTION=true, DOCUMENTDB_USE_TLS=false"
-    )
+    print("Test environment configured: DOCUMENTDB_HOST=localhost, STORAGE_BACKEND=mongodb-ce, DOCUMENTDB_DIRECT_CONNECTION=true, DOCUMENTDB_USE_TLS=false")
 
     # Force reload settings if it's already been imported
     # This is needed because Settings() is created at module level
     try:
         import registry.core.config as config_module
-
         # Recreate the settings object with the new environment variables
         config_module.settings = config_module.Settings()
         print(f"Reloaded settings with documentdb_host={config_module.settings.documentdb_host}")
@@ -102,17 +99,33 @@ def pytest_configure(config):
         pass
 
     # Register custom markers
-    config.addinivalue_line("markers", "unit: Unit tests that test single components in isolation")
+    config.addinivalue_line(
+        "markers", "unit: Unit tests that test single components in isolation"
+    )
     config.addinivalue_line(
         "markers", "integration: Integration tests that test multiple components together"
     )
-    config.addinivalue_line("markers", "requires_models: Tests that require real ML models (slow)")
-    config.addinivalue_line("markers", "auth: Authentication and authorization tests")
-    config.addinivalue_line("markers", "agents: A2A agent service tests")
-    config.addinivalue_line("markers", "servers: MCP server service tests")
-    config.addinivalue_line("markers", "api: API route tests")
-    config.addinivalue_line("markers", "search: Search functionality tests")
-    config.addinivalue_line("markers", "slow: Tests that take a long time to run")
+    config.addinivalue_line(
+        "markers", "requires_models: Tests that require real ML models (slow)"
+    )
+    config.addinivalue_line(
+        "markers", "auth: Authentication and authorization tests"
+    )
+    config.addinivalue_line(
+        "markers", "agents: A2A agent service tests"
+    )
+    config.addinivalue_line(
+        "markers", "servers: MCP server service tests"
+    )
+    config.addinivalue_line(
+        "markers", "api: API route tests"
+    )
+    config.addinivalue_line(
+        "markers", "search: Search functionality tests"
+    )
+    config.addinivalue_line(
+        "markers", "slow: Tests that take a long time to run"
+    )
 
 
 # =============================================================================
@@ -131,17 +144,17 @@ def _setup_auto_mocking() -> None:
     """
     # Mock FAISS
     mock_faiss = create_mock_faiss_module()
-    sys.modules["faiss"] = mock_faiss
+    sys.modules['faiss'] = mock_faiss
     logger.info("Auto-mocked: faiss")
 
     # Mock sentence_transformers
     mock_st = create_mock_st_module()
-    sys.modules["sentence_transformers"] = mock_st
+    sys.modules['sentence_transformers'] = mock_st
     logger.info("Auto-mocked: sentence_transformers")
 
     # Mock litellm
     mock_litellm = create_mock_litellm_module()
-    sys.modules["litellm"] = mock_litellm
+    sys.modules['litellm'] = mock_litellm
     logger.info("Auto-mocked: litellm")
 
 
@@ -166,7 +179,6 @@ def event_loop_policy():
         Event loop policy instance
     """
     import asyncio
-
     return asyncio.DefaultEventLoopPolicy()
 
 
@@ -249,10 +261,10 @@ def test_settings(tmp_path: Path) -> Settings:
 
     # Patch path properties to use temp directories
     # Save original property descriptors (not computed values) for restoration
-    original_servers_dir_prop = type(settings).__dict__.get("servers_dir")
-    original_agents_dir_prop = type(settings).__dict__.get("agents_dir")
-    original_embeddings_model_dir_prop = type(settings).__dict__.get("embeddings_model_dir")
-    original_log_dir_prop = type(settings).__dict__.get("log_dir")
+    original_servers_dir_prop = type(settings).__dict__.get('servers_dir')
+    original_agents_dir_prop = type(settings).__dict__.get('agents_dir')
+    original_embeddings_model_dir_prop = type(settings).__dict__.get('embeddings_model_dir')
+    original_log_dir_prop = type(settings).__dict__.get('log_dir')
 
     # Mock the path properties with temp directory values
     type(settings).servers_dir = property(lambda self: servers_dir)
@@ -306,7 +318,7 @@ def mock_scope_repository():
     mock = AsyncMock()
     mock.load_all = AsyncMock()
     mock.get_group_mappings.return_value = []
-    mock.list_groups.return_value = {}  # Return empty dict, not list
+    mock.list_groups.return_value = {"total_count": 0, "groups": {}}
     mock.get_group.return_value = None
     mock.get_scope_definition.return_value = None
     mock.list_scope_definitions.return_value = []
@@ -496,42 +508,15 @@ def mock_all_repositories(
     """
     # Most tests only need registry patches, not auth_server patches
     # Only patch auth_server for auth_server tests (they have their own conftest)
-    with (
-        patch(
-            "registry.repositories.factory.get_scope_repository", return_value=mock_scope_repository
-        ),
-        patch(
-            "registry.repositories.factory.get_server_repository",
-            return_value=mock_server_repository,
-        ),
-        patch(
-            "registry.repositories.factory.get_agent_repository", return_value=mock_agent_repository
-        ),
-        patch(
-            "registry.repositories.factory.get_search_repository",
-            return_value=mock_search_repository,
-        ),
-        patch(
-            "registry.repositories.factory.get_federation_config_repository",
-            return_value=mock_federation_config_repository,
-        ),
-        patch(
-            "registry.repositories.factory.get_security_scan_repository",
-            return_value=mock_security_scan_repository,
-        ),
-        patch(
-            "registry.repositories.factory.get_virtual_server_repository",
-            return_value=mock_virtual_server_repository,
-        ),
-        patch(
-            "registry.repositories.factory.get_backend_session_repository",
-            return_value=mock_backend_session_repository,
-        ),
-        patch(
-            "registry.repositories.factory.get_skill_security_scan_repository",
-            return_value=mock_skill_security_scan_repository,
-        ),
-    ):
+    with patch('registry.repositories.factory.get_scope_repository', return_value=mock_scope_repository), \
+         patch('registry.repositories.factory.get_server_repository', return_value=mock_server_repository), \
+         patch('registry.repositories.factory.get_agent_repository', return_value=mock_agent_repository), \
+         patch('registry.repositories.factory.get_search_repository', return_value=mock_search_repository), \
+         patch('registry.repositories.factory.get_federation_config_repository', return_value=mock_federation_config_repository), \
+         patch('registry.repositories.factory.get_security_scan_repository', return_value=mock_security_scan_repository), \
+         patch('registry.repositories.factory.get_virtual_server_repository', return_value=mock_virtual_server_repository), \
+         patch('registry.repositories.factory.get_backend_session_repository', return_value=mock_backend_session_repository), \
+         patch('registry.repositories.factory.get_skill_security_scan_repository', return_value=mock_skill_security_scan_repository):
         logger.debug("Auto-mocked all repository factory functions")
         yield
 
@@ -552,7 +537,7 @@ def sample_server_info() -> dict[str, Any]:
         "repository": {
             "url": "https://github.com/example/test-server",
             "source": "github",
-            "id": "test-repo-123",
+            "id": "test-repo-123"
         },
         "websiteUrl": "https://example.com/test-server",
         "packages": [
@@ -560,8 +545,12 @@ def sample_server_info() -> dict[str, Any]:
                 "registryType": "npm",
                 "identifier": "@example/test-server",
                 "version": "1.0.0",
-                "transport": {"type": "stdio", "command": "uvx", "args": ["test-server"]},
-                "runtimeHint": "uvx",
+                "transport": {
+                    "type": "stdio",
+                    "command": "uvx",
+                    "args": ["test-server"]
+                },
+                "runtimeHint": "uvx"
             }
         ],
         "_meta": {
@@ -569,12 +558,17 @@ def sample_server_info() -> dict[str, Any]:
                 {
                     "name": "get_data",
                     "description": "Retrieve data from source",
-                    "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"}
+                        }
+                    }
                 }
             ],
             "prompts": [],
-            "resources": [],
-        },
+            "resources": []
+        }
     }
 
 
@@ -592,7 +586,10 @@ def sample_agent_card() -> dict[str, Any]:
         "description": "A test agent for unit tests",
         "url": "http://localhost:9000/test-agent",
         "version": "1.0",
-        "capabilities": {"streaming": False, "tools": True},
+        "capabilities": {
+            "streaming": False,
+            "tools": True
+        },
         "defaultInputModes": ["text/plain"],
         "defaultOutputModes": ["text/plain", "application/json"],
         "skills": [
@@ -601,7 +598,7 @@ def sample_agent_card() -> dict[str, Any]:
                 "name": "Data Retrieval",
                 "description": "Retrieve data from various sources",
                 "tags": ["data", "retrieval"],
-                "examples": ["Get customer data", "Fetch order information"],
+                "examples": ["Get customer data", "Fetch order information"]
             }
         ],
         "path": "/agents/test-agent",
@@ -610,7 +607,7 @@ def sample_agent_card() -> dict[str, Any]:
         "numStars": 4.5,
         "license": "MIT",
         "visibility": "public",
-        "trustLevel": "unverified",
+        "trustLevel": "unverified"
     }
 
 
@@ -641,14 +638,12 @@ def pytest_collection_modifyitems(config, items):
 def client_registry_only(mock_settings) -> Generator[Any, None, None]:
     """Test client with registry-only deployment mode."""
     from fastapi.testclient import TestClient
-
     from registry.core.config import DeploymentMode, RegistryMode
 
-    object.__setattr__(mock_settings, "deployment_mode", DeploymentMode.REGISTRY_ONLY)
-    object.__setattr__(mock_settings, "registry_mode", RegistryMode.FULL)
+    object.__setattr__(mock_settings, 'deployment_mode', DeploymentMode.REGISTRY_ONLY)
+    object.__setattr__(mock_settings, 'registry_mode', RegistryMode.FULL)
 
     from registry.main import app
-
     with TestClient(app) as client:
         yield client
 
@@ -657,13 +652,11 @@ def client_registry_only(mock_settings) -> Generator[Any, None, None]:
 def client_skills_only(mock_settings) -> Generator[Any, None, None]:
     """Test client with skills-only registry mode."""
     from fastapi.testclient import TestClient
-
     from registry.core.config import DeploymentMode, RegistryMode
 
-    object.__setattr__(mock_settings, "deployment_mode", DeploymentMode.REGISTRY_ONLY)
-    object.__setattr__(mock_settings, "registry_mode", RegistryMode.SKILLS_ONLY)
+    object.__setattr__(mock_settings, 'deployment_mode', DeploymentMode.REGISTRY_ONLY)
+    object.__setattr__(mock_settings, 'registry_mode', RegistryMode.SKILLS_ONLY)
 
     from registry.main import app
-
     with TestClient(app) as client:
         yield client

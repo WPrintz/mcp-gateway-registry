@@ -1,0 +1,24 @@
+{
+  "Parameters": {
+    "VpcCidr": "10.0.0.0/16",
+    "BaseDomain": "mycorp.click",
+    "HostedZoneId": "ZXXXXXXXXXXXXX",
+    "UseRegionalDomains": "true",
+    "IngressCidrBlocks": "0.0.0.0/0",
+    "RegistryImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-registry:latest",
+    "AuthServerImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-auth-server:latest",
+    "CurrentTimeImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-currenttime:latest",
+    "McpgwImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-mcpgw:latest",
+    "RealServerFakeToolsImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-realserverfaketools:latest",
+    "FlightBookingAgentImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-flight-booking-agent:latest",
+    "TravelAssistantAgentImageUri": "YOUR_ACCOUNT_ID.dkr.ecr.us-east-1.amazonaws.com/mcp-gateway-travel-assistant-agent:latest",
+    "KeycloakAdminUsername": "admin",
+    "KeycloakAdminPassword": "CHANGE_ME_STRONG_PASSWORD_123",
+    "KeycloakDatabaseUsername": "keycloak",
+    "KeycloakDatabasePassword": "CHANGE_ME_DB_PASSWORD_456",
+    "KeycloakDatabaseMinAcu": "0.5",
+    "KeycloakDatabaseMaxAcu": "2",
+    "EnableMonitoring": "true",
+    "AlarmEmail": ""
+  }
+}

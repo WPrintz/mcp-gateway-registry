@@ -1,0 +1,878 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Gateway Registry - Workshop Tools Stack
+  Deploys load generator (EC2 generating traffic through CloudFront) and
+  Code Editor IDE (web-based IDE with Claude Code, Kiro CLI, and Bedrock access).
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: mcp-gateway
+
+  TemplateS3Bucket:
+    Type: String
+    Description: S3 bucket containing templates and scripts
+
+  TemplateS3Prefix:
+    Type: String
+    Description: S3 prefix (e.g. abc123/assets/) — static files at ../static/
+
+  RegistryUrl:
+    Type: String
+    Description: Public MCP Gateway URL (CloudFront HTTPS)
+
+  KeycloakCloudFrontUrl:
+    Type: String
+    Description: Public Keycloak URL (CloudFront HTTPS)
+
+  PublicSubnets:
+    Type: CommaDelimitedList
+    Description: Public subnet IDs for EC2 placement
+
+  VpcId:
+    Type: String
+    Description: VPC ID for security groups
+
+  LoadGeneratorInstanceType:
+    Type: String
+    Default: t3.micro
+    AllowedValues: [t3.micro, t3.small]
+
+  LoadRate:
+    Type: String
+    Default: '2'
+    Description: Requests per second
+
+  SshCidr:
+    Type: String
+    Default: ''
+    Description: CIDR for SSH access (leave empty to disable SSH)
+
+  # Code Editor Parameters
+  CodeEditorUser:
+    Type: String
+    Description: Username for Code Editor
+    Default: participant
+
+  CodeEditorInstanceType:
+    Type: String
+    Description: Code Editor EC2 instance type
+    Default: t3.medium
+
+  CodeEditorVolumeSize:
+    Type: Number
+    Description: Code Editor EC2 instance volume size in GB
+    Default: 40
+
+  HomeFolder:
+    Type: String
+    Description: Folder to open in Code Editor
+    Default: /workshop
+
+Conditions:
+  EnableSsh: !Not [!Equals [!Ref SshCidr, '']]
+
+Mappings:
+  AWSRegionsPrefixListID:
+    ap-northeast-1:
+      PrefixList: pl-58a04531
+    ap-northeast-2:
+      PrefixList: pl-22a6434b
+    ap-south-1:
+      PrefixList: pl-9aa247f3
+    ap-southeast-1:
+      PrefixList: pl-31a34658
+    ap-southeast-2:
+      PrefixList: pl-b8a742d1
+    ca-central-1:
+      PrefixList: pl-38a64351
+    eu-central-1:
+      PrefixList: pl-a3a144ca
+    eu-north-1:
+      PrefixList: pl-fab65393
+    eu-west-1:
+      PrefixList: pl-4fa04526
+    eu-west-2:
+      PrefixList: pl-93a247fa
+    eu-west-3:
+      PrefixList: pl-75b1541c
+    sa-east-1:
+      PrefixList: pl-5da64334
+    us-east-1:
+      PrefixList: pl-3b927c52
+    us-east-2:
+      PrefixList: pl-b6a144df
+    us-west-1:
+      PrefixList: pl-4ea04527
+    us-west-2:
+      PrefixList: pl-82a045eb
+
+Resources:
+
+  #============================================================================
+  # LOAD GENERATOR
+  #============================================================================
+
+  #--- IAM Role — SecretsManager read + S3 read for load-generator.sh --------
+  LoadGeneratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${EnvironmentName}-load-generator-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: SecretsManagerRead
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${EnvironmentName}-keycloak-m2m-client-secret-*
+        - PolicyName: S3ReadScripts
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::${TemplateS3Bucket}/*
+
+  LoadGeneratorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref LoadGeneratorRole]
+
+  #--- Security Group — outbound only (+ optional SSH) -----------------------
+  LoadGeneratorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub ${EnvironmentName} load generator
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-load-generator-sg
+
+  LoadGeneratorSshIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: EnableSsh
+    Properties:
+      GroupId: !Ref LoadGeneratorSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: !Ref SshCidr
+      Description: SSH access
+
+  #--- EC2 Instance — AL2023, pulls load-generator.sh from S3, runs in tmux --
+  LoadGeneratorInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      InstanceType: !Ref LoadGeneratorInstanceType
+      IamInstanceProfile: !Ref LoadGeneratorInstanceProfile
+      SubnetId: !Select [0, !Ref PublicSubnets]
+      SecurityGroupIds: [!Ref LoadGeneratorSecurityGroup]
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-load-generator
+        - Key: Environment
+          Value: !Ref EnvironmentName
+      UserData:
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            set -ex
+
+            yum install -y tmux
+
+            # Download load generator script from S3 static folder
+            aws s3 cp "s3://${TemplateS3Bucket}/${StaticS3Prefix}load-generator.sh" /home/ec2-user/load-generator.sh
+            chmod +x /home/ec2-user/load-generator.sh
+
+            # Create environment file — fetches M2M creds from Secrets Manager
+            cat > /home/ec2-user/load-env.sh << 'ENVEOF'
+            #!/bin/bash
+            export REGISTRY_URL="${RegistryUrl}"
+            export KEYCLOAK_URL="${KeycloakCloudFrontUrl}"
+            export CLIENT_ID="mcp-gateway-m2m"
+            export CLIENT_SECRET=""
+            SECRET_JSON=$(aws secretsmanager get-secret-value \
+                --secret-id ${EnvironmentName}-keycloak-m2m-client-secret \
+                --region ${AWS::Region} \
+                --query 'SecretString' --output text 2>/dev/null)
+            if [ $? -eq 0 ]; then
+                export CLIENT_ID=$(echo "$SECRET_JSON" | jq -r '.client_id')
+                export CLIENT_SECRET=$(echo "$SECRET_JSON" | jq -r '.client_secret')
+            else
+                echo "ERROR: Failed to fetch secret from Secrets Manager"
+                exit 1
+            fi
+            ENVEOF
+            chmod +x /home/ec2-user/load-env.sh
+
+            # Create infinite loop wrapper — 6h cycles, auto-restart
+            cat > /home/ec2-user/run-load-forever.sh << 'LOOPEOF'
+            #!/bin/bash
+            set -e
+            SCRIPT_DIR="$(cd "$(dirname "${!BASH_SOURCE[0]}")" && pwd)"
+            LOG_FILE="$HOME/load-generator-output.log"
+            source "$SCRIPT_DIR/load-env.sh"
+            while true; do
+                echo "=== Starting 6-hour load cycle at $(date) ===" | tee -a "$LOG_FILE"
+                "$SCRIPT_DIR/load-generator.sh" --duration 21600 --rate ${LoadRate} 2>&1 | tee -a "$LOG_FILE"
+                EC=$?
+                if [ $EC -ne 0 ]; then
+                    echo "Exited $EC, restarting in 10s..." | tee -a "$LOG_FILE"
+                    sleep 10
+                else
+                    sleep 5
+                fi
+            done
+            LOOPEOF
+            chmod +x /home/ec2-user/run-load-forever.sh
+
+            chown ec2-user:ec2-user /home/ec2-user/load-generator.sh \
+                /home/ec2-user/load-env.sh /home/ec2-user/run-load-forever.sh
+
+            # Start load generator as ec2-user in a tmux session
+            sudo -u ec2-user tmux new-session -d -s workshop-load \
+                '/home/ec2-user/run-load-forever.sh'
+          - StaticS3Prefix: !Join
+              - ''
+              - - !Select [0, !Split ['assets/', !Ref TemplateS3Prefix]]
+                - 'static/'
+
+  #============================================================================
+  # CODE EDITOR IDE
+  #============================================================================
+
+  #--- Secret for Code Editor password ---------------------------------------
+  CodeEditorSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Name: !Sub
+      - ${EnvironmentName}-code-editor-${RandomGUID}
+      - RandomGUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId ]]]]
+      Description: Code Editor user details
+      GenerateSecretString:
+        PasswordLength: 16
+        SecretStringTemplate: !Sub '{"username":"${CodeEditorUser}"}'
+        GenerateStringKey: 'password'
+        ExcludePunctuation: true
+
+  SecretPlaintextLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub lambda.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: AwsSecretsManager
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref CodeEditorSecret
+
+  SecretPlaintextLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Return the value of the secret
+      Handler: index.lambda_handler
+      Runtime: python3.13
+      MemorySize: 128
+      Timeout: 10
+      Architectures:
+        - arm64
+      Role: !GetAtt SecretPlaintextLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def is_valid_json(json_string):
+              try:
+                  json.loads(json_string)
+                  return True
+              except json.JSONDecodeError:
+                  return False
+
+          def lambda_handler(event, context):
+              try:
+                  if event['RequestType'] == 'Delete':
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='No action to take')
+                  else:
+                      resource_properties = event['ResourceProperties']
+                      secret_name = resource_properties['SecretArn']
+                      secrets_mgr = boto3.client('secretsmanager')
+                      secret = secrets_mgr.get_secret_value(SecretId = secret_name)
+                      secret_value = secret['SecretString']
+                      responseData = {}
+                      if is_valid_json(secret_value):
+                          responseData = secret_value
+                      else:
+                          responseData = {'secret': secret_value}
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData=json.loads(responseData), reason='OK', noEcho=True)
+              except Exception as e:
+                  logger.error(e)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
+
+  SecretPlaintext:
+    Type: Custom::SecretPlaintextLambda
+    Properties:
+      ServiceToken: !GetAtt SecretPlaintextLambda.Arn
+      ServiceTimeout: 15
+      SecretArn: !Ref CodeEditorSecret
+
+  #--- SSM Document for Code Editor bootstrap --------------------------------
+  CodeEditorSSMDoc:
+    Type: AWS::SSM::Document
+    Properties:
+      DocumentType: Command
+      Content:
+        schemaVersion: '2.2'
+        description: Bootstrap Code Editor instance with Claude Code and Kiro CLI
+        parameters:
+          LinuxFlavor:
+            type: String
+            default: 'al2023'
+          CodeEditorPassword:
+            type: String
+            default: !Ref AWS::StackId
+        mainSteps:
+          - name: InstallCloudWatchAgent
+            action: aws:configurePackage
+            inputs:
+              name: AmazonCloudWatchAgent
+              action: Install
+          - name: ConfigureCloudWatchAgent
+            action: aws:runDocument
+            inputs:
+              documentType: SSMDocument
+              documentPath: AmazonCloudWatch-ManageAgent
+              documentParameters:
+                action: configure
+                mode: ec2
+                optionalConfigurationSource: default
+                optionalRestart: 'yes'
+          - name: InstallBasePackagesDnf
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - dnf install -y --allowerasing curl gnupg whois argon2 unzip nginx openssl jq nodejs npm
+          - name: AddUserDnf
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub |
+                  echo 'Adding user: ${CodeEditorUser}'
+                  adduser -c '' ${CodeEditorUser}
+                  passwd -l ${CodeEditorUser}
+                  echo "${CodeEditorUser}:{{ CodeEditorPassword }}" | chpasswd
+                  usermod -aG wheel ${CodeEditorUser}
+                  sed -i 's/# %wheel/%wheel/g' /etc/sudoers
+                - echo "User added"
+                - !Sub getent passwd ${CodeEditorUser}
+          - name: UpdateProfile
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - echo LANG=en_US.utf-8 >> /etc/environment
+                - echo LC_ALL=en_US.UTF-8 >> /etc/environment
+                - !Sub echo 'PATH=$PATH:/home/${CodeEditorUser}/.local/bin' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export PATH' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export AWS_REGION=${AWS::Region}' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export AWS_ACCOUNTID=${AWS::AccountId}' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export CLAUDE_CODE_USE_BEDROCK=1' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-20250514-v1:0' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export MCP_GATEWAY_URL=${RegistryUrl}' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo "export PS1='\[\033[01;32m\]\u:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> /home/${CodeEditorUser}/.bashrc
+                - !Sub chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
+          - name: InstallAWSCLI
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub sudo -u ${CodeEditorUser} curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip -o /tmp/aws-cli.zip
+                - unzip -q -d /tmp /tmp/aws-cli.zip
+                - sudo /tmp/aws/install
+                - rm -rf /tmp/aws
+                - aws --version
+          - name: InstallGitDnf
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - dnf install -y git
+          - name: ConfigureGit
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 300
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub sudo -u ${CodeEditorUser} git config --global user.email "participant@example.com"
+                - !Sub sudo -u ${CodeEditorUser} git config --global user.name "Workshop Participant"
+                - !Sub sudo -u ${CodeEditorUser} git config --global init.defaultBranch "main"
+                - git --version
+          - name: InstallCodeEditor
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub export CodeEditorUser=${CodeEditorUser}
+                - curl -fsSL https://code-editor.amazonaws.com/content/code-editor-server/dist/aws-workshop-studio/install.sh | bash -s -- 2>&1
+          - name: InstallClaudeCode
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub sudo -u ${CodeEditorUser} npm install -g @anthropic-ai/claude-code --prefix /home/${CodeEditorUser}/.local
+                - !Sub sudo -u ${CodeEditorUser} mkdir -p /home/${CodeEditorUser}/.claude
+                - !Sub |
+                  sudo -u ${CodeEditorUser} tee /home/${CodeEditorUser}/.claude/settings.json <<'EOF'
+                  {
+                    "env": {
+                      "CLAUDE_CODE_USE_BEDROCK": "1",
+                      "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-4-20250514-v1:0"
+                    }
+                  }
+                  EOF
+                - echo "Claude Code installed"
+                - !Sub sudo -u ${CodeEditorUser} /home/${CodeEditorUser}/.local/bin/claude --version
+          - name: InstallKiroCLI
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub 'su - ${CodeEditorUser} -c "curl -fsSL https://cli.kiro.dev/install | bash -s -- --force"'
+                - echo "Kiro CLI installed"
+                - !Sub 'su - ${CodeEditorUser} -c "kiro-cli version" || echo "Kiro CLI version check failed"'
+          - name: ConfigureNginx
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - |
+                  tee /etc/nginx/conf.d/code-editor.conf <<EOF
+                  server {
+                      listen 80;
+                      listen [::]:80;
+                      server_name *.cloudfront.net;
+                      proxy_set_header Host \$host;
+                      proxy_set_header X-Real-IP \$remote_addr;
+                      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto \$scheme;
+                      proxy_set_header Upgrade \$http_upgrade;
+                      proxy_set_header Connection "upgrade";
+                      proxy_buffering off;
+                      proxy_set_header Accept-Encoding gzip;
+                      location / {
+                          proxy_pass http://localhost:8080/;
+                      }
+                  }
+                  EOF
+                - systemctl enable nginx
+                - systemctl restart nginx
+                - nginx -t
+          - name: ConfigureAuthToken
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub |
+                  sudo -u ${CodeEditorUser} mkdir -p /home/${CodeEditorUser}/.code-editor-server/data
+                  sudo -u ${CodeEditorUser} touch /home/${CodeEditorUser}/.code-editor-server/data/token
+                  echo -n "{{ CodeEditorPassword }}" > /home/${CodeEditorUser}/.code-editor-server/data/token
+          - name: ConfigureCodeEditor
+            action: aws:runShellScript
+            inputs:
+              timeoutSeconds: 600
+              runCommand:
+                - '#!/bin/bash'
+                - set -euo pipefail
+                - !Sub sudo -i -u ${CodeEditorUser} mkdir -p /home/${CodeEditorUser}/.code-editor-server/data/User
+                - !Sub sudo -i -u ${CodeEditorUser} touch /home/${CodeEditorUser}/.code-editor-server/data/User/settings.json
+                - !Sub touch /home/${CodeEditorUser}/.hushlogin
+                - !Sub mkdir -p ${HomeFolder} && chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+                - !Sub |
+                  tee /home/${CodeEditorUser}/.code-editor-server/data/User/settings.json <<EOF
+                  {
+                    "aws.telemetry": false,
+                    "extensions.autoUpdate": false,
+                    "extensions.autoCheckUpdates": false,
+                    "telemetry.telemetryLevel": "off",
+                    "security.workspace.trust.startupPrompt": "never",
+                    "security.workspace.trust.enabled": false,
+                    "security.workspace.trust.banner": "never",
+                    "security.workspace.trust.emptyWindow": false,
+                    "workbench.startupEditor": "none",
+                    "terminal.integrated.cwd": "${HomeFolder}"
+                  }
+                  EOF
+                - !Sub chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
+                - !Sub systemctl enable --now code-editor@${CodeEditorUser}
+                - !Sub systemctl restart code-editor@${CodeEditorUser}
+                - !Sub sudo -i -u ${CodeEditorUser} code-editor-server -v
+                - !Sub systemctl status code-editor@${CodeEditorUser}
+
+  #--- Lambda to run SSM document on EC2 instance ----------------------------
+  SSMDocLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: !Sub lambda.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: SSMDocOnEC2
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:SendCommand
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/${CodeEditorSSMDoc}
+                  - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:document/AmazonCloudWatch-ManageAgent
+                  - !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:instance/${CodeEditorInstance}
+              - Effect: Allow
+                Action:
+                  - ssm:ListCommandInvocations
+                  - ssm:GetCommandInvocation
+                Resource: '*'
+
+  RunSSMDocLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Run SSM document on EC2 instance
+      Handler: index.lambda_handler
+      Runtime: python3.13
+      MemorySize: 128
+      Timeout: 600
+      Environment:
+        Variables:
+          RetrySleep: 2900
+          AbortTimeRemaining: 3200
+      Architectures:
+        - arm64
+      Role: !GetAtt SSMDocLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import logging
+          import time
+          import os
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              if event['RequestType'] != 'Create':
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData={}, reason='No action to take')
+              else:
+                  sleep_ms = int(os.environ.get('RetrySleep'))
+                  abort_time_remaining_ms = int(os.environ.get('AbortTimeRemaining'))
+                  resource_properties = event['ResourceProperties']
+                  instance_id = resource_properties['InstanceId']
+                  document_name = resource_properties['DocumentName']
+                  cloudwatch_log_group_name = resource_properties['CloudWatchLogGroupName']
+
+                  del resource_properties['ServiceToken']
+                  if 'ServiceTimeout' in resource_properties:
+                      del resource_properties['ServiceTimeout']
+                  del resource_properties['InstanceId']
+                  del resource_properties['DocumentName']
+                  del resource_properties['CloudWatchLogGroupName']
+                  if 'PhysicalResourceId' in resource_properties:
+                      del resource_properties['PhysicalResourceId']
+
+                  parameters = {}
+                  for key, value in resource_properties.items():
+                      parameters[key] = [value]
+
+                  retry = True
+                  attempt_no = 0
+                  time_remaining_ms = context.get_remaining_time_in_millis()
+
+                  ssm = boto3.client('ssm')
+
+                  while (retry == True):
+                      attempt_no += 1
+                      try:
+                          response = ssm.send_command(
+                              InstanceIds = [instance_id],
+                              DocumentName = document_name,
+                              CloudWatchOutputConfig = {'CloudWatchLogGroupName': cloudwatch_log_group_name, 'CloudWatchOutputEnabled': True},
+                              Parameters = parameters
+                          )
+                          command_id = response['Command']['CommandId']
+                          responseData = {'CommandId': command_id}
+                          cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData, reason='OK')
+                          retry = False
+
+                      except ssm.exceptions.InvalidInstanceId as e:
+                          time_remaining_ms = context.get_remaining_time_in_millis()
+                          if (time_remaining_ms > abort_time_remaining_ms):
+                              time.sleep(sleep_ms/1000)
+                              retry = True
+                          else:
+                              cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason='Timed out')
+                              retry = False
+
+                      except Exception as e:
+                          logger.error(e, exc_info=True)
+                          cfnresponse.send(event, context, cfnresponse.FAILED, responseData={}, reason=str(e))
+                          retry = False
+
+  RunCodeEditorSSMDoc:
+    Type: Custom::RunSSMDocLambda
+    Properties:
+      ServiceToken: !GetAtt RunSSMDocLambda.Arn
+      ServiceTimeout: 305
+      InstanceId: !Ref CodeEditorInstance
+      DocumentName: !Ref CodeEditorSSMDoc
+      CloudWatchLogGroupName: !Sub /aws/ssm/${CodeEditorSSMDoc}
+      CodeEditorPassword: !GetAtt SecretPlaintext.password
+      LinuxFlavor: al2023
+
+  #--- Code Editor IAM Role --------------------------------------------------
+  CodeEditorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - !Sub ec2.${AWS::URLSuffix}
+                - !Sub ssm.${AWS::URLSuffix}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/AmazonSSMManagedInstanceCore
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/CloudWatchAgentServerPolicy
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/ReadOnlyAccess
+      Policies:
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - "arn:aws:bedrock:*::foundation-model/anthropic.*"
+                  - "arn:aws:bedrock:*:*:inference-profile/us.anthropic.*"
+
+  CodeEditorInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref CodeEditorRole
+
+  #--- Code Editor Security Group — CloudFront ingress only ------------------
+  CodeEditorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for Code Editor - only allow CloudFront ingress
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: Allow HTTP from CloudFront
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourcePrefixListId: !FindInMap [AWSRegionsPrefixListID, !Ref 'AWS::Region', PrefixList]
+
+  #--- Code Editor EC2 Instance ----------------------------------------------
+  CodeEditorInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Sub '{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}'
+      InstanceType: !Ref CodeEditorInstanceType
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: !Ref CodeEditorVolumeSize
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+      Monitoring: true
+      SubnetId: !Select [1, !Ref PublicSubnets]
+      SecurityGroupIds:
+        - !Ref CodeEditorSecurityGroup
+      IamInstanceProfile: !Ref CodeEditorInstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          hostname: ${EnvironmentName}-code-editor
+          runcmd:
+            - mkdir -p ${HomeFolder} && chown -R ${CodeEditorUser}:${CodeEditorUser} ${HomeFolder}
+      Tags:
+      - Key: Name
+        Value: !Sub ${EnvironmentName}-code-editor
+
+  CodeEditorInstanceEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  ElasticIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt CodeEditorInstanceEIP.AllocationId
+      InstanceId: !Ref CodeEditorInstance
+
+  #--- CloudFront for Code Editor --------------------------------------------
+  CodeEditorInstanceCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 86400
+        MaxTTL: 31536000
+        MinTTL: 1
+        Name: !Sub
+        - ${EnvironmentName}-code-editor-${RandomGUID}
+        - RandomGUID: !Select [0, !Split ['-', !Select [2, !Split ['/', !Ref AWS::StackId ]]]]
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: all
+          EnableAcceptEncodingGzip: False
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - Accept-Charset
+              - Authorization
+              - Origin
+              - Accept
+              - Referer
+              - Host
+              - Accept-Language
+              - Accept-Encoding
+              - Accept-Datetime
+          QueryStringsConfig:
+            QueryStringBehavior: all
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: ElasticIPAssociation
+    Properties:
+      DistributionConfig:
+        Enabled: True
+        HttpVersion: http2and3
+        CacheBehaviors:
+          - AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+              - PUT
+              - PATCH
+              - POST
+              - DELETE
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+            Compress: False
+            OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+            TargetOriginId: !Sub CloudFront-${AWS::StackName}
+            ViewerProtocolPolicy: allow-all
+            PathPattern: '/proxy/*'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+            - PUT
+            - PATCH
+            - POST
+            - DELETE
+          CachePolicyId: !Ref CodeEditorInstanceCachePolicy
+          OriginRequestPolicyId: 216adef6-5c7f-47e4-b989-5492eafa07d3
+          TargetOriginId: !Sub CloudFront-${AWS::StackName}
+          ViewerProtocolPolicy: allow-all
+        Origins:
+          - DomainName: !GetAtt CodeEditorInstance.PublicDnsName
+            Id: !Sub CloudFront-${AWS::StackName}
+            CustomOriginConfig:
+              OriginProtocolPolicy: http-only
+
+Outputs:
+  # Load Generator
+  LoadGeneratorInstanceId:
+    Description: Load generator EC2 instance ID
+    Value: !Ref LoadGeneratorInstance
+
+  LoadGeneratorPublicIp:
+    Description: Load generator public IP
+    Value: !GetAtt LoadGeneratorInstance.PublicIp
+
+  LoadGeneratorSshCommand:
+    Condition: EnableSsh
+    Description: SSH command to connect to load generator
+    Value: !Sub 'ssh ec2-user@${LoadGeneratorInstance.PublicIp}'
+
+  LoadGeneratorSsmCommand:
+    Description: SSM Session Manager command to connect to load generator
+    Value: !Sub 'aws ssm start-session --target ${LoadGeneratorInstance} --region ${AWS::Region}'
+
+  # Code Editor IDE
+  CodeEditorUrl:
+    Description: Code Editor URL (CloudFront HTTPS with auto-login token)
+    Value: !Sub 'https://${CloudFrontDistribution.DomainName}/?folder=${HomeFolder}&tkn=${SecretPlaintext.password}'
+
+  CodeEditorPasswordConsole:
+    Description: Click to view the IDE password in Secrets Manager
+    Value: !Sub 'https://console.aws.amazon.com/secretsmanager/secret?name=${CodeEditorSecret}&region=${AWS::Region}'
+
+  CodeEditorSsmCommand:
+    Description: SSM Session Manager command to connect to Code Editor instance
+    Value: !Sub 'aws ssm start-session --target ${CodeEditorInstance} --region ${AWS::Region}'

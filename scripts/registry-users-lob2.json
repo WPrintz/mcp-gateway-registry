@@ -1,0 +1,28 @@
+{
+  "_id": "registry-users-lob2",
+  "group_mappings": ["registry-users-lob2"],
+  "server_access": [
+    {
+      "server": "api",
+      "methods": ["initialize", "GET"],
+      "tools": ["servers", "agents"]
+    },
+    {
+      "server": "realserverfaketools",
+      "methods": ["initialize", "notifications/initialized", "ping", "tools/list", "tools/call", "resources/list", "resources/templates/list"],
+      "tools": ["quantum_flux_analyzer", "neural_pattern_synthesizer", "hyper_dimensional_mapper"]
+    },
+    {
+      "server": "mcpgw",
+      "methods": ["initialize", "notifications/initialized", "ping", "tools/list", "tools/call"],
+      "tools": ["intelligent_tool_finder"]
+    }
+  ],
+  "ui_permissions": {
+    "list_service": ["realserverfaketools", "mcpgw"],
+    "health_check_service": ["realserverfaketools", "mcpgw"],
+    "get_service": ["realserverfaketools", "mcpgw"],
+    "list_tools": ["realserverfaketools", "mcpgw"],
+    "call_tool": ["realserverfaketools", "mcpgw"]
+  }
+}

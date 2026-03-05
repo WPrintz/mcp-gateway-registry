@@ -34,8 +34,10 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorClient
+
 
 # Configure logging with basicConfig
 logging.basicConfig(
@@ -59,11 +61,11 @@ async def _get_documentdb_connection_string(
     host: str,
     port: int,
     database: str,
-    username: str | None,
-    password: str | None,
+    username: Optional[str],
+    password: Optional[str],
     use_iam: bool,
     use_tls: bool,
-    tls_ca_file: str | None,
+    tls_ca_file: Optional[str],
     storage_backend: str = "documentdb",
 ) -> str:
     """Build DocumentDB connection string with appropriate auth mechanism.
@@ -150,25 +152,21 @@ async def _create_vector_index(
         logger.info(f"Created vector index '{index_name}' on {collection_name}")
     except Exception as e:
         # Debug logging
-        logger.info("DEBUG: Caught exception in vector index creation")
+        logger.info(f"DEBUG: Caught exception in vector index creation")
         logger.info(f"DEBUG: Exception type: {type(e).__name__}")
         logger.info(f"DEBUG: Exception str: {str(e)}")
         logger.info(f"DEBUG: Exception repr: {repr(e)}")
 
         # Check if index already exists with different options (error code 85)
-        if (
-            "'code': 85" in str(e) or "code': 85" in str(e)
-        ) or "already exists with different options" in str(e).lower():
+        if ("'code': 85" in str(e) or "code': 85" in str(e)) or "already exists with different options" in str(e).lower():
             if recreate:
-                logger.info("Vector index exists with different options. Recreating...")
+                logger.info(f"Vector index exists with different options. Recreating...")
 
                 # List all indexes to see what's there
                 logger.info(f"Listing all indexes on {collection_name}...")
                 indexes = await collection.list_indexes().to_list(None)
                 for idx in indexes:
-                    logger.info(
-                        f"  Found index: name='{idx.get('name')}', key={idx.get('key', {})}"
-                    )
+                    logger.info(f"  Found index: name='{idx.get('name')}', key={idx.get('key', {})}")
 
                 # Drop ALL non-_id indexes to ensure clean slate
                 dropped_count = 0
@@ -197,19 +195,12 @@ async def _create_vector_index(
                             "efConstruction": 128,
                         },
                     )
-                    logger.info(
-                        f"Created vector index '{index_name}' on {collection_name} after dropping {dropped_count} old indexes"
-                    )
+                    logger.info(f"Created vector index '{index_name}' on {collection_name} after dropping {dropped_count} old indexes")
                 except Exception as create_err:
-                    logger.error(
-                        f"Failed to create vector index after dropping all indexes: {create_err}",
-                        exc_info=True,
-                    )
+                    logger.error(f"Failed to create vector index after dropping all indexes: {create_err}", exc_info=True)
                     raise
             else:
-                logger.info(
-                    f"Vector index already exists on {collection_name} (recreate=False, skipping)"
-                )
+                logger.info(f"Vector index already exists on {collection_name} (recreate=False, skipping)")
         # DocumentDB Elastic doesn't support vector indexes (error code 303)
         elif "vectorOptions" in str(e) or "not supported" in str(e):
             logger.warning(
@@ -368,9 +359,9 @@ async def _create_scopes_indexes(
 async def _load_default_scopes(
     db,
     namespace: str,
-    entra_group_id: str | None = None,
+    entra_group_id: Optional[str] = None,
 ) -> None:
-    """Load default admin scope from JSON file into scopes collection.
+    """Load default scope definitions from JSON files into scopes collection.
 
     Args:
         db: Database connection
@@ -381,42 +372,54 @@ async def _load_default_scopes(
     collection_name = f"{COLLECTION_SCOPES}_{namespace}"
     collection = db[collection_name]
 
-    # Find the registry-admins.json file in the same directory as this script
     script_dir = Path(__file__).parent
-    admin_scope_file = script_dir / "registry-admins.json"
 
-    if not admin_scope_file.exists():
-        logger.warning(f"Default admin scope file not found: {admin_scope_file}")
-        return
+    # List of scope files to load (order matters - admin first, then LOB users)
+    scope_files = [
+        "registry-admins.json",
+        "registry-users-lob1.json",
+        "registry-users-lob2.json",
+    ]
 
-    try:
-        with open(admin_scope_file) as f:
-            admin_scope = json.load(f)
+    for scope_filename in scope_files:
+        scope_file = script_dir / scope_filename
 
-        logger.info(f"Loading default admin scope from {admin_scope_file}")
+        if not scope_file.exists():
+            logger.warning(f"Scope file not found: {scope_file}")
+            continue
 
-        # Add Entra ID Group Object ID if provided
-        if entra_group_id:
-            if entra_group_id not in admin_scope.get("group_mappings", []):
-                admin_scope["group_mappings"].append(entra_group_id)
-                logger.info(f"Added Entra ID Group Object ID: {entra_group_id}")
+        try:
+            with open(scope_file, "r") as f:
+                scope_doc = json.load(f)
 
-        # Upsert the admin scope document
-        result = await collection.update_one(
-            {"_id": admin_scope["_id"]}, {"$set": admin_scope}, upsert=True
-        )
+            logger.info(f"Loading scope from {scope_file}")
 
-        if result.upserted_id:
-            logger.info(f"Inserted admin scope: {admin_scope['_id']}")
-        elif result.modified_count > 0:
-            logger.info(f"Updated admin scope: {admin_scope['_id']}")
-        else:
-            logger.info(f"Admin scope already up-to-date: {admin_scope['_id']}")
+            # Add Entra ID Group Object ID if provided (only for admin scope)
+            if entra_group_id and scope_doc.get("_id") == "registry-admins":
+                if entra_group_id not in scope_doc.get("group_mappings", []):
+                    scope_doc["group_mappings"].append(entra_group_id)
+                    logger.info(f"Added Entra ID Group Object ID: {entra_group_id}")
 
-        logger.info(f"Admin scope group_mappings: {admin_scope.get('group_mappings', [])}")
+            # Upsert the scope document
+            result = await collection.update_one(
+                {"_id": scope_doc["_id"]},
+                {"$set": scope_doc},
+                upsert=True
+            )
 
-    except Exception as e:
-        logger.error(f"Failed to load default admin scope: {e}", exc_info=True)
+            if result.upserted_id:
+                logger.info(f"Inserted scope: {scope_doc['_id']}")
+            elif result.modified_count > 0:
+                logger.info(f"Updated scope: {scope_doc['_id']}")
+            else:
+                logger.info(f"Scope already up-to-date: {scope_doc['_id']}")
+
+            logger.info(
+                f"Scope '{scope_doc['_id']}' group_mappings: {scope_doc.get('group_mappings', [])}"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to load scope from {scope_file}: {e}", exc_info=True)
 
 
 async def _create_security_scans_indexes(
@@ -486,11 +489,6 @@ async def _create_audit_events_indexes(
         (("action.resource_type", 1), ("timestamp", 1)),
     ]
 
-    # Single-field index for MCP server name distinct/filter queries
-    single_field_indexes = [
-        ("mcp_server.name", 1),
-    ]
-
     for fields in indexes:
         index_spec = [(f[0], f[1]) for f in fields]
         index_name = "_".join(f[0].replace(".", "_") for f in fields) + "_idx"
@@ -511,26 +509,6 @@ async def _create_audit_events_indexes(
         except Exception as e:
             logger.error(f"Failed to create index '{index_name}' on {collection_name}: {e}")
 
-    # Create single-field indexes for distinct/filter queries
-    for field, order in single_field_indexes:
-        index_name = field.replace(".", "_") + "_idx"
-
-        if recreate:
-            try:
-                await collection.drop_index(index_name)
-                logger.info(f"Dropped existing index '{index_name}' from {collection_name}")
-            except Exception as e:
-                logger.debug(f"No existing index '{index_name}' to drop: {e}")
-
-        try:
-            await collection.create_index(
-                [(field, order)],
-                name=index_name,
-            )
-            logger.info(f"Created index '{index_name}' on {collection_name}")
-        except Exception as e:
-            logger.error(f"Failed to create index '{index_name}' on {collection_name}: {e}")
-
     # Composite unique index on (request_id, log_type)
     # Allows both MCPServerAccessRecord and RegistryApiAccessRecord
     # to coexist for the same request_id while preventing true duplicates
@@ -540,16 +518,24 @@ async def _create_audit_events_indexes(
     # Always try to drop the old single-field index (migration from previous versions)
     try:
         await collection.drop_index(old_index_name)
-        logger.info(f"Dropped old single-field index '{old_index_name}' from {collection_name}")
+        logger.info(
+            f"Dropped old single-field index '{old_index_name}' from {collection_name}"
+        )
     except Exception as e:
-        logger.debug(f"No old index '{old_index_name}' to drop: {e}")
+        logger.debug(
+            f"No old index '{old_index_name}' to drop: {e}"
+        )
 
     if recreate:
         try:
             await collection.drop_index(composite_index_name)
-            logger.info(f"Dropped existing index '{composite_index_name}' from {collection_name}")
+            logger.info(
+                f"Dropped existing index '{composite_index_name}' from {collection_name}"
+            )
         except Exception as e:
-            logger.debug(f"No existing index '{composite_index_name}' to drop: {e}")
+            logger.debug(
+                f"No existing index '{composite_index_name}' to drop: {e}"
+            )
 
     try:
         await collection.create_index(
@@ -557,9 +543,13 @@ async def _create_audit_events_indexes(
             name=composite_index_name,
             unique=True,
         )
-        logger.info(f"Created composite unique index '{composite_index_name}' on {collection_name}")
+        logger.info(
+            f"Created composite unique index '{composite_index_name}' on {collection_name}"
+        )
     except Exception as e:
-        logger.error(f"Failed to create index '{composite_index_name}' on {collection_name}: {e}")
+        logger.error(
+            f"Failed to create index '{composite_index_name}' on {collection_name}: {e}"
+        )
 
     # TTL index for automatic expiration
     # Default 7 days (604800 seconds), configurable via AUDIT_LOG_MONGODB_TTL_DAYS
@@ -645,7 +635,7 @@ async def _initialize_collections(
     db,
     namespace: str,
     recreate: bool,
-    entra_group_id: str | None = None,
+    entra_group_id: Optional[str] = None,
 ) -> None:
     """Initialize all collections and indexes.
 
@@ -825,7 +815,9 @@ Example usage:
         db = client[args.database]
 
         server_info = await client.server_info()
-        logger.info(f"Connected to DocumentDB/MongoDB {server_info.get('version', 'unknown')}")
+        logger.info(
+            f"Connected to DocumentDB/MongoDB {server_info.get('version', 'unknown')}"
+        )
 
         await _initialize_collections(
             db,
@@ -834,7 +826,9 @@ Example usage:
             args.entra_group_id,
         )
 
-        logger.info(f"DocumentDB initialization complete for namespace '{args.namespace}'")
+        logger.info(
+            f"DocumentDB initialization complete for namespace '{args.namespace}'"
+        )
 
         # Print summary of collections and indexes
         await _print_collection_summary(db, args.namespace)
