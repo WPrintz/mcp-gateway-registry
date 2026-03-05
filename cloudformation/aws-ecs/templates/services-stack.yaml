@@ -446,7 +446,7 @@ Resources:
               Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
             - Name: METRICS_API_KEY
               Value: !Ref MetricsApiKey
-            # v1.0.15 Feature Configuration
+            # v1.0.16 Feature Configuration
             - Name: KEYCLOAK_M2M_CLIENT_ID
               Value: mcp-gateway-m2m
             - Name: REGISTRY_ID
@@ -621,7 +621,7 @@ Resources:
               Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
             - Name: METRICS_API_KEY
               Value: !Ref MetricsApiKey
-            # v1.0.15 Feature Configuration
+            # v1.0.16 Feature Configuration
             - Name: DEPLOYMENT_MODE
               Value: with-gateway
             - Name: REGISTRY_MODE
@@ -873,7 +873,7 @@ Resources:
             - Name: PORT
               Value: '8003'
             - Name: REGISTRY_BASE_URL
-              Value: !Sub http://registry.${EnvironmentName}.local:7860
+              Value: !Sub http://registry.${EnvironmentName}.local:80
             - Name: REGISTRY_USERNAME
               Value: admin
           Secrets:
@@ -2606,6 +2606,17 @@ Resources:
                   result = json.loads(response.read().decode('utf-8'))
                   return result.get('access_token')
 
+          def is_success(result):
+              """Check if API response indicates success."""
+              if result.get('success'):
+                  return True
+              if result.get('path') or result.get('agent'):
+                  return True
+              msg = result.get('message', '')
+              if 'successfully' in msg.lower():
+                  return True
+              return False
+
           def api_request_form(url, token, form_data, max_retries=5):
               """Make authenticated POST request with form data to Registry API."""
               encoded_data = urllib.parse.urlencode(form_data).encode('utf-8')
@@ -2633,8 +2644,8 @@ Resources:
                               return {'exists': True, 'success': False}
                           print(f"API error {e.code}: {body}")
                           return {'success': False, 'error': body}
-                      # Retry on transient errors (502, 503, 504)
-                      if e.code in [502, 503, 504]:
+                      # Retry on transient errors (500, 502, 503, 504)
+                      if e.code in [500, 502, 503, 504]:
                           last_error = e
                           wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8, 16 seconds
                           print(f"    Transient error {e.code}, retry {attempt + 1}/{max_retries} in {wait_time}s...")
@@ -2653,15 +2664,17 @@ Resources:
                   raise last_error
               raise Exception(f"Request failed after {max_retries} attempts")
 
-          def delete_server(registry_url, token, server_name):
-              """Delete a server from the registry by name."""
-              url = f"{registry_url}/api/v1/servers/remove?name={urllib.parse.quote(server_name)}"
-              req = urllib.request.Request(url, method='DELETE')
+          def delete_server(registry_url, token, server_path):
+              """Delete a server from the registry by path."""
+              url = f"{registry_url}/api/servers/remove"
+              data = urllib.parse.urlencode({'path': server_path}).encode('utf-8')
+              req = urllib.request.Request(url, data=data, method='POST')
               req.add_header('Authorization', f'Bearer {token}')
+              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
               ctx = ssl.create_default_context()
               try:
                   with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-                      print(f"    Deleted existing server: {server_name}")
+                      print(f"    Deleted existing server: {server_path}")
                       return True
               except urllib.error.HTTPError as e:
                   if e.code == 404:
@@ -2691,19 +2704,19 @@ Resources:
                   print(f"    Delete error: {str(e)}")
                   return False
 
-          def delete_agent(registry_url, token, agent_name):
-              """Delete an agent from the registry by name."""
-              url = f"{registry_url}/api/agents/remove?name={urllib.parse.quote(agent_name)}"
+          def delete_agent(registry_url, token, agent_path):
+              """Delete an agent from the registry by path."""
+              url = f"{registry_url}/api/agents/{agent_path.lstrip('/')}"
               req = urllib.request.Request(url, method='DELETE')
               req.add_header('Authorization', f'Bearer {token}')
               ctx = ssl.create_default_context()
               try:
                   with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-                      print(f"    Deleted existing agent: {agent_name}")
+                      print(f"    Deleted existing agent: {agent_path}")
                       return True
               except urllib.error.HTTPError as e:
-                  if e.code == 404:
-                      return True  # Already gone
+                  if e.code in [404, 204]:
+                      return True  # Already gone or success
                   print(f"    Delete failed ({e.code}): {e.read().decode('utf-8')}")
                   return False
               except Exception as e:
@@ -2757,8 +2770,8 @@ Resources:
                               return {'exists': True, 'success': False}
                           print(f"API error {e.code}: {body}")
                           return {'success': False, 'error': body}
-                      # Retry on transient errors (502, 503, 504)
-                      if e.code in [502, 503, 504]:
+                      # Retry on transient errors (500, 502, 503, 504)
+                      if e.code in [500, 502, 503, 504]:
                           last_error = e
                           wait_time = 2 ** attempt  # Exponential backoff: 1, 2, 4, 8, 16 seconds
                           print(f"    Transient error {e.code}, retry {attempt + 1}/{max_retries} in {wait_time}s...")
@@ -2847,20 +2860,20 @@ Resources:
                           token,
                           server_data
                       )
-                      if result.get('success'):
+                      if is_success(result):
                           print(f"    OK (created)")
                           servers_registered += 1
                       elif result.get('exists'):
                           # Server exists - delete and re-create with updated config
                           print(f"    Server exists, updating...")
-                          if delete_server(registry_url, token, server_data['name']):
+                          if delete_server(registry_url, token, server_data['path']):
                               # Re-register with new config
                               result = api_request_form(
                                   f"{registry_url}/api/servers/register",
                                   token,
                                   server_data
                               )
-                              if result.get('success'):
+                              if is_success(result):
                                   print(f"    OK (updated)")
                                   servers_registered += 1
                               else:
@@ -2885,20 +2898,20 @@ Resources:
                           token,
                           agent_data
                       )
-                      if result.get('success'):
+                      if is_success(result):
                           print(f"    OK (created)")
                           agents_registered += 1
                       elif result.get('exists'):
                           # Agent exists - delete and re-create with updated config
                           print(f"    Agent exists, updating...")
-                          if delete_agent(registry_url, token, agent_data['name']):
+                          if delete_agent(registry_url, token, agent_data['path']):
                               # Re-register with new config
                               result = api_request_json(
                                   f"{registry_url}/api/agents/register",
                                   token,
                                   agent_data
                               )
-                              if result.get('success'):
+                              if is_success(result):
                                   print(f"    OK (updated)")
                                   agents_registered += 1
                               else:
@@ -3164,15 +3177,11 @@ Resources:
               Value: '%(protocol)s://%(domain)s/grafana/'
             - Name: GF_SERVER_SERVE_FROM_SUB_PATH
               Value: 'true'
-            # Authentication - anonymous access for workshop simplicity
+            # Authentication - password-protected access (v1.0.16 security hardening)
             - Name: GF_AUTH_ANONYMOUS_ENABLED
-              Value: 'true'
-            - Name: GF_AUTH_ANONYMOUS_ORG_ROLE
-              Value: 'Admin'
+              Value: 'false'
             - Name: GF_AUTH_DISABLE_LOGIN_FORM
               Value: 'false'
-            - Name: GF_SECURITY_ADMIN_PASSWORD
-              Value: 'admin'
             - Name: GF_USERS_ALLOW_SIGN_UP
               Value: 'false'
             # Embedding settings
@@ -3189,6 +3198,12 @@ Resources:
             # Performance settings
             - Name: GF_DASHBOARDS_MIN_REFRESH_INTERVAL
               Value: '10s'
+          Secrets:
+            - Name: GF_SECURITY_ADMIN_PASSWORD
+              ValueFrom: !Sub
+                - '${SecretArn}:grafana_admin_password::'
+                - SecretArn: !ImportValue
+                    Fn::Sub: ${EnvironmentName}-GrafanaAdminPasswordSecretArn
           LogConfiguration:
             LogDriver: awslogs
             Options:
