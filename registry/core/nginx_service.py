@@ -502,6 +502,13 @@ class NginxConfigService:
             root_path = os.environ.get("ROOT_PATH", "").rstrip("/")
             config_content = config_content.replace("{{ROOT_PATH}}", root_path)
 
+            # Replace bare auth-server:8888 with AUTH_SERVER_URL for Cloud Map DNS
+            # (bare hostnames only resolve in docker-compose; ECS Cloud Map needs FQDNs)
+            auth_server_url = os.environ.get("AUTH_SERVER_URL", "")
+            if auth_server_url:
+                auth_host_port = auth_server_url.replace("http://", "").replace("https://", "")
+                config_content = config_content.replace("auth-server:8888", auth_host_port)
+
             # Write config file
             with open(settings.nginx_config_path, "w") as f:
                 f.write(config_content)

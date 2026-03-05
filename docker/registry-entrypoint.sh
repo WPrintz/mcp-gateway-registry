@@ -280,6 +280,20 @@ if [ -n "${SERVICE_CONNECT_NAMESPACE:-}" ]; then
     echo "Added FQDN aliases for Service Connect entries (namespace: ${SERVICE_CONNECT_NAMESPACE})"
 fi
 
+# Replace bare auth-server:8888 with AUTH_SERVER_URL FQDN for Cloud Map DNS.
+# This is the entrypoint safety net for the initial static nginx config.
+# The Python generate_config() method also performs this replacement on every
+# regeneration (lesson #25 from v1.0.15 porting reference).
+if [ -n "${AUTH_SERVER_URL:-}" ]; then
+    auth_host_port=$(echo "$AUTH_SERVER_URL" | sed 's|^https\?://||')
+    for conf in /etc/nginx/conf.d/nginx_rev_proxy*.conf; do
+        if [ -f "$conf" ] && grep -q 'auth-server:8888' "$conf"; then
+            sed -i "s|auth-server:8888|${auth_host_port}|g" "$conf"
+            echo "Rewrote auth-server:8888 -> ${auth_host_port} in $(basename "$conf")"
+        fi
+    done
+fi
+
 echo "Starting Nginx..."
 nginx
 
