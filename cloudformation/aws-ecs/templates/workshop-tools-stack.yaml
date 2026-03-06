@@ -845,6 +845,25 @@ Resources:
                       else:
                           print(f"    Failed: {result}")
 
+                  # Enable registered agents immediately after registration
+                  # (must happen on the same request path as registration because
+                  # the toggle depends on the in-memory registered_agents dict
+                  # which is only populated on the container that handled registration)
+                  if agents_registered > 0:
+                      print("Enabling registered agents...")
+                      for agent in A2A_AGENTS:
+                          agent_path = agent['path']
+                          try:
+                              url = f"{registry_url}/api/agents{agent_path}/toggle?enabled=true"
+                              req = urllib.request.Request(url, data=b'', method='POST')
+                              req.add_header('Authorization', f'Bearer {token}')
+                              ctx = ssl.create_default_context()
+                              with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                                  result = json.loads(resp.read().decode('utf-8'))
+                                  print(f"    Enabled {agent_path}: {result.get('enabled', result)}")
+                          except Exception as e:
+                              print(f"    Failed to enable {agent_path}: {e}")
+
                   # Register Virtual MCP Servers (uses JSON data)
                   print("Registering Virtual MCP Servers...")
                   virtual_servers_registered = 0
