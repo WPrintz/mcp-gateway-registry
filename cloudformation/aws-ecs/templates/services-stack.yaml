@@ -2923,50 +2923,73 @@ Resources:
 
                   # Register Virtual MCP Servers (uses JSON data)
                   # Uses delete-then-create pattern to ensure config updates are applied
+                  # NOTE: Backend servers need time after registration to discover their
+                  # tools. Virtual server creation validates tool mappings against discovered
+                  # tools, so we retry with backoff to allow tool discovery to complete.
                   print("Registering Virtual MCP Servers...")
                   virtual_servers_registered = 0
                   for vs in VIRTUAL_SERVERS:
                       vs_data = vs.copy()
                       print(f"  Registering: {vs_data['server_name']}")
-                      result = api_request_json(
-                          f"{registry_url}/api/virtual-servers",
-                          token,
-                          vs_data
-                      )
-                      if result.get('success') or result.get('path'):
-                          print(f"    OK (created)")
-                          virtual_servers_registered += 1
-                      elif result.get('exists'):
-                          # Virtual server exists - delete and re-create
-                          print(f"    Virtual server exists, updating...")
-                          if delete_virtual_server(registry_url, token, vs_data['path']):
-                              result = api_request_json(
-                                  f"{registry_url}/api/virtual-servers",
-                                  token,
-                                  vs_data
-                              )
-                              if result.get('success') or result.get('path'):
-                                  print(f"    OK (updated)")
-                                  virtual_servers_registered += 1
+                      vs_created = False
+                      # Retry virtual server registration (tool discovery may not be complete)
+                      for vs_attempt in range(6):
+                          result = api_request_json(
+                              f"{registry_url}/api/virtual-servers",
+                              token,
+                              vs_data
+                          )
+                          if result.get('success') or result.get('path'):
+                              print(f"    OK (created)")
+                              vs_created = True
+                              virtual_servers_registered += 1
+                              break
+                          elif result.get('exists'):
+                              # Virtual server exists - delete and re-create
+                              print(f"    Virtual server exists, updating...")
+                              if delete_virtual_server(registry_url, token, vs_data['path']):
+                                  result = api_request_json(
+                                      f"{registry_url}/api/virtual-servers",
+                                      token,
+                                      vs_data
+                                  )
+                                  if result.get('success') or result.get('path'):
+                                      print(f"    OK (updated)")
+                                      vs_created = True
+                                      virtual_servers_registered += 1
+                                      break
+                                  else:
+                                      print(f"    Re-register failed: {result}")
                               else:
-                                  print(f"    Re-register failed: {result}")
+                                  print(f"    Delete failed, skipping update")
+                                  break
                           else:
-                              print(f"    Delete failed, skipping update")
-                      else:
-                          print(f"    Failed: {result}")
+                              error_str = str(result.get('error', ''))
+                              if 'not found' in error_str.lower() and 'available tools' in error_str.lower():
+                                  # Tool discovery not yet complete - wait and retry
+                                  wait = 10 * (vs_attempt + 1)
+                                  print(f"    Tool discovery incomplete, retry {vs_attempt + 1}/6 in {wait}s...")
+                                  time.sleep(wait)
+                                  continue
+                              print(f"    Failed: {result}")
+                              break
 
-                      # Enable the virtual server
-                      vs_path = vs_data['path'].lstrip('/')
-                      print(f"    Enabling virtual server: {vs_data['path']}")
-                      toggle_result = api_request_json(
-                          f"{registry_url}/api/virtual-servers/{vs_path}/toggle",
-                          token,
-                          {'enabled': True}
-                      )
-                      if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
-                          print(f"    Enabled")
-                      else:
-                          print(f"    Enable failed: {toggle_result}")
+                      # Enable the virtual server (only if it was created)
+                      if vs_created:
+                          vs_path = vs_data['path'].lstrip('/')
+                          print(f"    Enabling virtual server: {vs_data['path']}")
+                          try:
+                              toggle_result = api_request_json(
+                                  f"{registry_url}/api/virtual-servers/{vs_path}/toggle",
+                                  token,
+                                  {'enabled': True}
+                              )
+                              if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
+                                  print(f"    Enabled")
+                              else:
+                                  print(f"    Enable failed: {toggle_result}")
+                          except Exception as toggle_err:
+                              print(f"    Enable error (non-fatal): {toggle_err}")
 
                   # Register Agent Skills (uses JSON data)
                   # Uses delete-then-create pattern to ensure config updates are applied
@@ -3001,19 +3024,23 @@ Resources:
                               print(f"    Delete failed, skipping update")
                       else:
                           print(f"    Failed: {result}")
+                          continue
 
-                      # Enable the skill
+                      # Enable the skill (only if registered above)
                       skill_name = skill_data['name']
                       print(f"    Enabling skill: {skill_name}")
-                      toggle_result = api_request_json(
-                          f"{registry_url}/api/skills/{skill_name}/toggle",
-                          token,
-                          {'enabled': True}
-                      )
-                      if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
-                          print(f"    Enabled")
-                      else:
-                          print(f"    Enable failed: {toggle_result}")
+                      try:
+                          toggle_result = api_request_json(
+                              f"{registry_url}/api/skills/{skill_name}/toggle",
+                              token,
+                              {'enabled': True}
+                          )
+                          if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
+                              print(f"    Enabled")
+                          else:
+                              print(f"    Enable failed: {toggle_result}")
+                      except Exception as toggle_err:
+                          print(f"    Enable error (non-fatal): {toggle_err}")
 
                   print(f"Registration complete: {servers_registered} servers, {agents_registered} agents, {virtual_servers_registered} virtual servers, {skills_registered} skills")
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
@@ -3061,7 +3088,9 @@ Resources:
       # v1.7: Added retry logic with exponential backoff for transient 502/503/504 errors
       # v1.8: Added Virtual MCP Server registration (Dev Tools) with auto-enable
       # v1.9: Added Agent Skills registration (frontend-design, canvas-design) with auto-enable
-      Version: '1.9'
+      # v1.10: Fix virtual server registration - retry with backoff for tool discovery timing,
+      #         guard toggle behind successful registration, catch toggle errors gracefully
+      Version: '1.10'
 
   #============================================================================
   # ADOT Collector Log Group (sidecar in metrics-service task)
