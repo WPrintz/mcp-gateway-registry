@@ -188,7 +188,7 @@ Resources:
           def get_server_tools(registry_url, token, server_path):
               """Get the current tool list for a server."""
               path = server_path.strip('/')
-              url = f"{registry_url}/api/tools/{path}"
+              url = f"{registry_url}/api/servers/tools/{path}"
               req = urllib.request.Request(url, method='GET')
               req.add_header('Authorization', f'Bearer {token}')
               ctx = ssl.create_default_context()
@@ -203,20 +203,6 @@ Resources:
               except Exception as e:
                   print(f"  get_server_tools error: {e}")
                   return []
-
-          def refresh_server(registry_url, token, server_path):
-              """Trigger health check and tool discovery via the refresh API."""
-              path = server_path.strip('/')
-              url = f"{registry_url}/api/refresh/{path}"
-              req = urllib.request.Request(url, data=b'', method='POST')
-              req.add_header('Authorization', f'Bearer {token}')
-              ctx = ssl.create_default_context()
-              try:
-                  with urllib.request.urlopen(req, context=ctx, timeout=120) as response:
-                      return json.loads(response.read().decode('utf-8'))
-              except Exception as e:
-                  print(f"  refresh error: {e}")
-                  return None
 
           def handler(event, context):
               """CloudFormation Custom Resource handler."""
@@ -267,11 +253,22 @@ Resources:
                       raise Exception("Registry not ready after 60 attempts")
 
                   # Poll airegistry-tools for tool discovery
+                  # Uses /api/servers/tools/ which supports JWT Bearer auth (nginx_proxied_auth)
+                  # The registry's background reconciliation loop will auto-discover tools
+                  # once Service Connect hostnames are resolvable
                   print(f"Polling {canary_path} for tool discovery...")
                   start = time.time()
                   attempt = 0
+                  token_refresh_at = time.time() + 240  # Refresh token before 5min expiry
                   while time.time() - start < max_wait:
                       attempt += 1
+
+                      # Refresh M2M token before expiry (tokens last 300s)
+                      if time.time() > token_refresh_at:
+                          print("  Refreshing M2M token...")
+                          token = get_m2m_token(keycloak_url, client_id, client_secret)
+                          token_refresh_at = time.time() + 240
+
                       tools = get_server_tools(registry_url, token, canary_path)
                       if len(tools) > 0:
                           elapsed = int(time.time() - start)
@@ -282,10 +279,7 @@ Resources:
                           })
                           return
 
-                      # Trigger refresh to retry health check + tool discovery
-                      print(f"  Attempt {attempt}: no tools yet, triggering refresh...")
-                      refresh_server(registry_url, token, canary_path)
-
+                      print(f"  Attempt {attempt}: no tools yet, waiting for registry reconciliation...")
                       wait = min(20, 5 + attempt * 3)
                       time.sleep(wait)
 
@@ -678,24 +672,10 @@ Resources:
                   raise last_error
               raise Exception(f"Request failed after {max_retries} attempts")
 
-          def refresh_server(registry_url, token, server_path):
-              """Trigger health check and tool discovery for a server."""
-              path = server_path.strip('/')
-              url = f"{registry_url}/api/refresh/{path}"
-              req = urllib.request.Request(url, data=b'', method='POST')
-              req.add_header('Authorization', f'Bearer {token}')
-              ctx = ssl.create_default_context()
-              try:
-                  with urllib.request.urlopen(req, context=ctx, timeout=120) as response:
-                      return json.loads(response.read().decode('utf-8'))
-              except Exception as e:
-                  print(f"    Refresh error: {str(e)}")
-                  return None
-
           def get_server_tools(registry_url, token, server_path):
               """Get the current tool list for a server."""
               path = server_path.strip('/')
-              url = f"{registry_url}/api/tools/{path}"
+              url = f"{registry_url}/api/servers/tools/{path}"
               req = urllib.request.Request(url, method='GET')
               req.add_header('Authorization', f'Bearer {token}')
               ctx = ssl.create_default_context()
@@ -724,8 +704,7 @@ Resources:
                           print(f"    {path}: {len(tools)} tools")
                           continue
                       all_have_tools = False
-                      print(f"    {path}: no tools yet, triggering refresh (attempt {attempt})...")
-                      refresh_server(registry_url, token, path)
+                      print(f"    {path}: no tools yet (attempt {attempt}), waiting for reconciliation...")
 
                   if all_have_tools:
                       elapsed = int(time.time() - start)
