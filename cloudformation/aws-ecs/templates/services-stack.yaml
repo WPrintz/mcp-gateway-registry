@@ -401,7 +401,7 @@ Resources:
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-RegistryUrl
             - Name: AUTH_SERVER_URL
-              Value: !Sub http://auth-server.${EnvironmentName}.local:8888
+              Value: http://auth-server:8888
             - Name: AUTH_SERVER_EXTERNAL_URL
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-RegistryUrl
@@ -443,7 +443,7 @@ Resources:
               Value: /app/global-bundle.pem
             # Metrics Service Configuration
             - Name: METRICS_SERVICE_URL
-              Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+              Value: 'http://metrics-service:8890'
             - Name: METRICS_API_KEY
               Value: !Ref MetricsApiKey
             # v1.0.16 Feature Configuration
@@ -553,7 +553,7 @@ Resources:
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-MainCloudFrontDomain
             - Name: AUTH_SERVER_URL
-              Value: !Sub http://auth-server.${EnvironmentName}.local:8888
+              Value: http://auth-server:8888
             - Name: AUTH_SERVER_EXTERNAL_URL
               Value: !ImportValue
                 Fn::Sub: ${EnvironmentName}-MainCloudFrontUrl
@@ -618,7 +618,7 @@ Resources:
               Value: /app/global-bundle.pem
             # Metrics Service Configuration
             - Name: METRICS_SERVICE_URL
-              Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+              Value: 'http://metrics-service:8890'
             - Name: METRICS_API_KEY
               Value: !Ref MetricsApiKey
             # v1.0.16 Feature Configuration
@@ -873,7 +873,7 @@ Resources:
             - Name: PORT
               Value: '8003'
             - Name: REGISTRY_BASE_URL
-              Value: !Sub http://registry.${EnvironmentName}.local:80
+              Value: http://registry:80
             - Name: REGISTRY_USERNAME
               Value: admin
           Secrets:
@@ -1072,12 +1072,16 @@ Resources:
           ContainerPort: 8888
           TargetGroupArn: !ImportValue
             Fn::Sub: ${EnvironmentName}-AuthTargetGroupArn
-      # Using DNS-based service discovery instead of Service Connect
-      # (Service Connect creates HTTP-type Cloud Map services that conflict with our DNS-type services)
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-AuthServerDiscoveryServiceArn
-          ContainerName: auth-server
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: auth-server
+            DiscoveryName: auth-server
+            ClientAliases:
+              - Port: 8888
+                DnsName: auth-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-auth-server
@@ -1113,10 +1117,16 @@ Resources:
           ContainerPort: 7860
           TargetGroupArn: !ImportValue
             Fn::Sub: ${EnvironmentName}-GradioTargetGroupArn
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-RegistryDiscoveryServiceArn
-          ContainerName: registry
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: http
+            DiscoveryName: registry
+            ClientAliases:
+              - Port: 80
+                DnsName: registry
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-registry
@@ -1173,10 +1183,16 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-CurrentTimeDiscoveryServiceArn
-          ContainerName: currenttime-server
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: currenttime
+            DiscoveryName: currenttime-server
+            ClientAliases:
+              - Port: 8000
+                DnsName: currenttime-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-currenttime
@@ -1203,10 +1219,16 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-McpgwDiscoveryServiceArn
-          ContainerName: mcpgw-server
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: mcpgw
+            DiscoveryName: mcpgw-server
+            ClientAliases:
+              - Port: 8003
+                DnsName: mcpgw-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-mcpgw
@@ -1233,10 +1255,16 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-RealServerFakeToolsDiscoveryServiceArn
-          ContainerName: realserverfaketools-server
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: realserverfaketools
+            DiscoveryName: realserverfaketools-server
+            ClientAliases:
+              - Port: 8002
+                DnsName: realserverfaketools-server
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-realserverfaketools
@@ -1263,10 +1291,16 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-FlightBookingAgentDiscoveryServiceArn
-          ContainerName: flight-booking-agent
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: flight-booking
+            DiscoveryName: flight-booking-agent
+            ClientAliases:
+              - Port: 9000
+                DnsName: flight-booking-agent
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-flight-booking-agent
@@ -1293,10 +1327,16 @@ Resources:
             - ','
             - !ImportValue
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: ${EnvironmentName}-TravelAssistantAgentDiscoveryServiceArn
-          ContainerName: travel-assistant-agent
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: travel-assistant
+            DiscoveryName: travel-assistant-agent
+            ClientAliases:
+              - Port: 9000
+                DnsName: travel-assistant-agent
       Tags:
         - Key: Name
           Value: !Sub ${EnvironmentName}-travel-assistant-agent
@@ -2480,7 +2520,7 @@ Resources:
                   'name': 'Current Time API',
                   'description': 'A simple API that returns the current server time in various formats.',
                   'path': '/currenttime/',
-                  'proxy_pass_url': 'http://currenttime-server.{namespace}.local:8000/',
+                  'proxy_pass_url': 'http://currenttime-server:8000/',
                   'tags': 'time,timezone,datetime,api,utility',
                   'num_tools': '1',
                   'is_python': 'true',
@@ -2490,7 +2530,7 @@ Resources:
                   'name': 'MCP Gateway Tools',
                   'description': 'Provides tools to interact with the MCP Gateway Registry API.',
                   'path': '/mcpgw/',
-                  'proxy_pass_url': 'http://mcpgw-server.{namespace}.local:8003/',
+                  'proxy_pass_url': 'http://mcpgw-server:8003/',
                   'tags': 'registry,management,admin,gateway,mcp-tools',
                   'num_tools': '11',
                   'is_python': 'true',
@@ -2500,7 +2540,7 @@ Resources:
                   'name': 'Real Server Fake Tools',
                   'description': 'A collection of fake tools with interesting names for testing.',
                   'path': '/realserverfaketools/',
-                  'proxy_pass_url': 'http://realserverfaketools-server.{namespace}.local:8002/',
+                  'proxy_pass_url': 'http://realserverfaketools-server:8002/',
                   'tags': 'demo,fake,tools,testing',
                   'num_tools': '6',
                   'is_python': 'true',
@@ -2549,7 +2589,7 @@ Resources:
               {
                   'name': 'Flight Booking Agent',
                   'description': 'Flight booking and reservation management agent',
-                  'url': 'http://flight-booking-agent.{namespace}.local:9000/',
+                  'url': 'http://flight-booking-agent:9000/',
                   'path': '/flight-booking-agent',
                   'protocolVersion': '0.3.0',
                   'version': '0.0.1',
@@ -2571,7 +2611,7 @@ Resources:
               {
                   'name': 'Travel Assistant Agent',
                   'description': 'Flight search and trip planning agent',
-                  'url': 'http://travel-assistant-agent.{namespace}.local:9000/',
+                  'url': 'http://travel-assistant-agent:9000/',
                   'path': '/travel-assistant-agent',
                   'protocolVersion': '0.3.0',
                   'version': '0.0.1',
@@ -2850,9 +2890,7 @@ Resources:
                   print("Registering MCP Servers...")
                   servers_registered = 0
                   for server in MCP_SERVERS:
-                      # Replace namespace placeholder
                       server_data = server.copy()
-                      server_data['proxy_pass_url'] = server_data['proxy_pass_url'].replace('{namespace}', namespace)
 
                       print(f"  Registering: {server_data['name']}")
                       result = api_request_form(
@@ -2888,9 +2926,7 @@ Resources:
                   print("Registering A2A Agents...")
                   agents_registered = 0
                   for agent in A2A_AGENTS:
-                      # Replace namespace placeholder
                       agent_data = agent.copy()
-                      agent_data['url'] = agent_data['url'].replace('{namespace}', namespace)
 
                       print(f"  Registering: {agent_data['name']}")
                       result = api_request_json(
@@ -3184,7 +3220,8 @@ Resources:
           Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${GrafanaImageRepo}:${GrafanaImageTag}'
           Essential: true
           PortMappings:
-            - ContainerPort: 3000
+            - Name: grafana-http
+              ContainerPort: 3000
               Protocol: tcp
           Environment:
             - Name: AWS_REGION
@@ -3315,6 +3352,16 @@ Resources:
           ContainerPort: 3000
           TargetGroupArn: !Ref GrafanaTargetGroup
       HealthCheckGracePeriodSeconds: 120
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: grafana-http
+            DiscoveryName: grafana
+            ClientAliases:
+              - Port: 3000
+                DnsName: grafana
       Tags:
         - Key: Name
           Value: !Sub '${EnvironmentName}-grafana'
@@ -3343,9 +3390,11 @@ Resources:
           Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${MetricsServiceImageRepo}:${MetricsServiceImageTag}'
           Essential: true
           PortMappings:
-            - ContainerPort: 8890
+            - Name: metrics-api
+              ContainerPort: 8890
               Protocol: tcp
-            - ContainerPort: 9465
+            - Name: metrics-prometheus
+              ContainerPort: 9465
               Protocol: tcp
           Environment:
             - Name: METRICS_SERVICE_HOST
@@ -3470,10 +3519,16 @@ Resources:
             - ','
             - !ImportValue
                 Fn::Sub: '${EnvironmentName}-PrivateSubnets'
-      ServiceRegistries:
-        - RegistryArn: !ImportValue
-            Fn::Sub: '${EnvironmentName}-MetricsServiceDiscoveryServiceArn'
-          ContainerName: metrics-service
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue
+          Fn::Sub: ${EnvironmentName}-ServiceDiscoveryNamespaceArn
+        Services:
+          - PortName: metrics-api
+            DiscoveryName: metrics-service
+            ClientAliases:
+              - Port: 8890
+                DnsName: metrics-service
       Tags:
         - Key: Name
           Value: !Sub '${EnvironmentName}-metrics-service'
@@ -3563,7 +3618,7 @@ Outputs:
   MetricsServiceEndpoint:
     Condition: EnableObservabilityCondition
     Description: Metrics service internal endpoint (for METRICS_SERVICE_URL env var)
-    Value: !Sub 'http://metrics-service.${EnvironmentName}.local:8890'
+    Value: 'http://metrics-service:8890'
     Export:
       Name: !Sub ${EnvironmentName}-MetricsServiceEndpoint
 
