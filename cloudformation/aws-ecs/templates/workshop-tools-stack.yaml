@@ -690,6 +690,33 @@ Resources:
               except Exception:
                   return []
 
+          def toggle_server(registry_url, token, server_path, new_state):
+              """Toggle server enabled state via /api/servers/toggle (JWT-compatible).
+              Toggling ON triggers immediate health check + tool discovery."""
+              data = urllib.parse.urlencode({
+                  'path': server_path,
+                  'new_state': str(new_state).lower()
+              }).encode('utf-8')
+              req = urllib.request.Request(
+                  f"{registry_url}/api/servers/toggle",
+                  data=data, method='POST'
+              )
+              req.add_header('Authorization', f'Bearer {token}')
+              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=120) as response:
+                      return json.loads(response.read().decode('utf-8'))
+              except Exception as e:
+                  print(f"    Toggle error: {e}")
+                  return None
+
+          def refresh_server(registry_url, token, server_path):
+              """Trigger health check by toggling server off then on."""
+              toggle_server(registry_url, token, server_path, False)
+              time.sleep(1)
+              toggle_server(registry_url, token, server_path, True)
+
           def wait_for_tool_discovery(registry_url, token, servers, max_wait=120):
               """Wait for tool discovery on registered servers with refresh retries."""
               server_paths = [s['path'] for s in servers]
@@ -704,7 +731,8 @@ Resources:
                           print(f"    {path}: {len(tools)} tools")
                           continue
                       all_have_tools = False
-                      print(f"    {path}: no tools yet (attempt {attempt}), waiting for reconciliation...")
+                      print(f"    {path}: no tools yet, triggering refresh (attempt {attempt})...")
+                      refresh_server(registry_url, token, path)
 
                   if all_have_tools:
                       elapsed = int(time.time() - start)
@@ -783,7 +811,7 @@ Resources:
                   # Service Connect is confirmed working (health check passed),
                   # but tool discovery is async — wait for it to complete.
                   print("Waiting for tool discovery on registered servers...")
-                  wait_for_tool_discovery(registry_url, token, MCP_SERVERS)
+                  wait_for_tool_discovery(registry_url, token, MCP_SERVERS, max_wait=300)
 
                   # Register A2A Agents (uses JSON data)
                   print("Registering A2A Agents...")
