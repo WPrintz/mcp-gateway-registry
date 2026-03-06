@@ -17,8 +17,8 @@
 # Environment variables (override defaults):
 #   AWS_PROFILE_BUILD    - AWS CLI profile for CodeBuild (default: printw-Admin)
 #   CODEBUILD_PROJECT    - CodeBuild project name (default: mcp-gateway-export-containers)
-#   SOURCE_VERSION       - git branch to build from (default: cloudformation/workshop-v1.0.15)
-#   IMAGE_TAG            - image tag for docker save (default: v1.0.15)
+#   SOURCE_VERSION       - git branch to build from (default: cloudformation/workshop-v1.0.16)
+#   IMAGE_TAG            - image tag for docker save (default: v1.0.16)
 #   S3_DEST_BUCKET       - S3 bucket for tarball upload (default: mcp-gateway-codebuild-cache-<account-id>)
 #   S3_DEST_PREFIX       - S3 key prefix for tarballs (default: container-exports)
 #   S3_DEST_DATE         - Date stamp for versioned subfolder (default: today, YYYY-MM-DD)
@@ -33,8 +33,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 AWS_PROFILE_BUILD="${AWS_PROFILE_BUILD:-printw-Admin}"
 CODEBUILD_PROJECT="${CODEBUILD_PROJECT:-mcp-gateway-export-containers}"
-SOURCE_VERSION="${SOURCE_VERSION:-cloudformation/workshop-v1.0.15}"
-IMAGE_TAG="${IMAGE_TAG:-v1.0.15}"
+SOURCE_VERSION="${SOURCE_VERSION:-cloudformation/workshop-v1.0.16}"
+IMAGE_TAG="${IMAGE_TAG:-v1.0.16}"
 ACCOUNT_ID=$(aws sts get-caller-identity --profile "$AWS_PROFILE_BUILD" --query 'Account' --output text 2>/dev/null || echo "UNKNOWN")
 S3_DEST_BUCKET="${S3_DEST_BUCKET:-mcp-gateway-export-us-east-1-${ACCOUNT_ID}}"
 S3_DEST_PREFIX="${S3_DEST_PREFIX:-container-exports}"

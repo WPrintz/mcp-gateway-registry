@@ -14,7 +14,7 @@
 # Usage:
 #   ./cloudformation/aws-ecs/scripts/build-containers-workshop.sh
 #   ./cloudformation/aws-ecs/scripts/build-containers-workshop.sh --branch main
-#   ./cloudformation/aws-ecs/scripts/build-containers-workshop.sh --tag v1.0.15
+#   ./cloudformation/aws-ecs/scripts/build-containers-workshop.sh --tag v1.0.16
 #
 # Environment variables (override defaults):
 #   AWS_REGION           - region (default: us-west-2)

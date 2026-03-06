@@ -414,6 +414,21 @@ Resources:
         - Key: Name
           Value: !Sub ${EnvironmentName}-admin-password
 
+  # Grafana admin password secret
+  GrafanaAdminPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub ${EnvironmentName}-grafana-admin-password
+      Description: Grafana admin password for MCP Gateway observability dashboard
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: grafana_admin_password
+        PasswordLength: 32
+        RequireEachIncludedType: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName}-grafana-admin-password
+
   # Keycloak client secret (placeholder, updated by init script)
   KeycloakClientSecret:
     Type: AWS::SecretsManager::Secret
@@ -1167,6 +1182,12 @@ Outputs:
     Value: !Ref AdminPasswordSecret
     Export:
       Name: !Sub ${EnvironmentName}-AdminPasswordSecretArn
+
+  GrafanaAdminPasswordSecretArn:
+    Description: Grafana admin password secret ARN
+    Value: !Ref GrafanaAdminPasswordSecret
+    Export:
+      Name: !Sub ${EnvironmentName}-GrafanaAdminPasswordSecretArn
 
   KeycloakClientSecretArn:
     Description: Keycloak client secret ARN
