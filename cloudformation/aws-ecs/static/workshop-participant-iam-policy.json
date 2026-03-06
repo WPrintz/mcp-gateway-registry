@@ -1,0 +1,274 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CloudFormationReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudformation:DescribeStacks",
+        "cloudformation:DescribeStackResource",
+        "cloudformation:DescribeStackResources",
+        "cloudformation:DescribeStackEvents",
+        "cloudformation:GetTemplate",
+        "cloudformation:ListStacks",
+        "cloudformation:ListStackResources"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SecretsManagerReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:mcp-gateway-admin-password-*"
+    },
+    {
+      "Sid": "SecretsManagerListAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:ListSecrets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SSMParameterReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:*:parameter/keycloak/*"
+      ]
+    },
+    {
+      "Sid": "SSMParameterTokenCacheAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:PutParameter"
+      ],
+      "Resource": [
+        "arn:aws:ssm:*:*:parameter/keycloak/clients/*"
+      ]
+    },
+    {
+      "Sid": "KMSDecryptForSSMParameters",
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringLike": {
+          "kms:ViaService": "ssm.*.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "SSMParameterListAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:DescribeParameters"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchLogsReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams",
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents",
+        "logs:StartQuery",
+        "logs:StopQuery",
+        "logs:GetQueryResults"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-registry:*",
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-nginx:*",
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-keycloak:*",
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-auth-server:*",
+        "arn:aws:logs:*:*:log-group:/aws/ecs/containerinsights/mcp-gateway-ecs-cluster/*",
+        "arn:aws:logs:*:*:log-group:/aws/ecs/containerinsights/mcp-gateway-keycloak-cluster/*"
+      ]
+    },
+    {
+      "Sid": "CloudWatchLogsInsights",
+      "Effect": "Allow",
+      "Action": [
+        "logs:DescribeQueries"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchMetricsReadAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:DescribeAlarmsForMetric"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchAlarmsWriteAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:PutMetricAlarm",
+        "cloudwatch:DeleteAlarms"
+      ],
+      "Resource": "arn:aws:cloudwatch:*:*:alarm:mcp-gateway-*"
+    },
+    {
+      "Sid": "CloudWatchLogMetricFilters",
+      "Effect": "Allow",
+      "Action": [
+        "logs:PutMetricFilter",
+        "logs:DeleteMetricFilter",
+        "logs:DescribeMetricFilters"
+      ],
+      "Resource": [
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-registry:*",
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-nginx:*",
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-keycloak:*",
+        "arn:aws:logs:*:*:log-group:/ecs/mcp-gateway-auth-server:*",
+        "arn:aws:logs:*:*:log-group:/aws/ecs/containerinsights/mcp-gateway-ecs-cluster/*",
+        "arn:aws:logs:*:*:log-group:/aws/ecs/containerinsights/mcp-gateway-keycloak-cluster/*"
+      ]
+    },
+    {
+      "Sid": "CloudShellAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudshell:CreateEnvironment",
+        "cloudshell:StartEnvironment",
+        "cloudshell:StopEnvironment",
+        "cloudshell:CreateSession",
+        "cloudshell:GetEnvironmentStatus",
+        "cloudshell:DeleteEnvironment",
+        "cloudshell:PutCredentials",
+        "cloudshell:GetFileDownloadUrls",
+        "cloudshell:GetFileUploadUrls"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2ReadOnlyForCloudShell",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeVpcs",
+        "ec2:DescribeSubnets"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "CloudWatchReadOnlyAccess",
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarmHistory",
+        "cloudwatch:DescribeInsightRules",
+        "cloudwatch:GetDashboard",
+        "cloudwatch:GetInsightRuleReport",
+        "cloudwatch:GetMetricWidgetImage",
+        "cloudwatch:ListDashboards",
+        "cloudwatch:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECSReadOnlyForContainerInsights",
+      "Effect": "Allow",
+      "Action": [
+        "ecs:DescribeClusters",
+        "ecs:DescribeContainerInstances",
+        "ecs:DescribeServices",
+        "ecs:DescribeTasks",
+        "ecs:DescribeTaskDefinition",
+        "ecs:ListClusters",
+        "ecs:ListContainerInstances",
+        "ecs:ListServices",
+        "ecs:ListTasks",
+        "ecs:ListTaskDefinitions",
+        "ecs:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ApplicationInsightsReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "applicationinsights:DescribeApplication",
+        "applicationinsights:DescribeComponent",
+        "applicationinsights:DescribeComponentConfiguration",
+        "applicationinsights:DescribeObservation",
+        "applicationinsights:DescribeProblem",
+        "applicationinsights:ListApplications",
+        "applicationinsights:ListComponents",
+        "applicationinsights:ListProblems"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "XRayReadOnlyForServiceLens",
+      "Effect": "Allow",
+      "Action": [
+        "xray:BatchGetTraces",
+        "xray:BatchGetTraceSummaryById",
+        "xray:GetDistinctTraceGraphs",
+        "xray:GetServiceGraph",
+        "xray:GetTraceGraph",
+        "xray:GetTraceSummaries",
+        "xray:GetSamplingRules",
+        "xray:GetSamplingTargets",
+        "xray:GetSamplingStatisticSummaries",
+        "xray:GetGroups",
+        "xray:GetGroup",
+        "xray:GetTimeSeriesServiceStatistics",
+        "xray:GetInsightSummaries",
+        "xray:GetInsight",
+        "xray:GetInsightEvents",
+        "xray:GetInsightImpactGraph",
+        "xray:ListTagsForResource",
+        "xray:ListResourcePolicies"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "TagReadOnlyAccess",
+      "Effect": "Allow",
+      "Action": [
+        "tag:GetResources",
+        "tag:GetTagKeys",
+        "tag:GetTagValues"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AutoScalingReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:DescribeAutoScalingGroups",
+        "autoscaling:DescribeScalingActivities"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ElasticLoadBalancingReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:DescribeLoadBalancers",
+        "elasticloadbalancing:DescribeTargetGroups",
+        "elasticloadbalancing:DescribeTargetHealth",
+        "elasticloadbalancing:DescribeListeners",
+        "elasticloadbalancing:DescribeRules",
+        "elasticloadbalancing:DescribeTags"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

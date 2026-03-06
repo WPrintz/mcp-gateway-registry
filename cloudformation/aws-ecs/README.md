@@ -1,337 +1,341 @@
-# MCP Gateway Registry - AWS CloudFormation Deployment
+# MCP Gateway Registry - AWS CloudFormation Workshop Deployment
 
-Production-grade infrastructure for the MCP Gateway Registry using AWS CloudFormation with ECS Fargate, Aurora Serverless, and Keycloak authentication.
+Production-grade infrastructure for the MCP Gateway Registry using AWS CloudFormation with ECS Fargate, DocumentDB, ECS Service Connect, and Keycloak authentication.
 
 [![Infrastructure](https://img.shields.io/badge/infrastructure-cloudformation-orange)](https://aws.amazon.com/cloudformation/)
 [![AWS ECS](https://img.shields.io/badge/compute-ECS%20Fargate-orange)](https://aws.amazon.com/ecs/)
-[![Database](https://img.shields.io/badge/database-Aurora%20Serverless%20v2-blue)](https://aws.amazon.com/rds/aurora/)
+[![Database](https://img.shields.io/badge/database-DocumentDB-blue)](https://aws.amazon.com/documentdb/)
 
 ## Table of Contents
 
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
-- [Quick Start](#quick-start)
 - [Deployment](#deployment)
-- [Currently Deployed Resources](#currently-deployed-resources)
+- [Build Strategy](#build-strategy)
 - [Configuration](#configuration)
+- [Service Connect Networking](#service-connect-networking)
+- [Registration Flow](#registration-flow)
 - [Troubleshooting](#troubleshooting)
 - [Cleanup](#cleanup)
 
 ## Architecture
 
-The infrastructure uses 5 consolidated CloudFormation templates:
+The infrastructure uses 7 CloudFormation templates deployed as a nested stack:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     main-stack.yaml                              │
-│                   (Parent/Root Stack)                            │
-├─────────────────────────────────────────────────────────────────┤
-│  Nested Stacks (4 total):                                       │
-│    ├── network-stack.yaml   (VPC, Subnets, NAT, SGs, VPC EP)   │
-│    ├── data-stack.yaml      (EFS, Aurora, RDS Proxy, Secrets)  │
-│    ├── compute-stack.yaml   (ECS Clusters, ALBs, DNS, ECR)     │
-│    └── services-stack.yaml  (Task Defs, Services, AutoScale)   │
-└─────────────────────────────────────────────────────────────────┘
+main-stack.yaml (Parent/Root Stack)
+  |
+  |-- network-stack.yaml        VPC, Subnets, NAT Gateway, Security Groups
+  |-- data-stack.yaml           DocumentDB, Keycloak Aurora PostgreSQL, Secrets Manager
+  |-- compute-stack.yaml        ECS Cluster, CodeBuild, ECR, CloudFront, ALBs
+  |-- services-stack.yaml       ECS Services, Task Definitions, Service Connect
+  |-- observability-stack.yaml  Grafana OSS, ADOT Collector, Amazon Managed Prometheus
+  |-- workshop-tools-stack.yaml Load Generator, Network Health Check, MCP Registration
 ```
 
 ### Services Deployed
 
-| Service | Port | Description |
-|---------|------|-------------|
-| Registry | 7860, 80, 443 | Main MCP Gateway Registry |
-| Auth Server | 8888 | OAuth2/OIDC Authentication |
-| Keycloak | 8080 | Identity Management |
-| CurrentTime MCP | 8000 | Example MCP Server |
-| MCPGW MCP | 8003 | MCP Gateway Server |
-| RealServerFakeTools | 8002 | Example MCP Server |
-| Flight Booking Agent | 9000 | A2A Agent |
-| Travel Assistant Agent | 9000 | A2A Agent |
+| Service | Container Port | Description |
+|---------|---------------|-------------|
+| Registry | 7860 | MCP Gateway Registry (main application) |
+| Auth Server | 8888 | OAuth2/OIDC token proxy |
+| Keycloak | 8080 | Identity and Access Management |
+| CurrentTime MCP | 8000 | Example MCP server |
+| MCPGW | 8003 | MCP Gateway protocol server (backend for airegistry-tools) |
+| RealServerFakeTools | 8002 | Example MCP server with simulated tools |
+| Flight Booking Agent | 9000 | A2A demo agent |
+| Travel Assistant Agent | 9000 | A2A demo agent |
+| Metrics Service | 9465 | Prometheus metrics collector |
+| Grafana | 3000 | Observability dashboards |
+
+### External Access
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| Registry UI | CloudFront | HTTPS access to the Registry dashboard |
+| Keycloak Admin | CloudFront | HTTPS access to Keycloak admin console |
+| Grafana | ALB | HTTP access to Grafana dashboards |
 
 ## Prerequisites
 
 ### Required Tools
 
-| Tool | Minimum Version | Installation |
-|------|----------------|--------------|
-| AWS CLI | >= 2.0 | [docs.aws.amazon.com/cli](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
-| cfn-lint | Latest | `pip install cfn-lint` |
+| Tool | Minimum Version | Purpose |
+|------|----------------|---------|
+| AWS CLI | >= 2.0 | Stack deployment and management |
 
 ### AWS Account Setup
 
-You need an AWS account with permissions to create:
+The deployment creates all required infrastructure. You need an AWS account with permissions to create:
 - VPC, Subnets, NAT Gateways, Internet Gateways
-- ECS Clusters, Task Definitions, Services
-- RDS Aurora Clusters, RDS Proxy
-- EFS File Systems
-- Application Load Balancers
-- Route53 Records, ACM Certificates
+- ECS Clusters, Task Definitions, Services (with Service Connect)
+- DocumentDB Clusters
+- RDS Aurora Clusters (for Keycloak)
+- Application Load Balancers, CloudFront Distributions
+- CodeBuild Projects, ECR Repositories
 - IAM Roles and Policies
 - Secrets Manager Secrets, SSM Parameters
-
-### Domain Configuration
-
-You need a domain with a Route53 hosted zone. The infrastructure creates:
-- `registry.{region}.{base_domain}` - Main registry endpoint
-- `kc.{region}.{base_domain}` - Keycloak endpoint
-
-## Quick Start
-
-### Deploy Individual Stacks (Recommended for Testing)
-
-The stacks use cross-stack references (`!ImportValue`) to automatically pull values from previously deployed stacks. This means you only need to specify the `EnvironmentName` parameter (which must match across all stacks).
-
-```bash
-# 1. Deploy Network Stack
-aws cloudformation create-stack \
-  --stack-name mcp-gateway-network \
-  --template-body file://templates/network-stack.yaml \
-  --region us-west-2
-
-aws cloudformation wait stack-create-complete \
-  --stack-name mcp-gateway-network --region us-west-2
-
-# 2. Deploy Data Stack (uses ImportValue from network stack)
-aws cloudformation create-stack \
-  --stack-name mcp-gateway-data \
-  --template-body file://templates/data-stack.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-west-2
-
-aws cloudformation wait stack-create-complete \
-  --stack-name mcp-gateway-data --region us-west-2
-
-# 3. Deploy Compute Stack (uses ImportValue from network + data stacks)
-aws cloudformation create-stack \
-  --stack-name mcp-gateway-compute \
-  --template-body file://templates/compute-stack.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-west-2
-
-aws cloudformation wait stack-create-complete \
-  --stack-name mcp-gateway-compute --region us-west-2
-
-# 4. Deploy Services Stack (uses ImportValue from all previous stacks)
-aws cloudformation create-stack \
-  --stack-name mcp-gateway-services \
-  --template-body file://templates/services-stack.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --region us-west-2
-```
-
-### With Custom Domain (Optional)
-
-To enable HTTPS with custom domain names, add these parameters to the compute stack:
-
-```bash
-aws cloudformation create-stack \
-  --stack-name mcp-gateway-compute \
-  --template-body file://templates/compute-stack.yaml \
-  --capabilities CAPABILITY_NAMED_IAM \
-  --parameters \
-    ParameterKey=BaseDomain,ParameterValue=mycorp.click \
-    ParameterKey=HostedZoneId,ParameterValue=Z1234567890ABC \
-  --region us-west-2
-```
+- Cloud Map Namespaces (HTTP type, for Service Connect)
 
 ## Deployment
 
-### Stack Deployment Order
+### Workshop Deployment (Nested Stacks via main-stack)
 
-1. **network-stack** - VPC, subnets, security groups
-2. **data-stack** - EFS, Aurora, secrets (depends on network)
-3. **compute-stack** - ECS clusters, ALBs, DNS (depends on network + data)
-4. **services-stack** - ECS services (depends on all above)
-
-### Full Deployment with Main Stack
-
-For production deployment using nested stacks:
+For workshop use, all templates are uploaded to S3 and deployed as a single nested stack:
 
 ```bash
 # 1. Upload templates to S3
-aws s3 cp templates/ s3://<YOUR_BUCKET>/cloudformation/templates/ --recursive
+aws s3 cp templates/ s3://<TEMPLATE_BUCKET>/cloudformation/templates/ --recursive
 
-# 2. Deploy main stack
+# 2. Deploy the main stack
 aws cloudformation create-stack \
   --stack-name mcp-gateway \
   --template-body file://templates/main-stack.yaml \
   --parameters \
     ParameterKey=EnvironmentName,ParameterValue=mcp-gateway \
-    ParameterKey=BaseDomain,ParameterValue=<YOUR_DOMAIN> \
-    ParameterKey=HostedZoneId,ParameterValue=<HOSTED_ZONE_ID> \
+    ParameterKey=TemplateS3Bucket,ParameterValue=<TEMPLATE_BUCKET> \
     ParameterKey=KeycloakDatabasePassword,ParameterValue=<PASSWORD> \
     ParameterKey=KeycloakAdminPassword,ParameterValue=<ADMIN_PASSWORD> \
-    ParameterKey=TemplateS3Bucket,ParameterValue=<YOUR_BUCKET> \
+    ParameterKey=DocumentDBPassword,ParameterValue=<DB_PASSWORD> \
   --capabilities CAPABILITY_NAMED_IAM \
-  --region us-west-2
+  --region us-east-2
 ```
 
-## Currently Deployed Resources
+### Stack Deployment Order (Automatic via Nested Stacks)
 
-**Target Region: us-west-2**
+The main stack deploys nested stacks in dependency order:
 
-### Stack Status (Nested Deployment)
+1. **NetworkStack** - VPC, subnets, security groups
+2. **DataStack** - DocumentDB, Keycloak Aurora, Secrets Manager (depends on Network)
+3. **ComputeStack** - ECS cluster, CodeBuild, ECR, CloudFront, ALBs (depends on Network + Data)
+4. **ServicesStack** - ECS services with Service Connect (depends on all above)
+5. **ObservabilityStack** - Grafana, ADOT, Prometheus (depends on Services)
+6. **WorkshopToolsStack** - Network health gate, MCP registration, load generator (depends on Services)
 
-| Stack Name | Status | Description |
-|------------|--------|-------------|
-| mcp-gateway | ✅ DEPLOYED | Parent orchestration stack |
-| mcp-gateway-NetworkStack-* | ✅ DEPLOYED | VPC, Subnets, Security Groups |
-| mcp-gateway-DataStack-* | ✅ DEPLOYED | EFS, Aurora, RDS Proxy, Secrets, SSM |
-| mcp-gateway-ComputeStack-* | ✅ DEPLOYED | ECS Clusters, ALBs, CloudFront, ECR |
-| mcp-gateway-ServicesStack-* | ✅ DEPLOYED | All 8 ECS services running |
+### Individual Stack Deployment (Development/Testing)
 
-### Service Endpoints
+Stacks use cross-stack references (`!ImportValue`) and can be deployed individually:
 
-| Service | URL |
-|---------|-----|
-| Keycloak (HTTPS) | `https://d39ub8zyvrsszv.cloudfront.net` |
-| Main ALB | `http://mcp-gateway-alb-*.us-west-2.elb.amazonaws.com` |
-| Keycloak ALB | `http://mcp-gateway-keycloak-alb-*.us-west-2.elb.amazonaws.com` |
+```bash
+# Deploy each stack in order (EnvironmentName must match across all stacks)
+aws cloudformation create-stack \
+  --stack-name mcp-gateway-network \
+  --template-body file://templates/network-stack.yaml \
+  --region us-east-2
 
-### Network Stack Resources (mcp-gateway-network)
+aws cloudformation wait stack-create-complete \
+  --stack-name mcp-gateway-network --region us-east-2
 
-| Resource | ID |
-|----------|-----|
-| VPC | `vpc-04900b8315707977b` |
-| Public Subnet 1 | `subnet-044c234fcf392115e` |
-| Public Subnet 2 | `subnet-0370c083e05990200` |
-| Public Subnet 3 | `subnet-0a771b97005f799ee` |
-| Private Subnet 1 | `subnet-0735428ee0dc664e2` |
-| Private Subnet 2 | `subnet-0cc9ccf88b4b23876` |
-| Private Subnet 3 | `subnet-03595bec2f9489584` |
-| Main ALB SG | `sg-084a0f5cd6171750e` |
-| Keycloak ALB SG | `sg-02d6951014263e980` |
-| ECS Tasks SG | `sg-0db1f3db0858d21c5` |
-| Keycloak ECS SG | `sg-08da55df90e59d9ea` |
-| Database SG | `sg-0a03d7ea74ab53254` |
-| EFS SG | `sg-03b82c1398b75f7cb` |
-| MCP Servers SG | `sg-0b404804a88590f95` |
+# Continue with data-stack, compute-stack, services-stack, etc.
+```
 
-### Data Stack Resources (mcp-gateway-data)
+## Build Strategy
 
-| Resource | Value |
-|----------|-------|
-| EFS File System | `fs-0a3a37bef4e84ee90` |
-| Aurora Cluster Endpoint | `mcp-gateway-keycloak.cluster-c5dv9t0nitzc.us-west-2.rds.amazonaws.com` |
-| RDS Proxy Endpoint | `mcp-gateway-keycloak-proxy.proxy-c5dv9t0nitzc.us-west-2.rds.amazonaws.com` |
+Container images are built via CodeBuild from the GitHub repository source.
+
+### Development Phase (Current)
+
+The `build-containers-workshop.sh` script triggers CodeBuild to:
+1. Clone the repository (`cloudformation/workshop-v1.0.16` branch)
+2. Build all 10 container images in parallel
+3. Push dual-tagged images to ECR (`latest` + git SHA)
+
+```bash
+# Trigger a container build
+./scripts/build-containers-workshop.sh
+```
+
+### Stable Phase (Future)
+
+For production workshops, pre-built container tarballs are exported to S3:
+
+```bash
+# Export containers as split tarballs to S3
+./scripts/export-containers.sh
+```
+
+The compute-stack CodeBuild switches to `NO_SOURCE` and imports from S3.
 
 ## Configuration
 
-### Key Parameters
+### Key Parameters (main-stack.yaml)
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| EnvironmentName | Prefix for all resources | mcp-gateway |
-| VpcCidr | VPC CIDR block | 10.0.0.0/16 |
-| BaseDomain | Base domain for regional URLs | (required) |
-| HostedZoneId | Route53 hosted zone ID | (required) |
-| KeycloakDatabasePassword | Database password | (required, NoEcho) |
+| EnvironmentName | Prefix for all resources | `mcp-gateway` |
+| TemplateS3Bucket | S3 bucket containing nested templates | (required) |
+| KeycloakDatabasePassword | Keycloak Aurora password | (required, NoEcho) |
 | KeycloakAdminPassword | Keycloak admin password | (required, NoEcho) |
-| EnableAutoScaling | Enable ECS auto scaling | true |
-| MinCapacity | Minimum ECS tasks | 1 |
-| MaxCapacity | Maximum ECS tasks | 4 |
-| DatabaseMinACU | Aurora min capacity | 0.5 |
-| DatabaseMaxACU | Aurora max capacity | 2 |
+| DocumentDBPassword | DocumentDB cluster password | (required, NoEcho) |
+| VpcCidr | VPC CIDR block | `10.0.0.0/16` |
+
+See `parameters.json.example` for a complete parameter reference.
+
+## Service Connect Networking
+
+All ECS services communicate via **ECS Service Connect** (Envoy sidecar proxy), not DNS-based Cloud Map.
+
+### How It Works
+
+- A Cloud Map **HTTP namespace** (`mcp-gateway.local`) is created in the compute stack
+- Each ECS service registers a `portMapping.name` and `serviceConnectConfiguration`
+- The Envoy sidecar intercepts traffic and routes by hostname
+- Hostnames like `mcpgw-server:8003`, `currenttime-server:8000` resolve automatically within the ECS cluster
+
+### Important: Propagation Delay
+
+Service Connect hostnames take approximately **10-15 minutes** to propagate after ECS services reach `CREATE_COMPLETE`. The `ServiceNetworkHealthCheck` Lambda in `workshop-tools-stack.yaml` gates downstream operations until connectivity is confirmed.
+
+## Registration Flow
+
+After deployment, two Lambdas in the workshop-tools-stack handle registration:
+
+### 1. ServiceNetworkHealthCheck
+
+- **Purpose:** Confirm Service Connect is fully propagated
+- **Method:** Polls `GET /api/tools/airegistry-tools/` for discovered tools > 0
+- **Triggers:** `POST /api/refresh/airegistry-tools/` each attempt to retry tool discovery
+- **Timeout:** 600 seconds (polls with increasing backoff)
+
+### 2. MCPRegistrationLambda (DependsOn: ServiceNetworkHealthCheck)
+
+- **Purpose:** Register MCP servers, A2A agents, virtual servers, and skills
+- **Runs only after** Service Connect is confirmed working
+- **Registers:**
+  - MCP servers: `/currenttime/`, `/realserverfaketools/`
+  - A2A agents: Flight Booking, Travel Assistant
+  - Virtual server: "Dev Tools" (maps `intelligent_tool_finder` to `/airegistry-tools/`)
+  - Skills: weather lookup, unit conversion
+
+The built-in `/airegistry-tools/` server (backed by `mcpgw-server:8003`) is auto-registered by the Registry on startup and does not need Lambda registration.
 
 ## Troubleshooting
 
 ### Stack Creation Failed
 
 ```bash
-# View stack events
+# View failure events for the main stack and nested stacks
 aws cloudformation describe-stack-events \
-  --stack-name mcp-gateway-network \
-  --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`]' \
-  --region us-west-2
+  --stack-name mcp-gateway \
+  --query 'StackEvents[?ResourceStatus==`CREATE_FAILED`].[LogicalResourceId,ResourceStatusReason]' \
+  --output table --region us-east-2
 ```
 
-### Certificate Validation Stuck
+### ECS Services Not Healthy
 
-ACM certificates require DNS validation. Ensure your Route53 hosted zone is properly configured:
 ```bash
-dig NS mycorp.click +short
+# Check registry logs
+aws logs tail /ecs/mcp-gateway-registry --follow --region us-east-2
+
+# Check Service Connect health (look for tool discovery)
+aws logs tail /ecs/mcp-gateway-registry --filter-pattern "airegistry-tools" --region us-east-2
 ```
 
-### ECS Tasks Not Starting
+### Registration Lambda Failed
 
-Check CloudWatch logs:
 ```bash
-aws logs tail /ecs/mcp-gateway-registry --follow --region us-west-2
+# Check network health check logs
+aws logs tail /aws/lambda/mcp-gateway-svc-network-health --region us-east-2
+
+# Check registration Lambda logs
+aws logs tail /aws/lambda/mcp-gateway-mcp-registration --region us-east-2
 ```
 
-### Database Connection Issues
+Common causes:
+- **Service Connect not ready:** The health check Lambda should handle this. If it times out after 600s, check that the Registry and MCPGW services are running.
+- **M2M token failure:** Verify Keycloak is healthy and the M2M client secret in Secrets Manager is correct.
 
-Verify security group rules allow traffic from ECS tasks to RDS Proxy on port 3306.
-
-## Known Issues
-
-### Keycloak ALB HTTP Listener Deletion (AWS Internal Security)
-
-**Issue**: The Keycloak ALB HTTP listener (port 80) may be automatically deleted by AWS internal security automation (`EpoxyAccess+epoxy-mitigations-prod+ELBListenerDelete`).
-
-**Cause**: AWS internal security mitigations may flag HTTP-only listeners on public ALBs as non-compliant in certain account types (e.g., workshop accounts, accounts with specific SCPs).
-
-**Impact**: CloudFront cannot reach the Keycloak ALB origin, causing 502 errors.
-
-**Workaround**: Manually recreate the listener after deployment:
+### CodeBuild Container Build Failed
 
 ```bash
-# Get the ALB ARN
+# Check the latest build
+aws codebuild list-builds-for-project \
+  --project-name mcp-gateway-container-build \
+  --query 'ids[0]' --output text --region us-east-2 | \
+  xargs -I {} aws codebuild batch-get-builds --ids {} \
+  --query 'builds[0].buildStatus' --output text --region us-east-2
+```
+
+Known issue: NodeSource CDN can have transient mirror sync failures causing `npm: not found`. Retry usually resolves it.
+
+### Keycloak ALB HTTP Listener Deletion
+
+AWS internal security automation may delete HTTP-only listeners on public ALBs in workshop accounts. If CloudFront returns 502 errors for Keycloak:
+
+```bash
+# Recreate the HTTP listener
 ALB_ARN=$(aws elbv2 describe-load-balancers \
   --names mcp-gateway-keycloak-alb \
   --query 'LoadBalancers[0].LoadBalancerArn' \
-  --output text --region us-west-2)
+  --output text --region us-east-2)
 
-# Get the target group ARN
 TG_ARN=$(aws elbv2 describe-target-groups \
   --names mcp-gateway-keycloak-tg \
   --query 'TargetGroups[0].TargetGroupArn' \
-  --output text --region us-west-2)
+  --output text --region us-east-2)
 
-# Create the HTTP listener
 aws elbv2 create-listener \
   --load-balancer-arn "$ALB_ARN" \
-  --protocol HTTP \
-  --port 80 \
+  --protocol HTTP --port 80 \
   --default-actions Type=forward,TargetGroupArn="$TG_ARN" \
-  --region us-west-2
+  --region us-east-2
 ```
-
-**Long-term Solution**: Consider using an internal ALB with HTTPS (self-signed cert) or investigate account-level security policies.
 
 ## Cleanup
 
-Delete stacks in reverse order:
+### Nested Stack Cleanup
 
 ```bash
-# Delete services first
-aws cloudformation delete-stack --stack-name mcp-gateway-services --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name mcp-gateway-services --region us-west-2
-
-# Delete compute
-aws cloudformation delete-stack --stack-name mcp-gateway-compute --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name mcp-gateway-compute --region us-west-2
-
-# Delete data (Aurora deletion takes ~10 minutes)
-aws cloudformation delete-stack --stack-name mcp-gateway-data --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name mcp-gateway-data --region us-west-2
-
-# Delete network
-aws cloudformation delete-stack --stack-name mcp-gateway-network --region us-west-2
-aws cloudformation wait stack-delete-complete --stack-name mcp-gateway-network --region us-west-2
+# Delete the entire deployment (nested stacks deleted automatically)
+aws cloudformation delete-stack --stack-name mcp-gateway --region us-east-2
+aws cloudformation wait stack-delete-complete --stack-name mcp-gateway --region us-east-2
 ```
+
+### Manual Stack Cleanup (if deployed individually)
+
+Delete in reverse order:
+
+```bash
+for stack in workshop-tools observability services compute data network; do
+  aws cloudformation delete-stack --stack-name mcp-gateway-${stack} --region us-east-2
+  aws cloudformation wait stack-delete-complete --stack-name mcp-gateway-${stack} --region us-east-2
+done
+```
+
+Note: DocumentDB and Aurora deletion can take 10+ minutes.
 
 ## Directory Structure
 
 ```
 cloudformation/aws-ecs/
 ├── templates/
-│   ├── network-stack.yaml    # VPC, subnets, NAT, security groups
-│   ├── data-stack.yaml       # EFS, Aurora, RDS Proxy, Secrets
-│   ├── compute-stack.yaml    # ECS clusters, ALBs, DNS, IAM
-│   ├── services-stack.yaml   # ECS services, task definitions
-│   └── main-stack.yaml       # Parent orchestration
-├── parameters.json.example   # Example parameter file
-└── README.md                 # This file
+│   ├── main-stack.yaml             # Parent orchestration (nested stacks)
+│   ├── network-stack.yaml          # VPC, subnets, NAT, security groups
+│   ├── data-stack.yaml             # DocumentDB, Keycloak Aurora, Secrets
+│   ├── compute-stack.yaml          # ECS cluster, CodeBuild, ECR, CloudFront, ALBs
+│   ├── services-stack.yaml         # ECS services, task definitions, Service Connect
+│   ├── observability-stack.yaml    # Grafana OSS, ADOT, Amazon Managed Prometheus
+│   └── workshop-tools-stack.yaml   # Load generator, health check, MCP registration
+├── scripts/
+│   ├── build-containers-workshop.sh  # Trigger CodeBuild from GitHub source
+│   ├── export-containers.sh          # Export pre-built containers to S3
+│   ├── load-generator.sh             # Workshop load generator script
+│   ├── generate-mcp-server-cfn.py    # CFN generator for MCP server services
+│   └── tf-cfn-sync.py               # Terraform-to-CloudFormation sync tool
+├── config/
+│   └── adot-collector-config.yaml    # ADOT Collector scrape configuration
+├── grafana/
+│   ├── Dockerfile                    # Grafana OSS with pre-configured dashboards
+│   ├── dashboards/                   # JSON dashboard definitions
+│   └── provisioning/                 # Datasource and dashboard provisioning
+├── content/                          # Workshop content (Hugo markdown)
+├── static/                           # Workshop static assets and IAM policies
+├── docs/                             # Architecture and requirements docs
+├── tests/                            # Template validation tests
+├── parameters.json.example           # Example parameter file
+├── OBSERVABILITY-SETUP.md            # Observability stack setup guide
+├── THIRD_PARTY_LICENSES.md           # Third-party license inventory
+└── README.md                         # This file
 ```
 
 ## License

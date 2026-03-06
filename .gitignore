@@ -364,3 +364,9 @@ charts/*/Chart.lock
 !.claude/skills/
 .claude/skills/search-registry/
 .token?
+
+# Isengard CLI cache
+isengardcli_cache_*/
+
+# Pre-built container tarballs (use export-containers.sh to generate)
+cloudformation/aws-ecs/containers/
