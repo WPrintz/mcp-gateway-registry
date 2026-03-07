@@ -13,16 +13,16 @@
       "tools": ["quantum_flux_analyzer", "neural_pattern_synthesizer", "hyper_dimensional_mapper"]
     },
     {
-      "server": "mcpgw",
+      "server": "airegistry-tools",
       "methods": ["initialize", "notifications/initialized", "ping", "tools/list", "tools/call"],
       "tools": ["intelligent_tool_finder"]
     }
   ],
   "ui_permissions": {
-    "list_service": ["realserverfaketools", "mcpgw"],
-    "health_check_service": ["realserverfaketools", "mcpgw"],
-    "get_service": ["realserverfaketools", "mcpgw"],
-    "list_tools": ["realserverfaketools", "mcpgw"],
-    "call_tool": ["realserverfaketools", "mcpgw"]
+    "list_service": ["realserverfaketools", "airegistry-tools"],
+    "health_check_service": ["realserverfaketools", "airegistry-tools"],
+    "get_service": ["realserverfaketools", "airegistry-tools"],
+    "list_tools": ["realserverfaketools", "airegistry-tools"],
+    "call_tool": ["realserverfaketools", "airegistry-tools"]
   }
 }

@@ -13,16 +13,16 @@
       "tools": ["current_time_by_timezone"]
     },
     {
-      "server": "mcpgw",
+      "server": "airegistry-tools",
       "methods": ["initialize", "notifications/initialized", "ping", "tools/list", "tools/call"],
       "tools": ["intelligent_tool_finder"]
     }
   ],
   "ui_permissions": {
-    "list_service": ["currenttime", "mcpgw"],
-    "health_check_service": ["currenttime", "mcpgw"],
-    "get_service": ["currenttime", "mcpgw"],
-    "list_tools": ["currenttime", "mcpgw"],
-    "call_tool": ["currenttime", "mcpgw"]
+    "list_service": ["currenttime", "airegistry-tools"],
+    "health_check_service": ["currenttime", "airegistry-tools"],
+    "get_service": ["currenttime", "airegistry-tools"],
+    "list_tools": ["currenttime", "airegistry-tools"],
+    "call_tool": ["currenttime", "airegistry-tools"]
   }
 }

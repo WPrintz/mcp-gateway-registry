@@ -7,7 +7,7 @@
 #
 # Each group has two types of permissions:
 # - Agent permissions: Actions on agent resources (list_agents, get_agent, publish_agent, modify_agent, delete_agent)
-# - MCP server permissions: Methods and tools accessible on specific MCP servers (currenttime, mcpgw, fininfo, etc.)
+# - MCP server permissions: Methods and tools accessible on specific MCP servers (currenttime, airegistry-tools, fininfo, etc.)
 #
 # To add a new group, follow these three steps:
 # 1. Add to UI-Scopes: Define agent and service permissions (what agents/services the group can access)
@@ -95,10 +95,10 @@ UI-Scopes:
     - /test-automation
     list_service:
     - currenttime
-    - mcpgw
+    - airegistry-tools
     health_check_service:
     - currenttime
-    - mcpgw
+    - airegistry-tools
 
   # Public MCP Users: Access to public MCP servers (context7, cloudflare-docs) and flight-booking agent
   public-mcp-users:
@@ -131,11 +131,11 @@ UI-Scopes:
     - /security-analyzer
     list_service:
     - realserverfaketools
-    - mcpgw
+    - airegistry-tools
     - fininfo
     health_check_service:
     - realserverfaketools
-    - mcpgw
+    - airegistry-tools
     - fininfo
 
 # ==================== GROUP MAPPINGS ====================
@@ -244,7 +244,7 @@ federation-service:
       resources:
       - all
 
-# LOB1 Group Scope: Read-only access to API; currenttime and mcpgw servers; code-reviewer and test-automation agents
+# LOB1 Group Scope: Read-only access to API; currenttime and airegistry-tools servers; code-reviewer and test-automation agents
 registry-users-lob1:
 - server: api
   methods:
@@ -261,7 +261,7 @@ registry-users-lob1:
   - resources/templates/list
   tools:
   - current_time_by_timezone
-- server: mcpgw
+- server: airegistry-tools
   methods:
   - initialize
   - notifications/initialized
@@ -295,7 +295,7 @@ registry-users-lob1:
       - /code-reviewer
       - /test-automation
 
-# LOB2 Group Scope: Read-only access to API; realserverfaketools, mcpgw, fininfo servers; data-analysis and security-analyzer agents
+# LOB2 Group Scope: Read-only access to API; realserverfaketools, airegistry-tools, fininfo servers; data-analysis and security-analyzer agents
 registry-users-lob2:
 - server: api
   methods:
@@ -314,7 +314,7 @@ registry-users-lob2:
   - quantum_flux_analyzer
   - neural_pattern_synthesizer
   - hyper_dimensional_mapper
-- server: mcpgw
+- server: airegistry-tools
   methods:
   - initialize
   - notifications/initialized
