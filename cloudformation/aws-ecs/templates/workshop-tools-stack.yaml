@@ -382,6 +382,10 @@ Resources:
                   'is_python': 'true',
                   'license': 'MIT-0'
               },
+          ]
+
+          # Servers to register but leave disabled (workshop participants enable these)
+          DISABLED_SERVERS = [
               {
                   'name': 'Real Server Fake Tools',
                   'description': 'A collection of fake tools with interesting names for testing.',
@@ -807,11 +811,30 @@ Resources:
                       else:
                           print(f"    Failed: {result}")
 
-                  # Wait for tool discovery on newly registered servers
+                  # Wait for tool discovery on registered servers
                   # Service Connect is confirmed working (health check passed),
                   # but tool discovery is async — wait for it to complete.
                   print("Waiting for tool discovery on registered servers...")
                   wait_for_tool_discovery(registry_url, token, MCP_SERVERS, max_wait=300)
+
+                  # Register disabled servers (workshop participants enable these manually)
+                  print("Registering disabled servers...")
+                  for server in DISABLED_SERVERS:
+                      server_data = server.copy()
+                      print(f"  Registering (disabled): {server_data['name']}")
+                      result = api_request_form(
+                          f"{registry_url}/api/servers/register",
+                          token,
+                          server_data
+                      )
+                      if is_success(result):
+                          print(f"    OK (created)")
+                      elif result.get('exists'):
+                          print(f"    Already exists, skipping")
+                      else:
+                          print(f"    Failed: {result}")
+                      # Ensure disabled
+                      toggle_server(registry_url, token, server_data['path'], False)
 
                   # Register A2A Agents (uses JSON data)
                   print("Registering A2A Agents...")

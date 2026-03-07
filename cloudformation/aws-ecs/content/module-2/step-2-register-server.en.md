@@ -36,9 +36,9 @@ Enter the following values in the registration form (fields are listed in the or
 | **Server Name** | `Cloudflare Documentation` |
 | **Path** | `/cloudflare-docs/` |
 | **Proxy URL** | `https://docs.mcp.cloudflare.com/` |
-| **MCP Endpoint** | `https://docs.mcp.cloudflare.com/mcp` |
 | **Description** | `Search Cloudflare developer documentation using semantic search` |
 | **Tags** | `documentation, cloudflare, search, external` |
+| **MCP Endpoint** (towards bottom) | `https://docs.mcp.cloudflare.com/mcp` |
 
 ::alert[The **Path** field determines the URL path where this server will be accessible through the MCP Gateway. After registration, MCP clients will send requests to `https://<gateway-url>/cloudflare-docs/mcp` to reach this server. Type the path exactly as shown — it is not auto-generated from the server name.]{type="info"}
 

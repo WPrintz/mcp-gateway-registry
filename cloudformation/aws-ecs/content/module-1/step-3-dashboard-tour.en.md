@@ -75,11 +75,13 @@ Each MCP server is displayed as a card showing:
 
 **Try this:** Click the **pencil icon** (✏️) in the upper-right of a server card to open the edit view. This is where you can modify the server's name, description, tags, and group visibility.
 
-:image[Expanded Server Card with Tools]{src="/static/img/module-1/1_3/realserverfaketools_config.png" width=800}
+:image[Expanded Server Card with Tools]{src="/static/img/module-1/1_3/current_time_edit_server.png" width=800}
 
-::alert[The workshop servers are pre-registered but **not enabled**. You'll notice each card shows "Disabled" with an "Unknown" health status.]{type="warning"}
+::alert[The workshop servers are pre-registered and **enabled**, except for the server named "Real Server Fake Tools". You'll notice that card shows "Disabled" with an "Unknown" health status.]{type="warning"}
 
 ### Enabling a Server
+
+**Try this:** Enable the Real Server Fake Tools server, observe the health check and tools populate, then click the gear and tools icons on each to explore their configurations and tool descriptions.
 
 1. Find the **enable/disable toggle** on the right side of a server card's footer
 1. Click the toggle to enable the server — the status will change from "Disabled" to "Enabled"
@@ -87,9 +89,9 @@ Each MCP server is displayed as a card showing:
 1. Once healthy, click the **gear icon** (⚙) in the upper-right of the card to view the server's JSON configuration
 1. Click the **tools icon** (🔧) to see the list of tool descriptions the server provides
 
-**Try this:** Enable all three servers, then click the gear and tools icons on each to explore their configurations and tool descriptions.
-
 :image[Expanded Server Card with Tools]{src="/static/img/module-1/1_3/realserverfaketools_tools.png" width=800}
+
+:image[Expanded Server Card with Tools]{src="/static/img/module-1/1_3/realserverfaketools_config.png" width=800}
 
 ### YARA Security Scanning
 
@@ -105,6 +107,37 @@ You can see the scan result by clicking the **green shield icon** on a server ca
 **Try this:** Click the green shield icon on the CurrentTime server card to see its YARA scan results. Notice the per-tool breakdown and the overall security verdict.
 
 ::alert[YARA scanning is just one layer. The registry also supports Cisco AI Defense analyzers (LLM-based semantic analysis, VirusTotal, and more) for deeper inspection. These require additional API keys and are covered in advanced configuration.]{type="info"}
+
+### Virtual MCP Servers
+
+Virtual MCP Servers are one of the registry's most powerful features. Instead of requiring AI agents to connect to multiple individual MCP servers containing tools they may not need, a virtual server **aggregates tools from different backend servers into a single composite endpoint**. An agent connects to one URL and gets access to a curated set of tools drawn from across the registry.  It's simpler to configure and avoids wasting context memory.
+
+Here's how it works:
+
+```
+┌──────────────────────────────────┐
+│     Virtual Server: Dev Tools    │
+│        /virtual/dev-tools        │
+├──────────────────────────────────┤
+│  current_time_by_timezone        │──▶  /currenttime/ (backend)
+│  intelligent_tool_finder         │──▶  /airegistry-tools/ (backend)
+└──────────────────────────────────┘
+```
+
+Each **tool mapping** selects a specific tool from a backend MCP server. The virtual server resolves these mappings at request time, routing each tool call to the correct backend transparently. Administrators can:
+
+- **Cherry-pick tools** from different servers into purpose-built toolkits
+- **Alias tools** to rename them and avoid naming conflicts across backends
+- **Pin versions** to lock a tool mapping to a specific backend version
+- **Override scopes** to restrict individual tools to specific user groups
+
+Virtual servers don't run their own backend process. They are a routing and composition layer managed entirely by the registry. When an AI agent calls a tool on a virtual server, the registry looks up the tool mapping, forwards the request to the correct backend MCP server, and returns the result.
+
+Click the **Virtual MCP Servers** view tab to see the pre-registered "Dev Tools" virtual server, or scroll down to the "Virtual MCP Servers" section in the **All** view. Try clicking the **pencil icon** to see the tool mappings and which backends each tool is sourced from.
+
+:image[Virtual MCP Server card on the dashboard]{src="/static/img/module-1/1_3/virtual_server_card.png" width=800}
+
+::alert[Virtual servers are explored hands-on in later modules. For now, just notice how they appear on the dashboard alongside regular MCP servers.]{type="info"}
 
 ### 4. Pre-Registered MCP Servers
 
@@ -147,23 +180,8 @@ These return mock data — useful for testing agent workflows and access control
 
 ::::
 
-### 5. Pre-Registered Virtual MCP Server
 
-Your workshop also includes a pre-registered **Virtual MCP Server** called **Dev Tools**. Virtual servers don't run their own backend — instead, they aggregate tools from existing MCP servers into a single composite endpoint.
-
-Click the **Virtual MCP Servers** view tab to see it, or scroll down to the "Virtual MCP Servers" section in the **All** view.
-
-**Dev Tools** (`/virtual/dev-tools`)
-- **Purpose**: A curated developer utility that combines tools from two different backend servers into one endpoint
-- **Tools** (2):
-  - `current_time_by_timezone` — sourced from the CurrentTime server
-  - `intelligent_tool_finder` — sourced from the AI Registry Tools server
-
-Notice how these tools originate from different backend servers (`/currenttime/` and `/airegistry-tools/`), but an AI agent connecting to `/virtual/dev-tools` sees them as a single unified tool set. This is the core value of virtual servers — administrators can curate purpose-built toolkits without modifying the underlying MCP servers.
-
-::alert[Virtual servers support tool aliasing (renaming tools to avoid conflicts), version pinning (locking to a specific backend version), and per-tool scope overrides (restricting individual tools to specific user groups). You'll see these capabilities in the Settings page.]{type="info"}
-
-### 6. Pre-Registered Agent Skills
+### 5. Pre-Registered Agent Skills
 
 Your workshop includes two pre-registered **Agent Skills** sourced from [Anthropic's public skills repository](https://github.com/anthropics/skills). Agent Skills are standalone capabilities defined by SKILL.md files — a structured format that describes what an agent can do, making it discoverable by other agents and systems in the registry.
 
@@ -179,7 +197,7 @@ Click the **Agent Skills** view tab to see them, or scroll to the "Agent Skills"
 
 ::alert[Agent Skills differ from MCP servers and A2A agents in that they don't require a running backend service. Each skill is defined entirely by its SKILL.md file, which specifies the skill's name, description, and instructions. The registry parses and indexes these files so agents can discover relevant skills through search.]{type="info"}
 
-### 7. External Registries
+### 6. External Registries
 
 Click the **External Registries** tab to see servers and agents discovered from federated peer registries.
 
@@ -196,7 +214,7 @@ External servers are read-only — you can browse their descriptions, tags, and 
 
 ::alert[Federation is not pre-configured in this workshop environment, so your External Registries tab will be empty. The screenshot above shows what it looks like when a registry is federated with an external peer — in this case, Anthropic's public MCP server registry. Federation configuration is covered in the Settings tour next.]{type="info"}
 
-### 8. Search Bar
+### 7. Search Bar
 
 The search bar at the top supports two modes:
 

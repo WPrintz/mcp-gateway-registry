@@ -16,7 +16,7 @@ Open a **new incognito/private browser window** (keep the admin window open for 
    - **Username:** `lob1-user`
    - **Password:** `lob1pass`
 
-:image[LOB 1 dashboard view]{src="/static/img/module-3/3_2/lob1_user_view.png" width=800}
+:image[LOB 1 dashboard view]{src="/static/img/module-3-ui/3_2/lob1_user_view.png" width=800}
 
 ### Step 2: Count the Servers
 
@@ -35,7 +35,7 @@ You should see **2 server cards** — down from 4 as admin:
 
 Switch to the **Agents** tab. You should see **0 agents** — both Flight Booking Agent and Travel Assistant Agent are gone.
 
-:image[LOB 1 agents tab — empty]{src="/static/img/module-3/3_2/lob1_a2a_view.png" width=800}
+:image[LOB 1 agents tab — empty]{src="/static/img/module-3-ui/3_2/lob1_a2a_view.png" width=800}
 
 ### Step 4: Record LOB 1 Observations
 
@@ -57,7 +57,7 @@ Open another **incognito/private browser window**:
    - **Username:** `lob2-user`
    - **Password:** `lob2pass`
 
-:image[LOB 2 dashboard view]{src="/static/img/module-3/3_2/lob2_user_view.png" width=800}
+:image[LOB 2 dashboard view]{src="/static/img/module-3-ui/3_2/lob2_user_view.png" width=800}
 
 ### Step 6: Count the Servers
 
@@ -76,7 +76,7 @@ LOB 2 sees Real Server Fake Tools (which LOB 1 couldn't see) but *cannot* see Cu
 
 Switch to the **Agents** tab. Again, **0 agents**.
 
-:image[LOB 2 agents tab — empty]{src="/static/img/module-3/3_2/lob2_a2a_view.png" width=800}
+:image[LOB 2 agents tab — empty]{src="/static/img/module-3-ui/3_2/lob2_a2a_view.png" width=800}
 
 ### Step 8: Record LOB 2 Observations
 

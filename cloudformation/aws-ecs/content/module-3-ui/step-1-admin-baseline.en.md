@@ -14,7 +14,7 @@ First, let's establish a baseline by seeing what the platform administrator can 
 3. Click **Login** and authenticate as `admin`
 4. Use the admin password from Secrets Manager (see [Lab 1, Step 1](/module-1/step-1-cloudformation-outputs) if you need a reminder)
 
-:image[Admin dashboard showing all servers and agents]{src="/static/img/module-3/3_1/Registry_first_login.png" width=800}
+:image[Admin dashboard showing all servers and agents]{src="/static/img/module-3-ui/3_1/Registry_first_login.png" width=800}
 
 ## Step 2: Count the Servers
 
@@ -40,7 +40,7 @@ Scroll down or switch to the **Agents** tab. You should see **2 A2A agent cards*
 
 These agents are registered with `public` visibility, but that doesn't mean every user can see them. Agent visibility is also controlled by the `list_agents` permission in each user's scope — as you'll see in the next step.
 
-:image[Admin agents tab showing 2 agent cards]{src="/static/img/module-3/3_1/agents_view.png" width=800}
+:image[Admin agents tab showing 2 agent cards]{src="/static/img/module-3-ui/3_1/agents_view.png" width=800}
 
 ## Step 4: Record Your Baseline
 
