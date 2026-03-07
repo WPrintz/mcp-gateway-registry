@@ -11,19 +11,11 @@ You've successfully completed the MCP Gateway and Registry workshop. Here's a re
 
 ## Modules Completed
 
-| Module | Topic | Duration |
-|--------|-------|----------|
-| 1 | Getting Started | 20 min |
-| 2 | Exploring the Registry | 45 min |
-| 3 | Semantic Search | 30 min |
-| 4 | Registering an MCP Server | 45 min |
-| 5 | Direct MCP Connection | 30 min |
-| 6 | Gateway Connection | 45 min |
-| 7 | Dynamic Tool Discovery | 45 min |
-| 8 | Bedrock AgentCore Integration | 60 min |
-| 9 | A2A Communication | 45 min |
-| 10 | Access Control with Keycloak | 45 min |
-| 11 | Monitoring & Observability | 30 min |
+| Module | Topic | What You Did |
+|--------|-------|-------------|
+| 1 | UI Exploration and Basic Setup | Found CloudFormation outputs, logged in via Keycloak, toured the dashboard and Settings control plane |
+| 2 | Registry Discovery and Server Registration | Compared keyword vs semantic search, registered the Cloudflare Documentation MCP server, verified it end-to-end |
+| 3 | Fine-Grained Access Control | Logged in as LOB users to see multi-tenancy in action, explored three-layer enforcement (UI visibility, method access, tool permissions), managed groups and M2M accounts through IAM Settings |
 
 ---
 
@@ -39,11 +31,19 @@ You've successfully completed the MCP Gateway and Registry workshop. Here's a re
 | Manual discovery | Semantic search |
 | No revocation | Instant access control |
 
+### Three Layers of Access Control
+
+| Layer | What It Controls | Example |
+|-------|-----------------|---------|
+| **UI Visibility** | Which server and agent cards appear in the dashboard | LOB 1 user sees 2 of 4 servers |
+| **Method Access** | Which MCP protocol methods are allowed per server | A user may have `tools/list` but not `tools/call` |
+| **Tool Permissions** | Which specific tools can be invoked via `tools/call` | LOB 1 can invoke `intelligent_tool_finder` but not the other 4 tools on AI Registry Tools |
+
 ### Protocols Covered
 
 - **MCP**: Agent-to-tool communication
 - **A2A**: Agent-to-agent delegation
-- **OAuth2/OIDC**: Authentication and authorization
+- **OAuth2/OIDC**: Authentication and authorization (Keycloak, with support for Amazon Cognito and Microsoft Entra ID)
 
 ---
 
