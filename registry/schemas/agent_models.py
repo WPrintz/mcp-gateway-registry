@@ -487,8 +487,8 @@ class AgentCard(BaseModel):
 
     # Access control
     visibility: str = Field(
-        "internal",
-        description="public, group-restricted, or internal (default for security)",
+        "private",
+        description="public, group-restricted, or private (default for security)",
     )
     allowed_groups: list[str] = Field(
         default_factory=list,
@@ -554,7 +554,7 @@ class AgentCard(BaseModel):
         v: str,
     ) -> str:
         """Validate visibility value."""
-        valid_values = ["public", "group-restricted", "internal"]
+        valid_values = ["public", "group-restricted", "private"]
         if v not in valid_values:
             raise ValueError(f"Visibility must be one of: {', '.join(valid_values)}")
         return v
@@ -760,8 +760,8 @@ class AgentRegistrationRequest(BaseModel):
         description="License information",
     )
     visibility: str = Field(
-        default="internal",
-        description="Visibility: public, group-restricted, or internal (default)",
+        default="private",
+        description="Visibility: public, group-restricted, or private (default)",
     )
 
     model_config = ConfigDict(populate_by_name=True)
