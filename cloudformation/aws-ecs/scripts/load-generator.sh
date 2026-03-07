@@ -440,11 +440,12 @@ server_search_semantic() {
 
     debug "Server: semantic search ($query)"
 
-    curl -s -X POST "${REGISTRY_URL}/api/servers/search" \
+    curl -s -X POST "${REGISTRY_URL}/api/search/semantic" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -d '{
             "query": "'"$query"'",
+            "entity_types": ["mcp_server", "tool"],
             "max_results": 5
         }' > /dev/null 2>&1 || true
 }
