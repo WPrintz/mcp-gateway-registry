@@ -713,7 +713,7 @@ Resources:
       Source:
         Type: GITHUB
         Location: !Ref GitHubRepoUrl
-        BuildSpec: scripts/codebuild/buildspec.yaml
+        BuildSpec: cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml
       SourceVersion: !Ref GitHubBranch
       TimeoutInMinutes: 30
       Tags:

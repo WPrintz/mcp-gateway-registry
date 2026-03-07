@@ -5,7 +5,7 @@
 #
 # Overrides the existing mcp-gateway-container-build CodeBuild project
 # (which normally uses NO_SOURCE + S3 tarballs) to instead pull source
-# from GitHub and run scripts/codebuild/buildspec.yaml — the same
+# from GitHub and run cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml — the same
 # buildspec used before the pre-built container pipeline was added.
 #
 # Requires workshop account credentials in the environment (source ws-creds.env).
@@ -91,11 +91,11 @@ echo "  Project:    $CODEBUILD_PROJECT"
 echo "  Branch:     $BRANCH"
 echo "  Image tag:  $IMAGE_TAG"
 echo "  ECR:        $ECR_REGISTRY"
-echo "  Buildspec:  scripts/codebuild/buildspec.yaml (from repo)"
+echo "  Buildspec:  cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml (from repo)"
 echo ""
 
 # Start CodeBuild with source override pointing to GitHub.
-# The repo contains scripts/codebuild/buildspec.yaml which builds all 10
+# The repo contains cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml which builds all 10
 # images from Dockerfiles and pushes to ECR — the same flow used before
 # the pre-built container pipeline (commit a85f2ee).
 BUILD_ID=$(aws codebuild start-build \
@@ -104,7 +104,7 @@ BUILD_ID=$(aws codebuild start-build \
   --source-type-override GITHUB \
   --source-location-override "$GITHUB_REPO_URL" \
   --source-version "$BRANCH" \
-  --buildspec-override scripts/codebuild/buildspec.yaml \
+  --buildspec-override cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml \
   --environment-variables-override \
     "[{\"name\":\"IMAGE_TAG\",\"value\":\"$IMAGE_TAG\",\"type\":\"PLAINTEXT\"},
       {\"name\":\"ECR_REGISTRY\",\"value\":\"$ECR_REGISTRY\",\"type\":\"PLAINTEXT\"},

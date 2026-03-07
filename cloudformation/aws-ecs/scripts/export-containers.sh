@@ -3,7 +3,7 @@
 # export as split gzipped tarballs, and upload to S3.
 #
 # Uses your existing CodeBuild project with --buildspec-override to run
-# the export buildspec (scripts/codebuild/buildspec-export.yaml) and
+# the export buildspec (cloudformation/aws-ecs/scripts/codebuild/buildspec-export.yaml) and
 # --source-version to select the branch. No dedicated project needed.
 #
 # The build runs in your personal AWS account (uses --profile), while
@@ -74,7 +74,7 @@ if [ "$SKIP_BUILD" = false ]; then
     --region "$AWS_REGION" \
     --profile "$AWS_PROFILE_BUILD" \
     --source-version "$SOURCE_VERSION" \
-    --buildspec-override scripts/codebuild/buildspec-export.yaml \
+    --buildspec-override cloudformation/aws-ecs/scripts/codebuild/buildspec-export.yaml \
     --environment-variables-override \
       "[{\"name\":\"IMAGE_TAG\",\"value\":\"$IMAGE_TAG\",\"type\":\"PLAINTEXT\"},
         {\"name\":\"S3_DEST_BUCKET\",\"value\":\"$S3_DEST_BUCKET\",\"type\":\"PLAINTEXT\"},
