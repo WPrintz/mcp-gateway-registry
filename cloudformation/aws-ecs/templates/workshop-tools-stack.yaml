@@ -730,7 +730,8 @@ Resources:
                           token,
                           server_data
                       )
-                      if result.get('success') or result.get('path'):
+                      # exists = our timed-out attempt already succeeded (we deleted first)
+                      if result.get('success') or result.get('path') or result.get('exists'):
                           print(f"    OK")
                           servers_registered += 1
                       else:
@@ -766,7 +767,7 @@ Resources:
                           token,
                           server_data
                       )
-                      if result.get('success') or result.get('path'):
+                      if result.get('success') or result.get('path') or result.get('exists'):
                           print(f"    OK (created)")
                       else:
                           print(f"    Failed: {result}")
@@ -802,7 +803,8 @@ Resources:
                           token,
                           agent_data
                       )
-                      if result.get('success') or result.get('agent') or result.get('path'):
+                      # exists = our timed-out attempt already succeeded (we deleted first)
+                      if result.get('success') or result.get('agent') or result.get('path') or result.get('exists'):
                           print(f"    OK")
                           agents_registered += 1
                           registered_agent_paths.append(agent_data['path'])
@@ -841,7 +843,7 @@ Resources:
                               token,
                               vs_data
                           )
-                          if result.get('success') or result.get('path'):
+                          if result.get('success') or result.get('path') or result.get('exists'):
                               print(f"    OK")
                               vs_created = True
                               virtual_servers_registered += 1
@@ -887,7 +889,7 @@ Resources:
                               skill_data,
                               max_retries=2
                           )
-                          if result.get('path'):
+                          if result.get('path') or result.get('exists'):
                               print(f"    OK")
                               skills_registered += 1
                           else:
@@ -943,9 +945,9 @@ Resources:
       M2MClientSecretArn: !ImportValue
         Fn::Sub: ${EnvironmentName}-KeycloakM2MClientSecretArn
       EnvironmentName: !Ref EnvironmentName
-      # v3.1: Servers default to disabled after delete-then-create, so toggle ON
-      #   explicitly. Agents: register all first, then enable (avoids state race).
-      Version: '3.1'
+      # v3.2: Treat 'exists' as success on all registrations (504 timeout on first
+      #   attempt means server-side succeeded but response was lost; retry gets exists).
+      Version: '3.2'
 
   #============================================================================
   # LOAD GENERATOR
