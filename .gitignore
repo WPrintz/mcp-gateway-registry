@@ -193,6 +193,7 @@ cookies.txt
 
 # Scratchpad for temporary notes and planning
 .scratchpad/
+CLAUDE.md.bak
 
 # MongoDB keyfile for replica set authentication
 .mongodb-keyfile
