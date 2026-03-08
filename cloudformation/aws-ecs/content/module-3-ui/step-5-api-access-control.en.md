@@ -47,13 +47,15 @@ curl -s -H "Authorization: Bearer $(cat /tmp/admin-token)" \
   $GATEWAY_URL/api/servers/groups | jq .
 :::
 
-The response contains three key sections:
+The response contains five sections:
 
 | Section | What It Shows |
 |---------|---------------|
 | `scopes_groups` | All scope definitions from DocumentDB, keyed by scope name |
 | `keycloak_groups` | All groups that exist in Keycloak (or your IdP) |
 | `synchronized` | Groups that exist in **both** Keycloak and DocumentDB |
+| `keycloak_only` | Groups that exist in Keycloak but have no scope definition in DocumentDB |
+| `scopes_only` | Scopes defined in DocumentDB with no matching Keycloak group |
 
 ### Step 2: View LOB1's Scope Detail
 
@@ -172,7 +174,7 @@ You should see:
   "message": "Group registry-users-lob1 imported successfully",
   "group_name": "registry-users-lob1",
   "idp_created": false,
-  "auth_server_reloaded": false
+  "auth_server_reloaded": true
 }
 ```
 
