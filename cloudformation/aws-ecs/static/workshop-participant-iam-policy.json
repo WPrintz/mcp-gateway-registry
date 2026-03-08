@@ -22,7 +22,7 @@
         "secretsmanager:GetSecretValue",
         "secretsmanager:DescribeSecret"
       ],
-      "Resource": "arn:aws:secretsmanager:*:*:secret:mcp-gateway-admin-password-*"
+      "Resource": "arn:aws:secretsmanager:*:*:secret:mcp-gateway-*"
     },
     {
       "Sid": "SecretsManagerListAccess",
@@ -54,7 +54,7 @@
       ]
     },
     {
-      "Sid": "KMSDecryptForSSMParameters",
+      "Sid": "KMSDecryptForSSMAndSecrets",
       "Effect": "Allow",
       "Action": [
         "kms:Decrypt"
@@ -62,7 +62,10 @@
       "Resource": "*",
       "Condition": {
         "StringLike": {
-          "kms:ViaService": "ssm.*.amazonaws.com"
+          "kms:ViaService": [
+            "ssm.*.amazonaws.com",
+            "secretsmanager.*.amazonaws.com"
+          ]
         }
       }
     },
