@@ -137,6 +137,7 @@ All upstream PRs are now merged -- no cherry-picks needed for v1.0.15:
 | 24 | Docker Hub rate limit workaround (ECR Public pre-pull) | `scripts/codebuild/buildspec.yaml` | Check pre_build phase for `public.ecr.aws` pull + `docker tag` | NOT upstreamed (CFN-only fix) |
 | 573 | Datetime serialization in `GET /api/servers/groups/{name}` | `registry/api/server_routes.py` (~line 3298, `get_group_api`) | Check for `json.loads(json.dumps(group_data, default=str))` before `JSONResponse` | NOT upstreamed (issue #573 open). Cherry-picked `fb82ab3` → v1.0.16 `b42905c`. Blocks workshop Step 3.5 Step 2. |
 | — | `list_groups()` return format mismatch (`scopes_groups` always empty) | `registry/repositories/documentdb/scope_repository.py` (~line 315), `registry/common/scopes_loader.py` (~line 49) | `list_groups()` returns `{"total_count": N, "groups": {...}}` not bare dict; `scopes_loader.py` unwraps via `.get("groups", groups_data)` | NOT upstreamed (no upstream issue filed yet). Cherry-picked `7844406` → v1.0.16 `991f52c`. Blocks workshop Step 3.5 Step 1 and IAM Groups panel. |
+| #616 | `AgentCard.streaming` AttributeError in `discover_agents_by_skills` | `registry/api/agent_routes.py` (~line 1128) | `discover_agents_by_skills` reads `agent.streaming` but `AgentCard` has no `streaming` field (A2A stores it in `capabilities` dict). Crashes with 500 on every skill-based discovery that finds matches. Also: registration/update routes silently drop `streaming` by passing it as a top-level kwarg. Also: `provider` passes `AgentProvider` object where `str` expected. **Fix:** (1) read `agent.capabilities.get("streaming", False)`, (2) map `request.streaming` into `capabilities` dict, (3) extract `agent.provider.organization`. Pattern matches existing `list_agents` fix from `4812e21`. | Upstream bug (issue #616 filed). Partially fixed in `4812e21` for `list_agents` only; `discover_agents_by_skills` missed. Fixed locally on v1.0.16 branch. |
 
 ---
 
@@ -147,6 +148,7 @@ All upstream PRs are now merged -- no cherry-picks needed for v1.0.15:
 | #496 | OPEN | Health gate DNS -- unhealthy servers get commented-out nginx locations |
 | #573 | OPEN (upstream), FIXED locally | `GET /api/servers/groups/{name}` returns 500 -- datetime not JSON serializable. Cherry-picked `fb82ab3` into v1.0.16 (`b42905c`). |
 | — | UNFILED, FIXED locally | `GET /api/servers/groups` returns `scopes_groups: {}` -- `list_groups()` return format mismatch. Separate root cause from #573; needs its own upstream issue. Cherry-picked `7844406` into v1.0.16 (`991f52c`). |
+| #616 | OPEN (upstream), FIXED locally | `POST /api/agents/discover` returns 500 -- `AgentCard` has no `streaming` attribute. Partial fix existed for `list_agents` since `4812e21`; `discover_agents_by_skills` was missed. Fixed all three locations (discovery crash, registration/update data loss, provider type mismatch). |
 
 ---
 
