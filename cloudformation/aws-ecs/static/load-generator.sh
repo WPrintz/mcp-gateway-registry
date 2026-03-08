@@ -35,7 +35,7 @@ RATE="${RATE:-5}"  # requests per second (sleep interval = 1/RATE)
 VERBOSE="${VERBOSE:-false}"
 
 # MCP Servers to exercise
-SERVERS=("currenttime" "mcpgw" "realserverfaketools")
+SERVERS=("currenttime" "airegistry-tools" "realserverfaketools")
 
 # Semantic search queries for MCP servers
 SERVER_SEARCH_QUERIES=(
@@ -172,8 +172,8 @@ get_server_tools() {
         currenttime)
             echo "current_time_by_timezone"
             ;;
-        mcpgw)
-            echo "list_services get_http_headers healthcheck intelligent_tool_finder list_groups"
+        airegistry-tools)
+            echo "list_services list_agents list_skills intelligent_tool_finder healthcheck"
             ;;
         realserverfaketools)
             echo "quantum_flux_analyzer neural_pattern_synthesizer hyper_dimensional_mapper temporal_anomaly_detector user_profile_analyzer synthetic_data_generator"
@@ -333,7 +333,7 @@ mcp_call_tool() {
             local query="${queries[$RANDOM % ${#queries[@]}]}"
             args='{"query": "'"$query"'"}'
             ;;
-        list_services|get_http_headers|healthcheck|list_groups)
+        list_services|list_agents|list_skills|healthcheck)
             args='{}'
             ;;
     esac
@@ -465,16 +465,16 @@ pick_weighted_server() {
     case $phase in
         0)  # currenttime heavy
             if [[ $roll -lt 60 ]]; then echo "currenttime"
-            elif [[ $roll -lt 80 ]]; then echo "mcpgw"
+            elif [[ $roll -lt 80 ]]; then echo "airegistry-tools"
             else echo "realserverfaketools"; fi ;;
-        1)  # mcpgw heavy
-            if [[ $roll -lt 60 ]]; then echo "mcpgw"
+        1)  # airegistry-tools heavy
+            if [[ $roll -lt 60 ]]; then echo "airegistry-tools"
             elif [[ $roll -lt 80 ]]; then echo "realserverfaketools"
             else echo "currenttime"; fi ;;
         2)  # realserverfaketools heavy
             if [[ $roll -lt 60 ]]; then echo "realserverfaketools"
             elif [[ $roll -lt 80 ]]; then echo "currenttime"
-            else echo "mcpgw"; fi ;;
+            else echo "airegistry-tools"; fi ;;
     esac
 }
 
@@ -647,7 +647,7 @@ main() {
             local elapsed=$(($(date +%s) - start_time))
             local remaining=$((end_time - $(date +%s)))
             local phase=$(( ($(date +%s) / 600) % 3 ))
-            local hot_server=("currenttime" "mcpgw" "realserverfaketools")
+            local hot_server=("currenttime" "airegistry-tools" "realserverfaketools")
             log "Progress: $request_count req ($mcp_count MCP, $agent_count Agent, $auth_fail_count auth-fail) | phase=${hot_server[$phase]} | ${elapsed}s elapsed, ${remaining}s remaining"
         fi
 
