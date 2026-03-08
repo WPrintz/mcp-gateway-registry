@@ -912,7 +912,7 @@ class TestBackwardCompatibility:
             description="Test description",
             url="https://example.com",
             path="/test-agent",
-            visibility="internal",
+            visibility="private",
             trust_level="verified",
             skills=[
                 Skill(

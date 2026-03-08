@@ -359,7 +359,7 @@ def search_test_agents() -> list[dict[str, Any]]:
         path="/agents/internal-agent",
         tags=["internal"],
         skills=[],
-        visibility="internal",
+        visibility="private",
         registered_by="testuser",
     )
 

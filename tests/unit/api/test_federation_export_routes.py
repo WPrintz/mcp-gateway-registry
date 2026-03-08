@@ -901,6 +901,7 @@ class TestHelperFunctions:
                 "path": "/restricted",
             },
             {"visibility": "internal", "path": "/internal"},
+            {"visibility": "private", "path": "/private"},
         ]
 
         filtered = federation_export_routes._filter_by_visibility(items, [])
@@ -1275,6 +1276,8 @@ class TestChainPrevention:
             },
             # Local internal
             {"path": "/local-internal", "visibility": "internal"},
+            # Local private (agent visibility)
+            {"path": "/local-private", "visibility": "private"},
             # Federated public
             {
                 "path": "/peer-a/public",

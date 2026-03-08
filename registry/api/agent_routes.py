@@ -290,7 +290,7 @@ def _filter_agents_by_access(
             accessible.append(agent)
             continue
 
-        if agent.visibility == "internal":
+        if agent.visibility == "private":
             if agent.registered_by == username:
                 accessible.append(agent)
             continue
@@ -384,7 +384,7 @@ async def register_agent(
             provider=provider_obj,
             security_schemes=request.security_schemes or {},
             skills=request.skills or [],
-            streaming=request.streaming,
+            capabilities={"streaming": request.streaming} if request.streaming else {},
             tags=tag_list,
             license=request.license,
             visibility=request.visibility,
@@ -909,7 +909,7 @@ async def update_agent(
             provider=request.provider,
             security_schemes=request.security_schemes or {},
             skills=request.skills or [],
-            streaming=request.streaming,
+            capabilities={"streaming": request.streaming} if request.streaming else {},
             tags=tag_list,
             license=request.license,
             visibility=request.visibility,
@@ -1114,6 +1114,12 @@ async def discover_agents_by_skills(
 
         relevance_score = 0.6 * skill_match_score + 0.2 * tag_match_score + 0.2 * trust_boost
 
+        # Extract streaming capability from agent capabilities dict
+        streaming = agent.capabilities.get("streaming", False) if agent.capabilities else False
+
+        # Extract provider organization name (provider is AgentProvider object)
+        provider_name = agent.provider.organization if agent.provider else None
+
         agent_info = AgentInfo(
             name=agent.name,
             description=agent.description,
@@ -1124,8 +1130,8 @@ async def discover_agents_by_skills(
             num_skills=len(agent.skills),
             num_stars=agent.num_stars,
             is_enabled=True,
-            provider=agent.provider,
-            streaming=agent.streaming,
+            provider=provider_name,
+            streaming=streaming,
             trust_level=agent.trust_level,
         )
 

@@ -190,12 +190,12 @@ def sample_agent_card() -> AgentCard:
 
 @pytest.fixture
 def sample_internal_agent_card() -> AgentCard:
-    """Create an internal agent card for testing."""
+    """Create a private agent card for testing."""
     return AgentCardFactory(
         name="internal-agent",
         path="/agents/internal-agent",
         url="http://localhost:9000/internal-agent",
-        visibility="internal",
+        visibility="private",
         registered_by="testuser",
         is_enabled=True,
     )
@@ -382,10 +382,10 @@ class TestFilterAgentsByAccess:
         assert len(result) == 1
 
     def test_filter_agents_internal_not_visible_to_others(self, mock_limited_user_context):
-        """Test internal agents not visible to other users."""
+        """Test private agents not visible to other users."""
         # Arrange
         internal_agent = AgentCardFactory(
-            visibility="internal",
+            visibility="private",
             registered_by="differentuser",
             path="/agents/internal-agent",
         )
@@ -623,7 +623,7 @@ class TestListAgents:
         """Test filtering agents by visibility."""
         # Arrange
         public_agent = AgentCardFactory(visibility="public", path="/agents/public")
-        internal_agent = AgentCardFactory(visibility="internal", path="/agents/internal")
+        internal_agent = AgentCardFactory(visibility="private", path="/agents/internal")
 
         with patch("registry.api.agent_routes.agent_service") as mock_agent_service:
             mock_agent_service.get_all_agents = AsyncMock(

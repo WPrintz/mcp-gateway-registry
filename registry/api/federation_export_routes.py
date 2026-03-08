@@ -195,8 +195,8 @@ def _filter_by_visibility(
         # Default to "public" if visibility not specified (backwards compatibility)
         visibility = _get_item_attr(item, "visibility", "public")
 
-        # Never export internal items
-        if visibility == "internal":
+        # Never export internal/private items
+        if visibility in ("internal", "private"):
             continue
 
         # Always export public items
@@ -655,7 +655,7 @@ async def export_security_scans(
         # Check visibility
         visibility = server_data.get("visibility", "public")
 
-        if visibility == "internal":
+        if visibility in ("internal", "private"):
             continue
 
         if visibility == "public":
