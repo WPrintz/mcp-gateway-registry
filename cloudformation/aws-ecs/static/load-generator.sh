@@ -249,7 +249,7 @@ mcp_initialize() {
 
     local header_file
     header_file=$(mktemp)
-    curl -s --max-time 10 -D "$header_file" -X POST "${REGISTRY_URL}/${server}/" \
+    curl -s --max-time 10 -D "$header_file" -X POST "${REGISTRY_URL}/${server}/mcp" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -282,7 +282,7 @@ mcp_list_tools() {
     local session_args=()
     [[ -n "$session_id" ]] && session_args=(-H "Mcp-Session-Id: $session_id")
 
-    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/" \
+    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/mcp" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -351,7 +351,7 @@ mcp_call_tool() {
     local session_args=()
     [[ -n "$session_id" ]] && session_args=(-H "Mcp-Session-Id: $session_id")
 
-    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/" \
+    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/mcp" \
         -H "Authorization: Bearer $token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
@@ -409,13 +409,12 @@ agent_discover_semantic() {
 
     debug "Agent: semantic discover ($query)"
 
-    curl -s -X POST "${REGISTRY_URL}/api/agents/discover/semantic" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -d '{
-            "query": "'"$query"'",
-            "max_results": 5
-        }' > /dev/null 2>&1 || true
+    # Endpoint expects query params, not JSON body
+    local encoded_query
+    encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))")
+
+    curl -s -X POST "${REGISTRY_URL}/api/agents/discover/semantic?query=${encoded_query}&max_results=5" \
+        -H "Authorization: Bearer $token" > /dev/null 2>&1 || true
 }
 
 agent_health_check() {
@@ -542,7 +541,7 @@ run_failed_auth_scenario() {
 
     local body='{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"'"$client_name"'","version":"1.0.0"}},"id":1}'
 
-    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/" \
+    curl -s --max-time 10 -X POST "${REGISTRY_URL}/${server}/mcp" \
         -H "Authorization: Bearer invalid-expired-token" \
         -H "Content-Type: application/json" \
         -H "Accept: application/json, text/event-stream" \
