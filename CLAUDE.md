@@ -143,3 +143,10 @@ When implementing the federated registry feature, follow this 3-agent workflow f
 The `cloudformation/aws-ecs/` directory contains the AWS ECS/Fargate deployment of the MCP Gateway Registry, packaged as a Workshop Studio workshop.
 
 - **Porting checklist:** [`cloudformation/aws-ecs/docs/porting-checklist.md`](cloudformation/aws-ecs/docs/porting-checklist.md) -- lessons learned, carry-forward fixes (template-level vs app-level), open issues, and upgrade checklists from the v1.0.12 -> v1.0.15 -> v1.0.16 porting effort. **Read this before starting a new version branch.**
+
+### Version Upgrade Warning
+When creating a new `cloudformation/workshop-*` branch from an updated `main`, the upstream `CLAUDE.md` will replace this trimmed version. Recover the workshop version from the previous workshop branch:
+```bash
+git checkout cloudformation/workshop-v1.0.16 -- CLAUDE.md CLAUDE.md.bak
+```
+Adjust the branch name to the most recent workshop branch at the time.
