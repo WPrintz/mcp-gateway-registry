@@ -1,6 +1,6 @@
 ---
-title: "4.4 Use Skills in Coding Environment"
-weight: 54
+title: "5.3 Use Skills in Coding Environment"
+weight: 63
 ---
 
 Download a registered skill from the Registry and use it in Claude Code. This step demonstrates the end-to-end workflow: discover a skill in the Registry, pull it to your local environment, and invoke it in an AI coding assistant.
@@ -11,8 +11,8 @@ Fetch the skill content from the Registry API and save it to the Claude Code ski
 
 :::code{language=bash showCopyAction=true}
 mkdir -p ~/.claude/skills/pdf
-curl -H "Authorization: Bearer $(jq -r '.tokens.access_token // .access_token' .token)" \
-  $REGISTRY_URL/api/skills/pdf/content \
+curl -s -H "Authorization: Bearer $(jq -r '.tokens.access_token // .access_token' .token)" \
+  "$REGISTRY_URL/api/skills/pdf/content" \
   | jq -r '.content' > ~/.claude/skills/pdf/SKILL.md
 :::
 
@@ -29,31 +29,60 @@ head -20 ~/.claude/skills/pdf/SKILL.md
 You should see output like:
 
 :::code{language=text showCopyAction=false}
-      85 /Users/you/.claude/skills/pdf/SKILL.md
-# PDF Generation Skill
+315 /home/participant/.claude/skills/pdf/SKILL.md
 
-This skill helps you create and manipulate PDF documents...
+name: pdf
+description: Use this skill whenever the user wants to do anything
+  with PDF files...
+license: Proprietary. LICENSE.txt has complete terms
+
+# PDF Processing Guide
+## Overview
+This guide covers essential PDF processing operations using Python
+libraries and command-line tools...
 :::
 
-:image[Terminal output showing downloaded SKILL.md content]{src="/static/img/module-4/4_4/skill-download-verify.png" width=800}
-
-The file contains the structured instructions that tell the AI assistant how to handle PDF operations — including required libraries, formatting conventions, and step-by-step workflows.
+The file contains structured instructions that tell the AI assistant how to handle PDF operations — including YAML front matter (name, description, license), an overview, and detailed guidance on using Python libraries and command-line tools.
 
 ---
 
-## Step 3: Invoke the Skill
+## Step 3: Launch Claude Code
 
-In Claude Code, invoke the skill using its slash command:
+Open Claude Code from your terminal:
 
 :::code{language=bash showCopyAction=true}
+claude
+:::
+
+You should see the Claude Code welcome screen with the version number and your working directory.
+
+## Step 4: Invoke the Skill
+
+Once Claude Code is running, invoke the skill using its slash command:
+
+:::code{language=text showCopyAction=true}
 /pdf
 :::
 
-:image[Claude Code with the pdf skill invoked]{src="/static/img/module-4/4_4/claude-code-skill-invoked.png" width=800}
+Claude Code loads the SKILL.md instructions from `~/.claude/skills/pdf/SKILL.md` and applies them to your conversation. You should see the skill content injected into the prompt context.
 
-The AI assistant reads the SKILL.md instructions and follows the defined workflow for PDF operations. The skill provides context, best practices, and step-by-step guidance that the assistant uses to produce better results.
+:image[Claude Code with the pdf skill invoked]{src="/static/img/module-5/5_3/claude-code-skill-invoked.png" width=800}
+
+Try asking Claude Code to do something PDF-related, for example: "Create a simple PDF with a title and some sample text."
+
+Claude Code will generate a Python script, install any needed dependencies, and run it. You will be prompted to approve several actions (file writes, shell commands). For each prompt, select **Yes** or choose **Yes, allow all edits during this session (shift+tab)** to approve all remaining prompts automatically.
+
+:image[Claude Code confirmation prompts during PDF creation]{src="/static/img/module-5/5_3/claude-code-confirmations.png" width=800}
+
+Once complete, Claude Code will confirm the PDF was created successfully.
 
 ::alert[Skills are behavioral guidance, not executable tools. When you invoke `/pdf`, the assistant doesn't call an API — it reads the instructions and applies them to your request. This is fundamentally different from MCP tools (Lab 2), which execute functions and return results.]{type="info"}
+
+## Step 5: View the Generated PDF
+
+In the Code Editor, look at the file explorer on the left sidebar — you should see the generated PDF file (e.g., `sample_document.pdf`). Right-click the file and select **Download** to save it to your local machine, then open it in a PDF viewer.
+
+:image[Generated PDF document created by Claude Code using the pdf skill]{src="/static/img/module-5/5_3/pdf-generated.png" width=800}
 
 ---
 
@@ -96,10 +125,4 @@ In an enterprise environment, the workflow becomes:
 4. **Governance is enforced** — The same access control model from Lab 3 applies to skills
 5. **Health is monitored** — The Registry tracks whether skill sources are accessible, alerting teams to broken links or deleted files
 
-| Visibility | Who Can See | Use Case |
-|-----------|------------|----------|
-| `public` | All authenticated users | Shared best practices, standard workflows |
-| `group` | Users in the same Keycloak group | Team-specific processes, proprietary methods |
-| `private` | Only the registering user | Personal workflows, experimental skills |
-
-:button[Next: View Skill Content]{href="/module-4/step-5-view-skill-content"}
+:button[Next: View Skill Content]{href="/module-5/step-4-view-skill-content"}

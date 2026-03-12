@@ -1,6 +1,6 @@
 ---
-title: "Lab 4: Skills Registry"
-weight: 50
+title: "Lab 5: Skills Registry"
+weight: 60
 ---
 
 In this lab, you'll explore how the MCP Gateway Registry manages **Agent Skills** — reusable instruction sets (SKILL.md files) that enhance AI coding assistants with specialized workflows. Unlike MCP servers that provide tools, skills provide behavioral guidance and context.
@@ -19,6 +19,8 @@ In this lab, you'll explore how the MCP Gateway Registry manages **Agent Skills*
 
 - Completed Lab 1 (familiar with the Registry UI and login process)
 - Completed Lab 2 (familiar with server registration and CLI token workflow)
+- Completed Lab 3 (familiar with group-based access control and visibility)
+- Completed Lab 4 (Claude Code connected to the MCP Gateway in the cloud IDE)
 - Logged into the MCP Gateway Registry as `admin`
 - A terminal with access to the workshop environment (AWS CloudShell or local)
 
@@ -35,7 +37,7 @@ Agent Skills are SKILL.md files hosted in Git repositories. Each file contains s
 | **pdf** | Guides the AI through creating and manipulating PDF documents | `anthropics/skills` repo |
 | **xlsx** | Guides the AI through creating Excel spreadsheets | `anthropics/skills` repo |
 | **mcp-builder** | Guides the AI through building MCP servers | `anthropics/skills` repo |
-| **internal-code-review** | Your organization's code review workflow | Internal GitHub repo |
+| **frontend-design** | Guides the AI through creating production-grade frontend interfaces | `anthropics/skills` repo |
 
 The Registry provides centralized discovery, health monitoring, and governance for skills — the same way it does for MCP servers.
 
@@ -56,13 +58,12 @@ The Registry provides centralized discovery, health monitoring, and governance f
 
 ## The Journey
 
-This lab follows five activities:
+This lab follows four steps:
 
-1. **Browse the catalog** — Explore registered skills in the UI
-2. **Register an internal skill** — Add a team-scoped skill with group visibility
-3. **Register public skills** — Import official Anthropic skills and verify their health
-4. **Use a skill locally** — Download a skill and invoke it in Claude Code
-5. **Inspect skill content** — View the full SKILL.md instructions and metadata
+1. **Browse the catalog** — Explore pre-registered skills in the UI
+2. **Register skills** — Understand internal team skills, then register public Anthropic skills and verify health
+3. **Use a skill locally** — Download a skill and invoke it in Claude Code
+4. **Inspect skill content** — View the full SKILL.md instructions and metadata
 
 ## Steps
 
