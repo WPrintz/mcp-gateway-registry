@@ -1555,6 +1555,11 @@ Resources:
                 Resource:
                   - "arn:aws:bedrock:*::foundation-model/anthropic.*"
                   - "arn:aws:bedrock:*:*:inference-profile/us.anthropic.*"
+              - Effect: Allow
+                Action:
+                  - aws-marketplace:ViewSubscriptions
+                  - aws-marketplace:Subscribe
+                Resource: "*"
 
   CodeEditorInstanceProfile:
     Type: AWS::IAM::InstanceProfile
