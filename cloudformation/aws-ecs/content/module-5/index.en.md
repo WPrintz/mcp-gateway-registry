@@ -34,12 +34,10 @@ Agent Skills are SKILL.md files hosted in Git repositories. Each file contains s
 
 | Skill | What It Does | Source |
 |-------|-------------|--------|
-| **pdf** | Guides the AI through creating and manipulating PDF documents | `anthropics/skills` repo |
-| **xlsx** | Guides the AI through creating Excel spreadsheets | `anthropics/skills` repo |
-| **mcp-builder** | Guides the AI through building MCP servers | `anthropics/skills` repo |
-| **frontend-design** | Guides the AI through creating production-grade frontend interfaces | `anthropics/skills` repo |
-
-The Registry provides centralized discovery, health monitoring, and governance for skills — the same way it does for MCP servers.
+| **pdf** | Create and manipulate PDF documents | `anthropics/skills` repo |
+| **xlsx** | Create Excel spreadsheets | `anthropics/skills` repo |
+| **mcp-builder** | Build MCP servers and tools | `anthropics/skills` repo |
+| **frontend-design** | Create production-grade frontend interfaces | `anthropics/skills` repo |
 
 ---
 

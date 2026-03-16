@@ -3,11 +3,11 @@ title: "5.4 View Skill Content and Metadata"
 weight: 64
 ---
 
-Inspect the full SKILL.md content and metadata for registered skills using the CLI. This is useful for reviewing what instructions a skill provides before downloading it, or for auditing registered skills across the organization.
+Before downloading a skill, you might want to inspect its content and metadata from the command line.
 
 ## Step 1: View Skill Content
 
-View the complete SKILL.md instructions that guide the AI assistant:
+View the full SKILL.md for the `mcp-builder` skill:
 
 :::code{language=bash showCopyAction=true}
 curl -s "$REGISTRY_URL/api/skills/mcp-builder/content" \
@@ -41,7 +41,7 @@ Creating a high-quality MCP server involves four main phases:
 ...
 :::
 
-This is the same content the AI assistant reads when you invoke the skill. Review it to understand what workflows and behaviors the skill defines — including required tools, step-by-step processes, and best practices.
+This is what the AI assistant reads when you invoke the skill.
 
 ---
 
@@ -75,17 +75,7 @@ You should see output like:
 }
 :::
 
-The metadata shows:
-
-| Field | Description | Example |
-|-------|-------------|---------|
-| **name** | Skill identifier used in slash commands and API calls | `mcp-builder` |
-| **path** | URL-safe path used in API endpoints | `mcp-builder` |
-| **skill_md_url** | Source SKILL.md location (Git repository URL) | `https://github.com/anthropics/skills/...` |
-| **description** | Human-readable summary for search and display | "Build MCP servers..." |
-| **tags** | Categorization for search and filtering | `mcp`, `coding`, `development` |
-| **visibility** | Access level: `public`, `group`, or `private` | `public` |
-| **is_enabled** | Whether the skill is active in the registry | `true` |
+The JSON includes the registration fields you set in 5.2, plus system fields like `path`, `is_enabled`, and `health_status`.
 
 ---
 
@@ -107,24 +97,7 @@ curl -s "$REGISTRY_URL/api/skills/xlsx" \
   | jq .
 :::
 
-Each skill has a different structure and set of instructions tailored to its domain. The Registry treats them uniformly — same registration, discovery, health monitoring, and access control — regardless of content.
-
----
-
-## What You've Accomplished
-
-You've completed the full skill lifecycle:
-
-| Phase | What Happened |
-|-------|---------------|
-| **Browse** | Explored the Skills catalog in the Registry UI |
-| **Register** | Learned about internal team skills, then registered three public Anthropic skills |
-| **Health check** | Verified the SKILL.md source URLs are accessible |
-| **Download** | Fetched skill content via the Registry API |
-| **Invoke** | Used the skill in Claude Code via slash command |
-| **Inspect** | Viewed full SKILL.md content and registration metadata via CLI |
-
-Your registry now has **5 registered skills** — 2 pre-deployed and 3 you registered — alongside the MCP servers from Labs 1-4.
+Each skill has different instructions, but the Registry treats them all the same way.
 
 ---
 
@@ -137,14 +110,6 @@ Your registry now has **5 registered skills** — 2 pre-deployed and 3 you regis
 | **5.3** | How to download a skill from the Registry and invoke it in Claude Code |
 | **5.4** | How to inspect skill content and metadata via the CLI |
 
-### Key Takeaways
-
-1. **Skills are behavioral guidance**, not executable tools — they provide instructions that shape how an AI assistant works
-2. **The Registry governs both skills and MCP servers** under the same discovery, health monitoring, and access control framework
-3. **Visibility levels** (`public`, `group`, `private`) control who can discover and download skills — the same group-based model from Lab 3
-4. **Health checks verify source accessibility** — the Registry monitors whether SKILL.md files are reachable at their Git URLs
-5. **Skills complement MCP servers** — tools provide *what* an AI can do; skills provide *how* it should do it
-
-::alert[**Lab 5 Complete!** You've discovered, registered, verified, downloaded, and invoked Agent Skills through the MCP Gateway Registry. Skills and MCP servers together give enterprises a complete governance framework for AI assistant capabilities — tools *and* behaviors.]{type="success" header="Well Done!"}
+::alert[**Lab 5 Complete!** Your registry now has 5 skills alongside the MCP servers from Labs 1-4.]{type="success" header="Well Done!"}
 
 :button[Continue to Summary]{href="/summary"}

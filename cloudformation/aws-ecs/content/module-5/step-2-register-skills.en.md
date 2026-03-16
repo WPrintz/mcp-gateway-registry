@@ -3,7 +3,7 @@ title: "5.2 Register Skills"
 weight: 62
 ---
 
-Register skills in the MCP Gateway Registry. Skills can be scoped to specific teams (`group`) or shared with everyone (`public`). In this step, you'll understand how internal team skills work, then register three public skills from Anthropic's repository.
+Now you'll register skills of your own. Skills support visibility levels — `public`, `group`, and `private`.
 
 ## Internal Skills (Conceptual)
 
@@ -34,7 +34,7 @@ The key difference is the `--visibility` flag:
 | `group` | Users in the same Keycloak group | Team-specific processes, proprietary methods |
 | `private` | Only the registering user | Personal workflows, experimental skills |
 
-This is the same access control model from Lab 3 — the group-based permissions that control MCP server visibility also control skill visibility.
+The group-based permissions from Lab 3 apply to skills too.
 
 ---
 
@@ -123,8 +123,6 @@ You should see a JSON response confirming the registration:
 }
 :::
 
-Key fields: `is_enabled: true` confirms the skill is active, `health_status: "unknown"` means no health check has run yet (you'll do that next), and `skill_md_raw_url` is the raw content URL the Registry auto-derived from your GitHub URL.
-
 Now register the remaining two skills:
 
 :::code{language=bash showCopyAction=true}
@@ -181,9 +179,7 @@ You should see output confirming the skill is healthy:
 }
 :::
 
-A `"healthy": true` response means the Registry successfully reached the SKILL.md at its source URL (HTTP 200). A `"healthy": false` response might indicate the repository is private, the URL has changed, or the file was deleted.
-
-::alert[Health checks verify that the SKILL.md source is reachable. This is the same concept as MCP server health checks in Lab 2 — the Registry monitors the availability of registered resources. The difference is that server health checks use the MCP `initialize` protocol, while skill health checks use a simple HTTP GET.]{type="info"}
+`"healthy": true` means the SKILL.md is reachable at its source URL. If it were `false`, the repository might be private, the URL changed, or the file was deleted.
 
 ---
 
