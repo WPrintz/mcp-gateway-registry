@@ -140,12 +140,12 @@ On the **Dev Tools** card, click the gear icon again and select the **Kiro** tab
 }
 :::
 
-Paste it using the heredoc command:
+Run this command, replacing the placeholder with the JSON you copied:
 
 :::code{language=bash showCopyAction=true}
-cat > ~/workshop/.kiro/settings/mcp.json << 'PASTE'
+cat > ~/workshop/.kiro/settings/mcp.json << 'EOF'
 <PASTE THE KIRO GEAR ICON JSON HERE>
-PASTE
+EOF
 :::
 
 Launch Kiro CLI (already authenticated with AWS Builder ID in Step 4.1):
