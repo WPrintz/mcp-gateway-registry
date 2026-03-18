@@ -1254,7 +1254,7 @@ Resources:
                 - !Sub echo 'export AWS_REGION=${AWS::Region}' >> /home/${CodeEditorUser}/.bashrc
                 - !Sub echo 'export AWS_ACCOUNTID=${AWS::AccountId}' >> /home/${CodeEditorUser}/.bashrc
                 - !Sub echo 'export CLAUDE_CODE_USE_BEDROCK=1' >> /home/${CodeEditorUser}/.bashrc
-                - !Sub echo 'export ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-20250514-v1:0' >> /home/${CodeEditorUser}/.bashrc
+                - !Sub echo 'export ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0' >> /home/${CodeEditorUser}/.bashrc
                 - !Sub echo 'export MCP_GATEWAY_URL=${RegistryUrl}' >> /home/${CodeEditorUser}/.bashrc
                 - !Sub echo "export PS1='\[\033[01;32m\]\u:\[\033[01;34m\]\w\[\033[00m\]\$ '" >> /home/${CodeEditorUser}/.bashrc
                 - !Sub chown -R ${CodeEditorUser}:${CodeEditorUser} /home/${CodeEditorUser}
@@ -1312,7 +1312,7 @@ Resources:
                   {
                     "env": {
                       "CLAUDE_CODE_USE_BEDROCK": "1",
-                      "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-4-20250514-v1:0"
+                      "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
                     }
                   }
                   EOF

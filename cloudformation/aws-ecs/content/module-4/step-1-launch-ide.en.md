@@ -53,8 +53,8 @@ You should see:
 
 :::code{language=text showCopyAction=false}
 CLAUDE_CODE_USE_BEDROCK=1
-ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-20250514-v1:0
-AWS_REGION=us-west-2
+ANTHROPIC_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0
+AWS_REGION=<your-deployed-region>
 :::
 
 ::alert[Claude Code connects to Amazon Bedrock using the EC2 instance role. No Anthropic API keys are stored or needed.]{type="info"}

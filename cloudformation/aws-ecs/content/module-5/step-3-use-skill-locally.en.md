@@ -63,7 +63,7 @@ Once Claude Code is running, invoke the skill using its slash command:
 /pdf
 :::
 
-Claude Code loads the SKILL.md instructions from `~/.claude/skills/pdf/SKILL.md` and applies them to your conversation. You should see the skill content injected into the prompt context.
+Claude Code automatically discovers skills placed in `~/.claude/skills/` and exposes them as slash commands. It loads the SKILL.md instructions from `~/.claude/skills/pdf/SKILL.md` and applies them to your conversation. You should see the skill content injected into the prompt context.
 
 :image[Claude Code with the pdf skill invoked]{src="/static/img/module-5/5_3/claude-code-skill-invoked.png" width=800}
 
