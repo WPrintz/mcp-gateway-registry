@@ -1305,7 +1305,7 @@ Resources:
               runCommand:
                 - '#!/bin/bash'
                 - set -euo pipefail
-                - !Sub sudo -u ${CodeEditorUser} npm install -g @anthropic-ai/claude-code --prefix /home/${CodeEditorUser}/.local
+                - !Sub sudo -u ${CodeEditorUser} npm install -g @anthropic-ai/claude-code@2.1.74 --prefix /home/${CodeEditorUser}/.local
                 - !Sub sudo -u ${CodeEditorUser} mkdir -p /home/${CodeEditorUser}/.claude
                 - !Sub |
                   sudo -u ${CodeEditorUser} tee /home/${CodeEditorUser}/.claude/settings.json <<'EOF'
@@ -1552,6 +1552,8 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
+                  - bedrock:Converse
+                  - bedrock:ConverseStream
                 Resource:
                   - "arn:aws:bedrock:*::foundation-model/anthropic.*"
                   - "arn:aws:bedrock:*:*:inference-profile/us.anthropic.*"
