@@ -367,6 +367,25 @@ Resources:
           import cfnresponse
           import time
 
+          def get_server_tools(registry_url, token, server_path):
+              """Get the current tool list for a server."""
+              path = server_path.strip('/')
+              url = f"{registry_url}/api/servers/tools/{path}"
+              req = urllib.request.Request(url, method='GET')
+              req.add_header('Authorization', f'Bearer {token}')
+              ctx = ssl.create_default_context()
+              try:
+                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
+                      result = json.loads(response.read().decode('utf-8'))
+                      if isinstance(result, dict):
+                          return result.get('tools', [])
+                      elif isinstance(result, list):
+                          return result
+                      return []
+              except Exception as e:
+                  print(f"  get_server_tools error: {e}")
+                  return []
+
           # MCP Servers to register (form data fields for /api/servers/register)
           # Note: /mcpgw/ (MCP Gateway Tools) is NOT registered here because
           # it is redundant with the built-in /airegistry-tools/ server which
@@ -720,6 +739,7 @@ Resources:
 
                   # Step 4: Register MCP Servers (form data, delete-then-create upsert)
                   print("Registering MCP Servers...")
+                  discovered_tools = {}  # track {path: num_tools} from toggle responses
                   servers_registered = 0
                   for server in MCP_SERVERS:
                       server_data = server.copy()
@@ -752,7 +772,10 @@ Resources:
                           ctx = ssl.create_default_context()
                           with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
                               result = json.loads(resp.read().decode('utf-8'))
-                              print(f"    Toggled ON: status={result.get('status')}, tools={result.get('num_tools')}")
+                              num_tools = int(result.get('num_tools', 0) or 0)
+                              print(f"    Toggled ON: status={result.get('status')}, tools={num_tools}")
+                              if num_tools > 0:
+                                  discovered_tools[server_data['path']] = num_tools
                       except Exception as e:
                           print(f"    Toggle ON failed: {e}")
 
@@ -829,7 +852,48 @@ Resources:
                       except Exception as e:
                           print(f"    Enable failed for {agent_path}: {e}")
 
-                  # Step 7: Register Virtual Servers (JSON, retry loop for tool discovery)
+                  # Step 7: Wait for tool discovery on backend servers used by virtual servers
+                  # Uses toggle endpoint (not /api/servers/tools/) because the tools
+                  # endpoint returns 400 on recently-toggled servers due to state lag.
+                  backend_paths = set()
+                  for vs in VIRTUAL_SERVERS:
+                      for tm in vs.get('tool_mappings', []):
+                          backend_paths.add(tm['backend_server_path'])
+                  print(f"Waiting for tool discovery on backend servers: {backend_paths}")
+                  print(f"  Already discovered from toggle: {discovered_tools}")
+                  for bp in backend_paths:
+                      if bp in discovered_tools:
+                          print(f"  {bp}: {discovered_tools[bp]} tools (from initial toggle)")
+                          continue
+                      for wait_attempt in range(12):
+                          try:
+                              toggle_data = urllib.parse.urlencode({
+                                  'path': bp, 'new_state': 'true'
+                              }).encode('utf-8')
+                              req = urllib.request.Request(
+                                  f"{registry_url}/api/servers/toggle",
+                                  data=toggle_data, method='POST'
+                              )
+                              req.add_header('Authorization', f'Bearer {token}')
+                              req.add_header('Content-Type', 'application/x-www-form-urlencoded')
+                              ctx = ssl.create_default_context()
+                              with urllib.request.urlopen(req, context=ctx, timeout=120) as resp:
+                                  result = json.loads(resp.read().decode('utf-8'))
+                                  num_tools = int(result.get('num_tools', 0) or 0)
+                                  if num_tools > 0:
+                                      print(f"  {bp}: {num_tools} tools discovered")
+                                      discovered_tools[bp] = num_tools
+                                      break
+                          except Exception as e:
+                              print(f"  {bp}: toggle poll error: {e}")
+                          wait = 15
+                          if wait_attempt % 3 == 0:
+                              print(f"  {bp}: no tools yet, attempt {wait_attempt + 1}/12...")
+                          time.sleep(wait)
+                      else:
+                          print(f"  WARNING: {bp} has no tools after 180s, virtual server registration may fail")
+
+                  # Step 8: Register Virtual Servers (JSON, retry loop for tool discovery)
                   print("Registering Virtual MCP Servers...")
                   virtual_servers_registered = 0
                   for vs in VIRTUAL_SERVERS:
@@ -874,7 +938,7 @@ Resources:
                           except Exception as toggle_err:
                               print(f"    Enable error (non-fatal): {toggle_err}")
 
-                  # Step 8: Register Skills (JSON, non-fatal, max_retries=2)
+                  # Step 9: Register Skills (JSON, non-fatal, max_retries=2)
                   print("Registering Agent Skills...")
                   skills_registered = 0
                   for skill in AGENT_SKILLS:
@@ -914,7 +978,7 @@ Resources:
                       except Exception as toggle_err:
                           print(f"    Enable error (non-fatal): {toggle_err}")
 
-                  # Step 9: Report results
+                  # Step 10: Report results
                   print(f"Registration complete: {servers_registered} servers, {agents_registered} agents, {virtual_servers_registered} virtual servers, {skills_registered} skills")
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, {
                       'ServersRegistered': servers_registered,
@@ -1305,7 +1369,7 @@ Resources:
               runCommand:
                 - '#!/bin/bash'
                 - set -euo pipefail
-                - !Sub sudo -u ${CodeEditorUser} npm install -g @anthropic-ai/claude-code@2.1.74 --prefix /home/${CodeEditorUser}/.local
+                - !Sub sudo -u ${CodeEditorUser} npm install -g @anthropic-ai/claude-code --prefix /home/${CodeEditorUser}/.local
                 - !Sub sudo -u ${CodeEditorUser} mkdir -p /home/${CodeEditorUser}/.claude
                 - !Sub |
                   sudo -u ${CodeEditorUser} tee /home/${CodeEditorUser}/.claude/settings.json <<'EOF'

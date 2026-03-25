@@ -144,6 +144,17 @@ The `cloudformation/aws-ecs/` directory contains the AWS ECS/Fargate deployment 
 
 - **Porting checklist:** [`cloudformation/aws-ecs/docs/porting-checklist.md`](cloudformation/aws-ecs/docs/porting-checklist.md) -- lessons learned, carry-forward fixes (template-level vs app-level), open issues, and upgrade checklists from the v1.0.12 -> v1.0.15 -> v1.0.16 porting effort. **Read this before starting a new version branch.**
 
+### Lambda ZipFile Validation (MANDATORY)
+The workshop-tools-stack.yaml contains multiple Lambda functions with inline `ZipFile:` code blocks. Each block is an independent Python scope -- functions defined in one block do NOT exist in another.
+
+**Before pushing any change to a Lambda ZipFile block:**
+1. Extract the ZipFile code to a temporary `.py` file
+2. Run `python3 -m py_compile <file>` to catch NameError, SyntaxError, and missing imports
+3. Verify every function CALLED in the block has a corresponding `def` in the SAME block
+4. Never add a function call without adding its definition in the same ZipFile block
+
+**Event provisioning takes ~1 hour with no way to shortcut.** A broken Lambda means an hour wasted. Test locally first.
+
 ### Version Upgrade Warning
 When creating a new `cloudformation/workshop-*` branch from an updated `main`, the upstream `CLAUDE.md` will replace this trimmed version. Recover the workshop version from the previous workshop branch:
 ```bash
