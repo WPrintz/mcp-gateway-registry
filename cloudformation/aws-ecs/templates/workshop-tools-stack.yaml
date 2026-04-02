@@ -367,25 +367,6 @@ Resources:
           import cfnresponse
           import time
 
-          def get_server_tools(registry_url, token, server_path):
-              """Get the current tool list for a server."""
-              path = server_path.strip('/')
-              url = f"{registry_url}/api/servers/tools/{path}"
-              req = urllib.request.Request(url, method='GET')
-              req.add_header('Authorization', f'Bearer {token}')
-              ctx = ssl.create_default_context()
-              try:
-                  with urllib.request.urlopen(req, context=ctx, timeout=30) as response:
-                      result = json.loads(response.read().decode('utf-8'))
-                      if isinstance(result, dict):
-                          return result.get('tools', [])
-                      elif isinstance(result, list):
-                          return result
-                      return []
-              except Exception as e:
-                  print(f"  get_server_tools error: {e}")
-                  return []
-
           # MCP Servers to register (form data fields for /api/servers/register)
           # Note: /mcpgw/ (MCP Gateway Tools) is NOT registered here because
           # it is redundant with the built-in /airegistry-tools/ server which
