@@ -95,7 +95,7 @@ Parameters:
 
   GitHubBranch:
     Type: String
-    Default: cloudformation/workshop-v1.0.16
+    Default: cloudformation/workshop-v1.0.20
     Description: GitHub branch to build from
 
   ContainerAssetsS3Url:
