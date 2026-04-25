@@ -943,7 +943,10 @@ Resources:
       EnvironmentName: !Ref EnvironmentName
       # v3.2: Treat 'exists' as success on all registrations (504 timeout on first
       #   attempt means server-side succeeded but response was lost; retry gets exists).
-      Version: '3.2'
+      # v3.3: v1.0.20 fixes -- add supportedProtocol: 'a2a' to A2A agents, remove
+      #   skill toggle (skills register enabled by default; /toggle requires CSRF
+      #   which M2M tokens cannot provide).
+      Version: '3.3'
 
   #============================================================================
   # LOAD GENERATOR
