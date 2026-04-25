@@ -645,6 +645,25 @@ Resources:
               Value: 'false'
             - Name: FEDERATION_STATIC_TOKEN
               Value: ''
+            # v1.0.20 Registry Card (federation discovery identity)
+            # REGISTRY_URL/NAME/ORGANIZATION_NAME are validated at startup -- if unset,
+            # Pydantic defaults ("ACME Inc.", "AI Registry", localhost URL) are used,
+            # which would publish a misleading registry card to federation peers.
+            - Name: REGISTRY_URL
+              Value: !ImportValue
+                Fn::Sub: ${EnvironmentName}-MainCloudFrontUrl
+            - Name: REGISTRY_NAME
+              Value: 'AI Gateway Registry - Workshop'
+            - Name: REGISTRY_ORGANIZATION_NAME
+              Value: 'MCP Gateway Workshop'
+            - Name: REGISTRY_DESCRIPTION
+              Value: 'MCP Gateway Registry deployed for the workshop environment'
+            # v1.0.20 Direct M2M registration (allows agents to self-register via M2M token)
+            - Name: M2M_DIRECT_REGISTRATION_ENABLED
+              Value: 'true'
+            # v1.0.20 Telemetry heartbeat (default 1440 min = 24h)
+            - Name: MCP_TELEMETRY_HEARTBEAT_INTERVAL_MINUTES
+              Value: '1440'
           Secrets:
             - Name: SECRET_KEY
               ValueFrom: !Sub
