@@ -848,6 +848,10 @@ Resources:
               Value: '8000'
             - Name: MCP_TRANSPORT
               Value: streamable-http
+            # v1.0.20 security hardening: server defaults to 127.0.0.1 so we
+            # must explicitly bind to 0.0.0.0 for Service Connect to reach it.
+            - Name: HOST
+              Value: '0.0.0.0'
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -898,6 +902,10 @@ Resources:
               Value: http://registry:80
             - Name: REGISTRY_USERNAME
               Value: admin
+            # v1.0.20 security hardening: server defaults to 127.0.0.1 so we
+            # must explicitly bind to 0.0.0.0 for Service Connect to reach it.
+            - Name: HOST
+              Value: '0.0.0.0'
           Secrets:
             - Name: REGISTRY_PASSWORD
               ValueFrom: !Sub

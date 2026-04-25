@@ -435,12 +435,15 @@ Resources:
           ]
 
           # A2A Agents to register
+          # v1.0.20 added required field 'supportedProtocol' (values: 'a2a' | 'other').
+          # Both workshop agents speak A2A protocol.
           A2A_AGENTS = [
               {
                   'name': 'Flight Booking Agent',
                   'description': 'Flight booking and reservation management agent',
                   'url': 'http://flight-booking-agent:9000/',
                   'path': '/flight-booking-agent',
+                  'supportedProtocol': 'a2a',
                   'protocolVersion': '0.3.0',
                   'version': '0.0.1',
                   'capabilities': {'streaming': True},
@@ -463,6 +466,7 @@ Resources:
                   'description': 'Flight search and trip planning agent',
                   'url': 'http://travel-assistant-agent:9000/',
                   'path': '/travel-assistant-agent',
+                  'supportedProtocol': 'a2a',
                   'protocolVersion': '0.3.0',
                   'version': '0.0.1',
                   'capabilities': {'streaming': True},
@@ -899,20 +903,12 @@ Resources:
                           print(f"    Registration error (non-fatal): {reg_err}")
                           continue
 
-                      print(f"    Enabling skill: {skill_name}")
-                      try:
-                          toggle_result = api_request_json(
-                              f"{registry_url}/api/skills/{skill_name}/toggle",
-                              token,
-                              {'enabled': True},
-                              max_retries=2
-                          )
-                          if toggle_result.get('is_enabled') is True or toggle_result.get('path'):
-                              print(f"    Enabled")
-                          else:
-                              print(f"    Enable failed (non-fatal): {toggle_result}")
-                      except Exception as toggle_err:
-                          print(f"    Enable error (non-fatal): {toggle_err}")
+                      # v1.0.20: Skills register with is_enabled=True by default
+                      # (skill_service.py:532). The /toggle endpoint additionally
+                      # enforces CSRF validation (csrf.py:verify_csrf_token_flexible),
+                      # which requires a browser session cookie -- M2M Bearer tokens
+                      # cannot satisfy it. Skip the toggle call since it is both
+                      # unnecessary and always 403s for M2M clients.
 
                   # Step 9: Report results
                   print(f"Registration complete: {servers_registered} servers, {agents_registered} agents, {virtual_servers_registered} virtual servers, {skills_registered} skills")
