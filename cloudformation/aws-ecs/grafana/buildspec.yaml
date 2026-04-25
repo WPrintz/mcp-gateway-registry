@@ -1,0 +1,36 @@
+version: 0.2
+
+# Buildspec for Grafana OSS container
+# Can be used standalone or integrated into main CodeBuild project
+
+env:
+  variables:
+    DOCKER_BUILDKIT: "1"
+
+phases:
+  pre_build:
+    commands:
+      - echo "=== Building Grafana OSS container ==="
+      - export AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - export ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - export IMAGE_TAG="${IMAGE_TAG:-latest}"
+      - echo "ECR Registry: $ECR_REGISTRY"
+      - echo "Image Tag: $IMAGE_TAG"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $ECR_REGISTRY
+      - echo "Creating ECR repository if it doesn't exist..."
+      - aws ecr describe-repositories --repository-names mcp-gateway-grafana --region $AWS_DEFAULT_REGION 2>/dev/null || aws ecr create-repository --repository-name mcp-gateway-grafana --region $AWS_DEFAULT_REGION
+      - echo "Pulling base image..."
+      - docker pull grafana/grafana:12.3.1 || true
+      - docker pull $ECR_REGISTRY/mcp-gateway-grafana:latest || true
+
+  build:
+    commands:
+      - echo "=== Build phase ==="
+      - cd cloudformation/aws-ecs/grafana
+      - docker build --cache-from $ECR_REGISTRY/mcp-gateway-grafana:latest -t $ECR_REGISTRY/mcp-gateway-grafana:$IMAGE_TAG .
+      - docker push $ECR_REGISTRY/mcp-gateway-grafana:$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo "Build completed on $(date)"
+      - echo "Grafana image pushed to $ECR_REGISTRY/mcp-gateway-grafana:$IMAGE_TAG"
