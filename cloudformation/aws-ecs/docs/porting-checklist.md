@@ -211,3 +211,38 @@ nginx (emit_metrics.lua) -> metrics-service:8890 -> ADOT (localhost:9465 scrape)
 6. [ ] Update workshop content for new features (Labs 4-10)
 7. [x] Verify all 18 v1.0.12 fixes still present (P5 complete: 14 pass, 1 cosmetic, 2 auto-inherited, 1 behavior change. See .scratchpad/audit-v1012-fixes.md)
 8. [ ] Create pre-built container branch when stable
+
+---
+
+## v1.0.20 Upgrade Checklist
+
+*Progress and working notes: `.scratchpad/cloudformation-workshop-v1.0.20-steering-log.md`*
+
+### Corrections to Earlier Lessons
+
+- **Lesson #26 path correction:** the buildspec lives at `cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml` (inside the ported `cloudformation/` dir), NOT at repo-root `scripts/codebuild/`. It survives the cloudformation dir copy and is NOT wiped by a fresh branch from the upstream tag. Verified 2026-04-25 on v1.0.20 port.
+- **Workshop `CLAUDE.md.bak` reference is stale** — file is not tracked on any workshop branch. The "Version Upgrade Warning" block should either commit the file or drop the reference.
+
+### New Universal Lessons (from v1.0.20 cycle)
+
+29. **Track which app-level fixes graduate to upstream on each release.** On v1.0.20 cycle, issues #573, #616, #618, #619, and the `list_groups` format mismatch ALL landed upstream — 5 of the 7 app-level fixes in the table above. Re-applying them blindly would have wasted effort and risked diverging from upstream. **Verification pattern:** grep for the fix's distinctive code shape (e.g., `json.loads(json.dumps(..., default=str))`, `_ensure_agent_loaded`, `self._repo.set_state(path, True)`, `agent.capabilities.get("streaming", False)`, bare-dict return from `list_groups()`) before cherry-picking.
+30. **Cherry-pick specific commits, not branch tips.** `git cherry-pick cloudformation/workshop-v<prev>` fails when the branch tip is a merge commit. Use `git log --oneline cloudformation/workshop-v<prev> -- <file>` to find the specific fix commit and cherry-pick that.
+31. **`Dockerfile.metrics-db` is a docker-compose convenience; do NOT add to Fargate buildspec or task def.** metrics-service bundles `aiosqlite` (pure-Python) and writes directly to `SQLITE_DB_PATH`. Workshop uses `/tmp/metrics.db` (world-writable, ephemeral, survives non-root UID 1000). This is an intentional divergence from upstream's sidecar-on-shared-volume pattern.
+32. **Registry startup validation uses Pydantic defaults.** `registry/main.py:410-424` raises on empty `REGISTRY_URL`, `REGISTRY_NAME`, `REGISTRY_ORGANIZATION_NAME`, but `config.py` provides defaults (`http://localhost:8000`, `AI Registry`, `ACME Inc.`). Missing env vars do NOT crash the container but produce a misleading federation registry card. Always set these three explicitly in the Registry task def.
+33. **Lambda endpoint drift is cycle-dependent, not guaranteed.** v1.0.20 had zero endpoint drift (vs v1.0.16's breaking changes per lesson #27). Always audit by cross-referencing `grep -n '@router\.' registry/api/*_routes.py` against the Lambda's `urllib.request.Request(...)` URLs in `workshop-tools-stack.yaml`.
+34. **`.env.example` entries aren't definitive.** They show *suggested* values but may not match the Pydantic default in `registry/core/config.py`. Prefer reading `config.py` for ground truth when deciding whether an env var is required.
+
+### v1.0.20 Task List
+
+1. [x] Fast-forward fork `main` to upstream `9ffd3735`; push tags v1.0.17-v1.0.20
+2. [x] Create branch `cloudformation/workshop-v1.0.20` from tag `v1.0.20`; port `cloudformation/` + `CLAUDE.md` from workshop-v1.0.16
+3. [x] Diff v1.0.16 -> v1.0.20 (249 commits): 37 new env vars, 5 new API route modules, new Dockerfile.metrics-db, +1107 line agentcore federation client
+4. [x] Re-apply app-level fixes: only lesson #22/#25 nginx FQDN needed (cherry-picked `f101ee8b`); #573, #616, #618, #619, list_groups all upstreamed
+5. [x] Audit MCPRegistration Lambda against v1.0.20 routes - ZERO drift across 12 endpoints
+6. [x] Add new env vars to services-stack.yaml (6 needed: REGISTRY_URL/NAME/ORGANIZATION_NAME/DESCRIPTION, M2M_DIRECT_REGISTRATION_ENABLED, MCP_TELEMETRY_HEARTBEAT_INTERVAL_MINUTES)
+7. [x] Evaluate Dockerfile.metrics-db - skip (Fargate uses inline aiosqlite)
+8. [ ] Sandbox deploy from GitHub source, verify all containers come up
+9. [ ] Test Ravi's skills module (content/module-5/) end-to-end
+10. [ ] Walk modules 1-5 against v1.0.20 UI; update verbiage + screenshots (especially `static/img/module-1/1_2/Registry_login_page.png` after PR #591 removed local login toggle)
+11. [ ] Switch CodeBuild to pre-built tarballs; regenerate container tarballs; upload to Workshop Studio S3
+12. [ ] Run `.scratchpad/stage-workshop-assets.sh` to push to Workshop Studio gitlab repo
