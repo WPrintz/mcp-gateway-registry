@@ -440,7 +440,7 @@ Resources:
             - Name: DOCUMENTDB_USE_IAM
               Value: 'false'
             - Name: DOCUMENTDB_TLS_CA_FILE
-              Value: /app/global-bundle.pem
+              Value: /app/certs/global-bundle.pem
             # Metrics Service Configuration
             - Name: METRICS_SERVICE_URL
               Value: 'http://metrics-service:8890'
@@ -615,7 +615,7 @@ Resources:
             - Name: DOCUMENTDB_USE_IAM
               Value: 'false'
             - Name: DOCUMENTDB_TLS_CA_FILE
-              Value: /app/global-bundle.pem
+              Value: /app/certs/global-bundle.pem
             # Metrics Service Configuration
             - Name: METRICS_SERVICE_URL
               Value: 'http://metrics-service:8890'
