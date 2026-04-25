@@ -231,6 +231,13 @@ nginx (emit_metrics.lua) -> metrics-service:8890 -> ADOT (localhost:9465 scrape)
 32. **Registry startup validation uses Pydantic defaults.** `registry/main.py:410-424` raises on empty `REGISTRY_URL`, `REGISTRY_NAME`, `REGISTRY_ORGANIZATION_NAME`, but `config.py` provides defaults (`http://localhost:8000`, `AI Registry`, `ACME Inc.`). Missing env vars do NOT crash the container but produce a misleading federation registry card. Always set these three explicitly in the Registry task def.
 33. **Lambda endpoint drift is cycle-dependent, not guaranteed.** v1.0.20 had zero endpoint drift (vs v1.0.16's breaking changes per lesson #27). Always audit by cross-referencing `grep -n '@router\.' registry/api/*_routes.py` against the Lambda's `urllib.request.Request(...)` URLs in `workshop-tools-stack.yaml`.
 34. **`.env.example` entries aren't definitive.** They show *suggested* values but may not match the Pydantic default in `registry/core/config.py`. Prefer reading `config.py` for ground truth when deciding whether an env var is required.
+35. **On every workshop version branch, bump the GitHub branch defaults that drive CodeBuild.** CodeBuild clones the fork based on parameter defaults in the templates — if left at the prior version, the build silently pulls old source even after templates, content, and env vars are updated. There are at least two places to update (more may appear over time; grep to be sure):
+    - `cloudformation/aws-ecs/templates/compute-stack.yaml` — `GitHubBranch` parameter `Default:` value. This is the one CodeBuild actually reads for `SourceVersion`.
+    - `cloudformation/aws-ecs/scripts/export-containers.sh` — `SOURCE_VERSION` and `IMAGE_TAG` defaults (pre-built tarball path only, but keep consistent).
+    - Also verify `GitHubRepoUrl` in compute-stack.yaml still points at the correct fork if fork ownership ever changes.
+    - **How to find every reference:** `grep -rn "workshop-v1\." cloudformation/aws-ecs/` plus `grep -rn "workshop-v1\." cloudformation/aws-ecs/scripts/`. Expect content markdown files to also reference the version (e.g., module docs describing the template inputs) — those usually don't control the build but should stay consistent.
+    - **Verification after bump:** look at the CodeBuild project's Source config in the AWS console (or `aws codebuild batch-get-projects`) and confirm `sourceVersion` shows the new branch before starting a build. The template default is only read on stack create/update — an already-deployed stack keeps the old value unless you pass the new default explicitly or update the stack.
+36. **Buildspec (`cloudformation/aws-ecs/scripts/codebuild/buildspec.yaml`) hardcodes image names, not branch names.** The buildspec references `docker/Dockerfile.*` by relative path against the repo checkout CodeBuild produces from `SourceVersion`. It does NOT embed a branch or tag. So as long as lesson #35 is applied, the buildspec does not need editing per version. **But** check that any new `docker/Dockerfile.*` added upstream (e.g., v1.0.20 added `Dockerfile.metrics-db`) is either added to the parallel build block OR intentionally skipped with a documented reason (v1.0.20: skipped — inline aiosqlite used instead; see lesson #31).
 
 ### v1.0.20 Task List
 
@@ -241,8 +248,10 @@ nginx (emit_metrics.lua) -> metrics-service:8890 -> ADOT (localhost:9465 scrape)
 5. [x] Audit MCPRegistration Lambda against v1.0.20 routes - ZERO drift across 12 endpoints
 6. [x] Add new env vars to services-stack.yaml (6 needed: REGISTRY_URL/NAME/ORGANIZATION_NAME/DESCRIPTION, M2M_DIRECT_REGISTRATION_ENABLED, MCP_TELEMETRY_HEARTBEAT_INTERVAL_MINUTES)
 7. [x] Evaluate Dockerfile.metrics-db - skip (Fargate uses inline aiosqlite)
-8. [ ] Sandbox deploy from GitHub source, verify all containers come up
-9. [ ] Test Ravi's skills module (content/module-5/) end-to-end
-10. [ ] Walk modules 1-5 against v1.0.20 UI; update verbiage + screenshots (especially `static/img/module-1/1_2/Registry_login_page.png` after PR #591 removed local login toggle)
-11. [ ] Switch CodeBuild to pre-built tarballs; regenerate container tarballs; upload to Workshop Studio S3
-12. [ ] Run `.scratchpad/stage-workshop-assets.sh` to push to Workshop Studio gitlab repo
+8. [x] Bump CodeBuild branch defaults (lesson #35): compute-stack.yaml `GitHubBranch`, export-containers.sh `SOURCE_VERSION`/`IMAGE_TAG`. Commit `d813b2d9`
+9. [x] Audit `scripts/codebuild/buildspec.yaml` for new/removed Dockerfiles (lesson #36): no changes needed -- Dockerfile.metrics-db intentionally skipped
+10. [ ] Sandbox deploy from GitHub source, verify all containers come up
+11. [ ] Test Ravi's skills module (content/module-5/) end-to-end
+12. [ ] Walk modules 1-5 against v1.0.20 UI; update verbiage + screenshots (especially `static/img/module-1/1_2/Registry_login_page.png` after PR #591 removed local login toggle)
+13. [ ] Switch CodeBuild to pre-built tarballs; regenerate container tarballs; upload to Workshop Studio S3 (deferred until branch stable)
+14. [ ] Run `.scratchpad/stage-workshop-assets.sh` to push to Workshop Studio gitlab repo
