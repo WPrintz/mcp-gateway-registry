@@ -1,7 +1,7 @@
 # Auth Dockerfile - multi-stage build for smaller image and better caching
 
 # ===== BUILD STAGE =====
-FROM python:3.14-slim AS builder
+FROM public.ecr.aws/docker/library/python:3.14-slim AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
@@ -26,7 +26,7 @@ RUN . .venv/bin/activate && \
     uv pip install --requirement pyproject.toml
 
 # ===== RUNTIME STAGE =====
-FROM python:3.14-slim
+FROM public.ecr.aws/docker/library/python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1

@@ -2,7 +2,7 @@
 # Each server must have pyproject.toml and server.py
 # Use this for servers that don't need PyTorch or the registry module (e.g., currenttime, fininfo)
 # For servers needing embeddings/sentence-transformers, use Dockerfile.mcp-server instead
-FROM python:3.14-slim
+FROM public.ecr.aws/docker/library/python:3.14-slim
 
 # Build arg for server directory (when building from repo root)
 ARG SERVER_DIR
