@@ -536,11 +536,14 @@ Resources:
           Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${RegistryImageRepo}:${RegistryImageTag}'
           Essential: true
           PortMappings:
+            # v1.0.20 non-root hardening (upstream PR #624): nginx listens on 8080
+            # instead of 80 because non-root users cannot bind privileged ports.
+            # ALB target group and Service Connect port aliases are adjusted below.
             - Name: http
-              ContainerPort: 80
+              ContainerPort: 8080
               Protocol: tcp
             - Name: https
-              ContainerPort: 443
+              ContainerPort: 8443
               Protocol: tcp
             - Name: registry
               ContainerPort: 7860
@@ -1129,7 +1132,7 @@ Resources:
               Fn::Sub: ${EnvironmentName}-PrivateSubnets
       LoadBalancers:
         - ContainerName: registry
-          ContainerPort: 80
+          ContainerPort: 8080
           TargetGroupArn: !ImportValue
             Fn::Sub: ${EnvironmentName}-RegistryTargetGroupArn
         - ContainerName: registry

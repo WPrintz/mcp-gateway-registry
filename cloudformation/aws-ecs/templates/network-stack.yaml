@@ -333,7 +333,18 @@ Resources:
       FromPort: 80
       ToPort: 80
       SourceSecurityGroupId: !Ref MainAlbSG
-      Description: HTTP from ALB
+      Description: HTTP from ALB (legacy, kept for backward compat)
+
+  # v1.0.20 non-root hardening: registry nginx listens on 8080 instead of 80.
+  EcsTasksIngressFromAlb8080:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      SourceSecurityGroupId: !Ref MainAlbSG
+      Description: HTTP from ALB (registry nginx, non-root)
 
   EcsTasksIngressFromAlb443:
     Type: AWS::EC2::SecurityGroupIngress

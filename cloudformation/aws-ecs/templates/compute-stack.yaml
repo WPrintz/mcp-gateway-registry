@@ -896,14 +896,16 @@ Resources:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties:
       Name: !Sub ${EnvironmentName}-registry-tg
-      Port: 80
+      # v1.0.20 non-root hardening: nginx listens on 8080 (non-privileged).
+      # ALB still exposes 80 externally; translation happens at the target.
+      Port: 8080
       Protocol: HTTP
       TargetType: ip
       VpcId: !ImportValue
         Fn::Sub: ${EnvironmentName}-VpcId
       HealthCheckEnabled: true
       HealthCheckPath: /health
-      HealthCheckPort: '80'
+      HealthCheckPort: '8080'
       HealthCheckProtocol: HTTP
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 2
