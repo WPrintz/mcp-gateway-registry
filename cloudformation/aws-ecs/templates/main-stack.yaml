@@ -8,13 +8,13 @@ Parameters:
   # Upstream Version Tracking
   UpstreamVersion:
     Type: String
-    Default: 'v1.0.16'
+    Default: 'v1.0.20'
     Description: >
       Upstream mcp-gateway-registry version this deployment is based on.
       Used for display purposes in the registry console. Image tags default
       to 'latest' unless explicitly overridden via *ImageTag parameters.
     AllowedPattern: '^v?[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$|^latest$'
-    ConstraintDescription: Must be a semantic version (e.g., v1.0.16, 1.0.16) or 'latest'
+    ConstraintDescription: Must be a semantic version (e.g., v1.0.20, 1.0.20) or 'latest'
 
   # Build Trigger - increment to force CodeBuild rebuild
   BuildTriggerVersion:
