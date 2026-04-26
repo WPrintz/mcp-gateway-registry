@@ -370,53 +370,68 @@ async def _load_default_scopes(
     namespace: str,
     entra_group_id: str | None = None,
 ) -> None:
-    """Load default admin scope from JSON file into scopes collection.
+    """Load default scope definitions from JSON files into scopes collection.
+
+    Loads the admin scope plus the LOB demo scopes so multi-tenant
+    demos (workshop Module 3) work out of the box on DocumentDB.
 
     Args:
         db: Database connection
         namespace: Collection namespace
-        entra_group_id: Optional Entra ID Group Object ID to add to group_mappings.
-                        Required when using Microsoft Entra ID as the auth provider.
+        entra_group_id: Optional Entra ID Group Object ID to add to the
+                        admin scope's group_mappings. Required when using
+                        Microsoft Entra ID as the auth provider.
     """
     collection_name = f"{COLLECTION_SCOPES}_{namespace}"
     collection = db[collection_name]
 
-    # Find the registry-admins.json file in the same directory as this script
     script_dir = Path(__file__).parent
-    admin_scope_file = script_dir / "registry-admins.json"
 
-    if not admin_scope_file.exists():
-        logger.warning(f"Default admin scope file not found: {admin_scope_file}")
-        return
+    # Admin scope is loaded first so any deployment at minimum has admin
+    # access even if the LOB files are missing.
+    scope_files = [
+        "registry-admins.json",
+        "registry-users-lob1.json",
+        "registry-users-lob2.json",
+    ]
 
-    try:
-        with open(admin_scope_file) as f:
-            admin_scope = json.load(f)
+    for scope_filename in scope_files:
+        scope_file = script_dir / scope_filename
 
-        logger.info(f"Loading default admin scope from {admin_scope_file}")
+        if not scope_file.exists():
+            logger.warning(f"Scope file not found: {scope_file}")
+            continue
 
-        # Add Entra ID Group Object ID if provided
-        if entra_group_id:
-            if entra_group_id not in admin_scope.get("group_mappings", []):
-                admin_scope["group_mappings"].append(entra_group_id)
-                logger.info(f"Added Entra ID Group Object ID: {entra_group_id}")
+        try:
+            with open(scope_file) as f:
+                scope_doc = json.load(f)
 
-        # Upsert the admin scope document
-        result = await collection.update_one(
-            {"_id": admin_scope["_id"]}, {"$set": admin_scope}, upsert=True
-        )
+            logger.info(f"Loading scope from {scope_file}")
 
-        if result.upserted_id:
-            logger.info(f"Inserted admin scope: {admin_scope['_id']}")
-        elif result.modified_count > 0:
-            logger.info(f"Updated admin scope: {admin_scope['_id']}")
-        else:
-            logger.info(f"Admin scope already up-to-date: {admin_scope['_id']}")
+            # Entra ID Group Object ID only applies to the admin scope
+            if entra_group_id and scope_doc.get("_id") == "registry-admins":
+                if entra_group_id not in scope_doc.get("group_mappings", []):
+                    scope_doc["group_mappings"].append(entra_group_id)
+                    logger.info(f"Added Entra ID Group Object ID: {entra_group_id}")
 
-        logger.info(f"Admin scope group_mappings: {admin_scope.get('group_mappings', [])}")
+            result = await collection.update_one(
+                {"_id": scope_doc["_id"]}, {"$set": scope_doc}, upsert=True
+            )
 
-    except Exception as e:
-        logger.error(f"Failed to load default admin scope: {e}", exc_info=True)
+            if result.upserted_id:
+                logger.info(f"Inserted scope: {scope_doc['_id']}")
+            elif result.modified_count > 0:
+                logger.info(f"Updated scope: {scope_doc['_id']}")
+            else:
+                logger.info(f"Scope already up-to-date: {scope_doc['_id']}")
+
+            logger.info(
+                f"Scope '{scope_doc['_id']}' group_mappings: "
+                f"{scope_doc.get('group_mappings', [])}"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to load scope from {scope_file}: {e}", exc_info=True)
 
 
 async def _create_security_scans_indexes(
