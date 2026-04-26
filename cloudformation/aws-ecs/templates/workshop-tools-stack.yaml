@@ -1565,6 +1565,8 @@ Resources:
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
+                  - bedrock:Converse
+                  - bedrock:ConverseStream
                 Resource:
                   - "arn:aws:bedrock:*::foundation-model/anthropic.*"
                   - "arn:aws:bedrock:*:*:inference-profile/us.anthropic.*"
