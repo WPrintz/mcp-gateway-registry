@@ -196,12 +196,12 @@ Parameters:
   # Resource Configuration
   ServiceCpu:
     Type: String
-    Default: '512'
+    Default: '1024'
     Description: CPU units for main services
 
   ServiceMemory:
     Type: String
-    Default: '1024'
+    Default: '2048'
     Description: Memory (MB) for main services
 
   KeycloakCpu:

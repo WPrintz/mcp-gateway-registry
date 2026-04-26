@@ -817,21 +817,30 @@ Resources:
 
                   # Enable agents after all are registered (avoids state
                   # persistence races between register → enable → delete cycles)
-                  print("Enabling registered agents...")
-                  for agent_path in registered_agent_paths:
-                      try:
-                          url = f"{registry_url}/api/agents{agent_path}/toggle?enabled=true"
-                          req = urllib.request.Request(url, data=b'', method='POST')
-                          req.add_header('Authorization', f'Bearer {token}')
-                          ctx = ssl.create_default_context()
-                          with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
-                              result = json.loads(resp.read().decode('utf-8'))
-                              if result.get('is_enabled'):
-                                  print(f"    Enabled {agent_path}")
-                              else:
-                                  print(f"    Enable response for {agent_path}: {result}")
-                      except Exception as e:
-                          print(f"    Enable failed for {agent_path}: {e}")
+                  #
+                  # DISABLED: upstream CSRF bug blocks M2M Bearer-token clients
+                  # from calling POST /api/agents/{path}/toggle. Issue filed:
+                  # https://github.com/agentic-community/mcp-gateway-registry/issues/891
+                  # Restore this block once #891 is merged upstream.
+                  # Until then, workshop operator must manually enable agents
+                  # via the Discover UI once per deployed account.
+                  #
+                  # print("Enabling registered agents...")
+                  # for agent_path in registered_agent_paths:
+                  #     try:
+                  #         url = f"{registry_url}/api/agents{agent_path}/toggle?enabled=true"
+                  #         req = urllib.request.Request(url, data=b'', method='POST')
+                  #         req.add_header('Authorization', f'Bearer {token}')
+                  #         ctx = ssl.create_default_context()
+                  #         with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                  #             result = json.loads(resp.read().decode('utf-8'))
+                  #             if result.get('is_enabled'):
+                  #                 print(f"    Enabled {agent_path}")
+                  #             else:
+                  #                 print(f"    Enable response for {agent_path}: {result}")
+                  #     except Exception as e:
+                  #         print(f"    Enable failed for {agent_path}: {e}")
+                  print("Skipping agent enable (upstream issue #891 workaround)")
 
                   # Step 7: Register Virtual Servers (JSON, retry loop for tool discovery)
                   print("Registering Virtual MCP Servers...")
@@ -946,7 +955,12 @@ Resources:
       # v3.3: v1.0.20 fixes -- add supportedProtocol: 'a2a' to A2A agents, remove
       #   skill toggle (skills register enabled by default; /toggle requires CSRF
       #   which M2M tokens cannot provide).
-      Version: '3.3'
+      # v3.4: re-run after registry task CPU/memory bump (512/1024 -> 1024/2048)
+      #   to recover from sentence-transformer crash that killed first run.
+      # v3.5: comment out agent toggle loop -- upstream issue #891 adds CSRF to
+      #   agent toggle endpoint, blocking M2M Bearer clients. Agents register
+      #   disabled; operator enables once via UI. Restore loop when #891 ships.
+      Version: '3.5'
 
   #============================================================================
   # LOAD GENERATOR
