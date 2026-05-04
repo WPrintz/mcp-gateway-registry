@@ -2,6 +2,17 @@
 
 Tools for keeping CloudFormation templates in sync with Terraform.
 
+## build-lambda.sh
+
+Builds the MCP Registration Lambda deployment zip that `workshop-tools-stack.yaml` references via `Code.S3Bucket`/`Code.S3Key`. The zip combines `static/mcp_registration.py` with `static/cfnresponse.py` (AWS only auto-injects `cfnresponse` for inline ZipFile code, so we bundle it for S3-loaded code).
+
+```bash
+./scripts/build-lambda.sh
+# Produces: static/mcp_registration.zip (gitignored)
+```
+
+Run this before the staging pipeline syncs `static/` to S3, or before manually calling `aws lambda update-function-code` against a live deployment. The workshop staging script (`.scratchpad/stage-workshop-assets.sh`) calls it automatically.
+
 ## tf-cfn-sync.py
 
 Generates focused, per-resource task files for syncing Terraform to CloudFormation.
