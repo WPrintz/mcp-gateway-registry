@@ -899,7 +899,7 @@ Resources:
             - Name: PORT
               Value: '8003'
             - Name: REGISTRY_BASE_URL
-              Value: http://registry:80
+              Value: http://registry:8080
             - Name: REGISTRY_USERNAME
               Value: admin
             # v1.0.20 security hardening: server defaults to 127.0.0.1 so we
@@ -1155,7 +1155,7 @@ Resources:
           - PortName: http
             DiscoveryName: registry
             ClientAliases:
-              - Port: 80
+              - Port: 8080
                 DnsName: registry
       Tags:
         - Key: Name

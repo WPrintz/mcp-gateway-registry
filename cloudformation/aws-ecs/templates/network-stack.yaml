@@ -386,6 +386,19 @@ Resources:
       SourceSecurityGroupId: !Ref EcsTasksSG
       Description: Allow all traffic between ECS tasks in same security group
 
+  # Allow mcpgw (and other tasks in McpServersSG) to reach registry nginx on 8080.
+  # Matches terraform's mcpgw_internal rule in ecs-services.tf (mcpgw lives in
+  # a separate SG, so the self-ingress above does not cover this path).
+  EcsTasksIngressFromMcpServers8080:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref EcsTasksSG
+      IpProtocol: tcp
+      FromPort: 8080
+      ToPort: 8080
+      SourceSecurityGroupId: !Ref McpServersSG
+      Description: mcpgw to registry nginx (matches terraform mcpgw_internal rule)
+
   # Keycloak ECS Security Group
   KeycloakEcsSG:
     Type: AWS::EC2::SecurityGroup
